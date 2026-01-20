@@ -568,3 +568,126 @@ Sources:
 - Could add batch upload optimizations for multiple texture updates
 - Could implement texture atlasing for small tiles (reduce draw calls)
 
+
+### Task: Build persistent disk cache (content-addressed)
+
+**Status:** Complete
+
+**Changes:**
+- Created comprehensive persistent disk cache system in crates/cache/src/disk.rs
+- Implemented DiskCachedTile struct to store pixel data with metadata (key, pixels, width, height)
+- Created DiskCacheStats struct for tracking cache performance (hits, misses, evictions, disk usage)
+- Implemented DiskTileCache with thread-safe Arc<Mutex<CacheState>> for concurrent access
+- Added LRU (Least Recently Used) eviction policy using VecDeque for tracking access order
+- Implemented automatic eviction when disk space limit is exceeded
+- Created comprehensive API: put(), get(), contains(), remove(), clear()
+- Added cache statistics tracking: hit rate, miss rate, disk utilization
+- Implemented configurable disk limits with dynamic adjustment
+- Added content-addressed storage using hex-encoded cache keys as filenames
+- Implemented persistent file format with header (width, height) + pixel data
+- Added load_from_disk() method to restore cache state after application restart
+- Added recalculate_disk_usage() method for recovering from inconsistent state
+- Added 15 comprehensive unit tests covering all functionality
+- All tests pass successfully
+- Linting passes with `cargo clippy -- -D warnings` (no warnings)
+
+**Files Created:**
+- crates/cache/src/disk.rs (persistent disk cache implementation)
+
+**Files Modified:**
+- crates/cache/src/lib.rs (added disk module and exports)
+- crates/cache/Cargo.toml (added rand dev-dependency for tests)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Thread-safe design using Arc<Mutex> for multi-threaded access
+- LRU eviction uses VecDeque: front = least recently used, back = most recently used
+- Cache key is u64 hash (compatible with TileId::cache_key() from render crate)
+- Disk tracking at byte level for precise budget management
+- Automatic eviction ensures disk limit is never exceeded
+- Content-addressed storage: tiles identified by cache key hash (hex-encoded filenames)
+- File format: 4-byte width + 4-byte height + pixel data (RGBA)
+- get() updates LRU order (marks tile as recently used)
+- contains() checks presence without affecting LRU order (useful for preflight checks)
+- Statistics enable performance monitoring and debugging
+- Cache directory is created automatically if it doesn't exist
+- load_from_disk() enables cache persistence across application restarts
+- recalculate_disk_usage() allows recovery from external modifications
+
+**Technical Details:**
+- Default disk limit: 1GB (configurable via constructor or with_mb_limit())
+- CacheKey type: u64 (hash from TileId)
+- Filename format: {key:016x}.tile (16-digit hex + .tile extension)
+- File format: width (4 bytes LE) + height (4 bytes LE) + pixels (RGBA bytes)
+- Disk tracking includes header size (8 bytes) + pixel data
+- LRU eviction: O(n) worst case for queue manipulation, but fast in practice
+- Touch operation removes and re-adds key to back of queue (marks as most recent)
+- Eviction continues until sufficient space is available for new tile
+- put() with existing key updates the tile (replaces old file)
+- Statistics track: tile_count, disk_used, hits, misses, evictions
+- Helper methods: hit_rate() and disk_utilization() for easy monitoring
+- set_disk_limit() dynamically adjusts limit and evicts if needed
+
+**API Summary:**
+- `new(cache_dir, disk_limit)` - Create cache with directory and byte limit
+- `with_mb_limit(cache_dir, megabytes)` - Create cache with MB limit
+- `put(key, pixels, width, height)` - Store tile to disk (auto-evicts if needed)
+- `get(key)` - Retrieve tile from disk (updates LRU, tracks hit/miss)
+- `contains(key)` - Check presence (no LRU update)
+- `remove(key)` - Explicitly remove tile from disk
+- `clear()` - Remove all tiles from cache
+- `stats()` - Get cache statistics
+- `set_disk_limit(bytes)` - Update disk limit
+- `disk_limit()`, `disk_used()`, `tile_count()` - Query current state
+- `load_from_disk()` - Restore cache from existing directory
+- `recalculate_disk_usage()` - Recalculate disk usage from files
+- `cache_dir()` - Get cache directory path
+
+**Test Coverage:**
+1. test_basic_put_get - Basic storage and retrieval from disk
+2. test_cache_miss - Miss tracking and statistics
+3. test_lru_eviction - Automatic eviction when limit exceeded
+4. test_lru_ordering - LRU ordering based on access patterns
+5. test_contains - Presence checking without LRU update
+6. test_remove - Explicit tile removal from disk
+7. test_clear - Clear all tiles from cache
+8. test_stats - Statistics tracking (hits, misses, rates)
+9. test_disk_tracking - Accurate disk usage tracking
+10. test_set_disk_limit - Dynamic limit adjustment with eviction
+11. test_update_existing_tile - Updating existing cache entries
+12. test_load_from_disk - Restoring cache state after restart
+13. test_recalculate_disk_usage - Recalculating disk usage
+14. test_disk_utilization - Disk utilization calculation
+
+**Integration Points:**
+- Ready for Phase 4: Job scheduler (check disk cache before scheduling render jobs)
+- Ready for Phase 5: Document loading (disk cache enables fast reopening after restart)
+- Ready for Phase 6: Viewport compositor (retrieve tiles from disk if not in RAM/VRAM)
+- CacheKey compatible with TileId::cache_key() from render crate
+- Thread-safe design enables concurrent access from render workers
+- Multi-level caching ready: check RAM → check VRAM → check Disk → render
+- load_from_disk() enables warm cache on application startup
+
+**Cache Hierarchy Strategy:**
+- L1: RAM cache (256MB default) - fastest access
+- L2: VRAM cache (512MB default) - fast GPU access
+- L3: Disk cache (1GB default) - persistent storage
+- Lookup order: RAM → VRAM → Disk → render tile
+- Store order: render → Disk → RAM → VRAM (upload to GPU)
+
+**Performance Characteristics:**
+- put(): O(n) worst case for eviction, O(1) average for file write
+- get(): O(n) for LRU update + file I/O
+- contains(): O(1) HashMap lookup (no disk I/O)
+- remove(): O(n) for LRU queue update + file deletion
+- clear(): O(n) for file deletions
+- load_from_disk(): O(n) for directory scan
+- Memory overhead: ~24 bytes per entry (HashMap + VecDeque) + PathBuf
+
+**Future Optimizations:**
+- Could implement compression for disk storage (reduce space, add CPU overhead)
+- Could implement async I/O for non-blocking disk operations
+- Could add cache warming strategies (preload commonly used tiles on startup)
+- Could implement hierarchical cache coordination (evict from RAM to Disk instead of deleting)
+- Could add cache statistics persistence (track usage patterns across sessions)
+
