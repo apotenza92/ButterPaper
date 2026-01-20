@@ -454,3 +454,117 @@ Sources:
 - Could add cache warming strategies (preload commonly used tiles)
 - Could implement multi-level caching (RAM → VRAM → Disk)
 
+
+
+### Task: Build GPU texture cache (VRAM) with separate budget
+
+**Status:** Complete
+
+**Changes:**
+- Created comprehensive GPU texture cache system in crates/cache/src/gpu.rs
+- Implemented GpuTexture struct to store GPU texture handles with metadata (key, handle, width, height, vram_size)
+- Created GpuCacheStats struct for tracking cache performance (hits, misses, evictions, VRAM usage)
+- Implemented GpuTextureCache with thread-safe Arc<Mutex<CacheState>> for concurrent access
+- Added LRU (Least Recently Used) eviction policy using VecDeque for tracking access order
+- Implemented automatic eviction when VRAM limit is exceeded
+- Created comprehensive API: put(), get(), contains(), remove(), clear()
+- Added cache statistics tracking: hit rate, miss rate, VRAM utilization
+- Implemented configurable VRAM limits with dynamic adjustment
+- Added 14 comprehensive unit tests covering all functionality
+- All tests pass successfully
+- Linting passes with `cargo clippy -- -D warnings` (no warnings)
+
+**Files Created:**
+- crates/cache/src/gpu.rs (GPU texture cache implementation)
+
+**Files Modified:**
+- crates/cache/src/lib.rs (added gpu module and exports)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Thread-safe design using Arc<Mutex> for multi-threaded access
+- LRU eviction uses VecDeque: front = least recently used, back = most recently used
+- Cache key is u64 hash (compatible with TileId::cache_key() from render crate)
+- VRAM tracking at byte level for precise budget management
+- Automatic eviction ensures VRAM limit is never exceeded
+- get() returns TextureRef wrapper that holds mutex guard for safe access
+- contains() checks presence without affecting LRU order (useful for preflight checks)
+- Statistics enable performance monitoring and debugging
+- Platform-agnostic texture storage using Box<dyn Any + Send> for GPU handles
+- Supports downcasting to specific GPU backend types (Metal, DirectX, Vulkan)
+
+**Technical Details:**
+- Default VRAM limit: 512MB (configurable via constructor or with_mb_limit())
+- CacheKey type: u64 (hash from TileId)
+- VRAM tracking includes estimated texture memory usage
+- LRU eviction: O(n) worst case for queue manipulation, but fast in practice
+- Touch operation removes and re-adds key to back of queue (marks as most recent)
+- Eviction continues until sufficient space is available for new texture
+- put() with existing key updates the texture (replaces old data)
+- Statistics track: texture_count, vram_used, hits, misses, evictions
+- Helper methods: hit_rate() and vram_utilization() for easy monitoring
+- set_vram_limit() dynamically adjusts limit and evicts if needed
+- TextureRef provides safe access to cached textures via mutex guard
+- TextureMetadata allows extracting metadata without holding lock
+
+**API Summary:**
+- `new(vram_limit)` - Create cache with byte limit
+- `with_mb_limit(megabytes)` - Create cache with MB limit
+- `put(key, texture_handle, width, height, vram_size)` - Store texture (auto-evicts if needed)
+- `get(key)` - Retrieve texture reference (updates LRU, tracks hit/miss)
+- `contains(key)` - Check presence (no LRU update)
+- `remove(key)` - Explicitly remove texture
+- `clear()` - Remove all textures
+- `stats()` - Get cache statistics
+- `set_vram_limit(bytes)` - Update VRAM limit
+- `vram_limit()`, `vram_used()`, `texture_count()` - Query current state
+
+**Test Coverage:**
+1. test_basic_put_get - Basic storage and retrieval with downcasting
+2. test_cache_miss - Miss tracking and statistics
+3. test_lru_eviction - Automatic eviction when limit exceeded
+4. test_lru_ordering - LRU ordering based on access patterns
+5. test_contains - Presence checking without LRU update
+6. test_remove - Explicit texture removal
+7. test_clear - Clear all textures
+8. test_stats - Statistics tracking (hits, misses, rates)
+9. test_vram_tracking - Accurate VRAM usage tracking
+10. test_set_vram_limit - Dynamic limit adjustment with eviction
+11. test_update_existing_texture - Updating existing cache entries
+12. test_default_cache - Default 512MB limit
+13. test_with_mb_limit - MB-based constructor
+14. test_vram_utilization - VRAM utilization calculation
+
+**Integration Points:**
+- Ready for Phase 4: Job scheduler (check cache before scheduling GPU uploads)
+- Ready for Phase 5: Document loading (cache enables fast texture reuse)
+- Ready for Phase 6: Viewport compositor (retrieve GPU textures for display)
+- Compatible with Metal backend (can store metal::Texture handles)
+- Extensible to DirectX and Vulkan backends via trait object storage
+- CacheKey compatible with TileId::cache_key() from render crate
+- Thread-safe design enables concurrent access from render workers
+- TextureRef pattern provides safe access to cached GPU resources
+
+**Design Decisions:**
+- Separate VRAM budget from RAM cache (default 512MB vs 256MB for RAM)
+- Platform-agnostic storage via Box<dyn Any + Send> for flexibility
+- TextureRef wrapper prevents direct texture access without mutex guard
+- Higher default VRAM limit reflects typical GPU memory availability
+- Metadata extraction via TextureMetadata for lock-free access to dimensions
+- Downcast pattern for type-safe access to platform-specific handles
+
+**Performance Characteristics:**
+- put(): O(n) worst case for eviction, O(1) average for insertion
+- get(): O(n) for LRU update (VecDeque retain), but fast for small caches
+- contains(): O(1) HashMap lookup
+- remove(): O(n) for LRU queue update
+- clear(): O(1) with deallocation
+- Memory overhead: ~24 bytes per entry (HashMap + VecDeque nodes) + texture handle size
+
+**Future Optimizations:**
+- Could implement multi-level caching (RAM → VRAM → Disk hierarchy)
+- Could add texture compression for VRAM savings
+- Could implement usage-based eviction (prefer keeping crisp over preview tiles)
+- Could add batch upload optimizations for multiple texture updates
+- Could implement texture atlasing for small tiles (reduce draw calls)
+
