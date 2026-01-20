@@ -282,6 +282,9 @@ impl GpuTextureCache {
     /// Returns a reference to the texture if found, or `None` if not in cache.
     /// Updates LRU tracking and statistics.
     ///
+    /// This is a blocking operation that will wait if the cache is currently locked.
+    /// For non-blocking access, use `try_get()`.
+    ///
     /// Note: This returns a reference held within a MutexGuard. For long-lived
     /// access, consider extracting the needed data immediately.
     ///
@@ -290,6 +293,45 @@ impl GpuTextureCache {
     /// * `key` - Cache key for the texture to retrieve
     pub fn get(&self, key: CacheKey) -> Option<TextureRef<'_>> {
         let mut state = self.state.lock().unwrap();
+
+        if state.textures.contains_key(&key) {
+            // Cache hit - update LRU and stats
+            state.touch(key);
+            state.stats.hits += 1;
+
+            // Return a reference wrapper that holds the lock
+            Some(TextureRef {
+                _guard: state,
+                key,
+            })
+        } else {
+            // Cache miss
+            state.stats.misses += 1;
+            None
+        }
+    }
+
+    /// Try to retrieve a texture from the cache without blocking
+    ///
+    /// Returns a reference to the texture if found and the lock was acquired,
+    /// or `None` if the cache is locked or the texture was not found.
+    ///
+    /// This is a non-blocking operation that returns immediately if the cache is locked.
+    /// Updates LRU tracking and statistics on success.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Cache key for the texture to retrieve
+    ///
+    /// # Returns
+    ///
+    /// - `Some(TextureRef)` - Cache hit, texture retrieved successfully
+    /// - `None` - Either the cache is busy or the texture was not found
+    ///
+    /// Note: To distinguish between "cache busy" and "texture not found",
+    /// you can first use `contains()` which doesn't update LRU.
+    pub fn try_get(&self, key: CacheKey) -> Option<TextureRef<'_>> {
+        let mut state = self.state.try_lock().ok()?;
 
         if state.textures.contains_key(&key) {
             // Cache hit - update LRU and stats
@@ -667,5 +709,52 @@ mod tests {
         let stats = cache.stats();
         let utilization = stats.vram_utilization();
         assert!((utilization - 0.5).abs() < 0.01); // Should be ~50%
+    }
+
+    #[test]
+    fn test_try_get_non_blocking() {
+        let cache = GpuTextureCache::new(1024 * 1024);
+
+        let vram_size = 256 * 256 * 4;
+        cache.put(1, MockTexture { id: 42 }, 256, 256, vram_size);
+
+        // try_get should succeed when cache is not locked
+        if let Some(texture_ref) = cache.try_get(1) {
+            let metadata = texture_ref.metadata();
+            assert_eq!(metadata.key, 1);
+            assert_eq!(metadata.width, 256);
+            assert_eq!(metadata.height, 256);
+
+            let handle = texture_ref.texture_handle::<MockTexture>().unwrap();
+            assert_eq!(handle.id, 42);
+        } else {
+            panic!("Expected cache hit");
+        }
+
+        // try_get should return None when key doesn't exist
+        assert!(cache.try_get(999).is_none());
+
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.misses, 1);
+    }
+
+    #[test]
+    fn test_try_get_lru_update() {
+        let cache = GpuTextureCache::new(512 * 1024);
+
+        let vram_size = 256 * 256 * 4;
+        cache.put(1, MockTexture { id: 1 }, 256, 256, vram_size);
+        cache.put(2, MockTexture { id: 2 }, 256, 256, vram_size);
+
+        // Access texture 1 via try_get (should update LRU)
+        assert!(cache.try_get(1).is_some());
+
+        // Add texture 3, should evict texture 2 (now least recently used)
+        cache.put(3, MockTexture { id: 3 }, 256, 256, vram_size);
+
+        assert!(cache.contains(1)); // Still present (accessed via try_get)
+        assert!(!cache.contains(2)); // Evicted
+        assert!(cache.contains(3)); // Present
     }
 }

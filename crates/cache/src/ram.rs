@@ -247,6 +247,9 @@ impl RamTileCache {
     /// Returns `Some(tile)` if the tile is in the cache, or `None` if not found.
     /// Updates LRU tracking and statistics.
     ///
+    /// This is a blocking operation that will wait if the cache is currently locked.
+    /// For non-blocking access, use `try_get()`.
+    ///
     /// # Arguments
     ///
     /// * `key` - Cache key for the tile to retrieve
@@ -262,6 +265,39 @@ impl RamTileCache {
             // Cache miss
             state.stats.misses += 1;
             None
+        }
+    }
+
+    /// Try to retrieve a tile from the cache without blocking
+    ///
+    /// Returns `Some(Some(tile))` if the tile is in the cache and the lock was acquired,
+    /// `Some(None)` if the lock was acquired but the tile was not found,
+    /// or `None` if the cache is currently locked and the operation would block.
+    ///
+    /// This is a non-blocking operation that returns immediately if the cache is locked.
+    /// Updates LRU tracking and statistics on success.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Cache key for the tile to retrieve
+    ///
+    /// # Returns
+    ///
+    /// - `Some(Some(tile))` - Cache hit, tile retrieved successfully
+    /// - `Some(None)` - Cache miss, no tile with this key
+    /// - `None` - Could not acquire lock (cache is busy)
+    pub fn try_get(&self, key: CacheKey) -> Option<Option<CachedTile>> {
+        let mut state = self.state.try_lock().ok()?;
+
+        if let Some(tile) = state.tiles.get(&key).cloned() {
+            // Cache hit - update LRU and stats
+            state.touch(key);
+            state.stats.hits += 1;
+            Some(Some(tile))
+        } else {
+            // Cache miss
+            state.stats.misses += 1;
+            Some(None)
         }
     }
 
@@ -561,5 +597,53 @@ mod tests {
     fn test_with_mb_limit() {
         let cache = RamTileCache::with_mb_limit(100);
         assert_eq!(cache.memory_limit(), 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_try_get_non_blocking() {
+        let cache = RamTileCache::new(1024 * 1024);
+
+        let pixels = vec![0u8; 256 * 256 * 4];
+        cache.put(1, pixels.clone(), 256, 256);
+
+        // try_get should succeed when cache is not locked
+        match cache.try_get(1) {
+            Some(Some(tile)) => {
+                assert_eq!(tile.key, 1);
+                assert_eq!(tile.pixels, pixels);
+            }
+            _ => panic!("Expected cache hit"),
+        }
+
+        // try_get should return None when key doesn't exist
+        match cache.try_get(999) {
+            Some(None) => {
+                // Expected: cache miss
+            }
+            _ => panic!("Expected cache miss"),
+        }
+
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.misses, 1);
+    }
+
+    #[test]
+    fn test_try_get_lru_update() {
+        let cache = RamTileCache::new(512 * 1024);
+
+        let pixels = vec![0u8; 256 * 256 * 4];
+        cache.put(1, pixels.clone(), 256, 256);
+        cache.put(2, pixels.clone(), 256, 256);
+
+        // Access tile 1 via try_get (should update LRU)
+        assert!(matches!(cache.try_get(1), Some(Some(_))));
+
+        // Add tile 3, should evict tile 2 (now least recently used)
+        cache.put(3, pixels.clone(), 256, 256);
+
+        assert!(cache.contains(1)); // Still present (accessed via try_get)
+        assert!(!cache.contains(2)); // Evicted
+        assert!(cache.contains(3)); // Present
     }
 }

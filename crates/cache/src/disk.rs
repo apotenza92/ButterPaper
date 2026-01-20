@@ -229,6 +229,9 @@ impl DiskTileCache {
     ///
     /// Returns `None` if the tile is not in the cache.
     /// Updates LRU order on successful retrieval.
+    ///
+    /// This is a blocking operation that will wait if the cache is currently locked.
+    /// For non-blocking access, use `try_get()`.
     pub fn get(&self, key: CacheKey) -> io::Result<Option<DiskCachedTile>> {
         let mut state = self.state.lock().unwrap();
 
@@ -262,6 +265,65 @@ impl DiskTileCache {
         } else {
             state.stats.misses += 1;
             Ok(None)
+        }
+    }
+
+    /// Try to retrieve a tile from the cache without blocking
+    ///
+    /// Returns `Ok(Some(Some(tile)))` if the tile is in the cache and the lock was acquired,
+    /// `Ok(Some(None))` if the lock was acquired but the tile was not found,
+    /// or `Ok(None)` if the cache is currently locked and the operation would block.
+    /// Returns `Err` if there was an I/O error reading the tile.
+    ///
+    /// This is a non-blocking operation that returns immediately if the cache is locked.
+    /// Updates LRU order on successful retrieval.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Cache key for the tile to retrieve
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(Some(tile)))` - Cache hit, tile retrieved successfully
+    /// - `Ok(Some(None))` - Cache miss, no tile with this key
+    /// - `Ok(None)` - Could not acquire lock (cache is busy)
+    /// - `Err(e)` - I/O error reading tile from disk
+    pub fn try_get(&self, key: CacheKey) -> io::Result<Option<Option<DiskCachedTile>>> {
+        let mut state = match self.state.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => return Ok(None), // Cache is locked
+        };
+
+        if let Some(path) = state.entries.get(&key) {
+            // Read tile from disk
+            let mut file = File::open(path)?;
+
+            // Read header
+            let mut width_bytes = [0u8; 4];
+            let mut height_bytes = [0u8; 4];
+            file.read_exact(&mut width_bytes)?;
+            file.read_exact(&mut height_bytes)?;
+
+            let width = u32::from_le_bytes(width_bytes);
+            let height = u32::from_le_bytes(height_bytes);
+
+            // Read pixel data
+            let mut pixels = Vec::new();
+            file.read_to_end(&mut pixels)?;
+
+            // Update LRU
+            state.touch(key);
+            state.stats.hits += 1;
+
+            Ok(Some(Some(DiskCachedTile {
+                key,
+                pixels,
+                width,
+                height,
+            })))
+        } else {
+            state.stats.misses += 1;
+            Ok(Some(None))
         }
     }
 
@@ -656,6 +718,62 @@ mod tests {
 
         assert!(utilization > 0.4); // Should be around 50%
         assert!(utilization < 0.6);
+
+        cleanup_test_cache(cache_dir);
+    }
+
+    #[test]
+    fn test_try_get_non_blocking() {
+        let (cache, cache_dir) = create_test_cache();
+
+        let pixels = vec![255u8; 256 * 256 * 4];
+        cache.put(1, pixels.clone(), 256, 256).unwrap();
+
+        // try_get should succeed when cache is not locked
+        match cache.try_get(1).unwrap() {
+            Some(Some(tile)) => {
+                assert_eq!(tile.key, 1);
+                assert_eq!(tile.width, 256);
+                assert_eq!(tile.height, 256);
+                assert_eq!(tile.pixels, pixels);
+            }
+            _ => panic!("Expected cache hit"),
+        }
+
+        // try_get should return None when key doesn't exist
+        match cache.try_get(999).unwrap() {
+            Some(None) => {
+                // Expected: cache miss
+            }
+            _ => panic!("Expected cache miss"),
+        }
+
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.misses, 1);
+
+        cleanup_test_cache(cache_dir);
+    }
+
+    #[test]
+    fn test_try_get_lru_update() {
+        let (cache, cache_dir) = create_test_cache();
+
+        let pixels = vec![255u8; 300 * 1024];
+        cache.put(1, pixels.clone(), 256, 256).unwrap();
+        cache.put(2, pixels.clone(), 256, 256).unwrap();
+        cache.put(3, pixels.clone(), 256, 256).unwrap();
+
+        // Access tile 1 via try_get (should update LRU)
+        assert!(matches!(cache.try_get(1).unwrap(), Some(Some(_))));
+
+        // Add tile 4, should evict tile 2 (now least recently used)
+        cache.put(4, pixels.clone(), 256, 256).unwrap();
+
+        assert!(cache.contains(1)); // Still present (accessed via try_get)
+        assert!(!cache.contains(2)); // Evicted
+        assert!(cache.contains(3)); // Present
+        assert!(cache.contains(4)); // Present
 
         cleanup_test_cache(cache_dir);
     }

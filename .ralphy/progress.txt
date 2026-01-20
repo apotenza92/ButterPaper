@@ -691,3 +691,88 @@ Sources:
 - Could implement hierarchical cache coordination (evict from RAM to Disk instead of deleting)
 - Could add cache statistics persistence (track usage patterns across sessions)
 
+
+### Task: Implement non-blocking cache reads
+
+**Status:** Complete
+
+**Changes:**
+- Added non-blocking `try_get()` method to RamTileCache for lock-free cache reads
+- Added non-blocking `try_get()` method to GpuTextureCache for lock-free texture retrieval
+- Added non-blocking `try_get()` method to DiskTileCache for lock-free disk reads
+- Implemented using `try_lock()` instead of blocking `lock()` for immediate return when cache is busy
+- All non-blocking methods update LRU tracking and statistics when successful
+- Added comprehensive unit tests for all three cache types
+- All 47 tests pass successfully
+- Linting passes with `cargo clippy -- -D warnings` (no warnings)
+
+**Files Modified:**
+- crates/cache/src/ram.rs (added try_get() method and tests)
+- crates/cache/src/gpu.rs (added try_get() method and tests)
+- crates/cache/src/disk.rs (added try_get() method and tests)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Non-blocking reads use `try_lock()` instead of `lock()` to avoid blocking the caller
+- RAM cache `try_get()` returns `Option<Option<CachedTile>>`:
+  - `Some(Some(tile))` - Cache hit, tile retrieved successfully
+  - `Some(None)` - Cache miss, no tile with this key
+  - `None` - Could not acquire lock (cache is busy)
+- GPU cache `try_get()` returns `Option<TextureRef>`:
+  - `Some(TextureRef)` - Cache hit, texture retrieved successfully
+  - `None` - Either cache is busy or texture not found (use `contains()` to distinguish)
+- Disk cache `try_get()` returns `io::Result<Option<Option<DiskCachedTile>>>`:
+  - `Ok(Some(Some(tile)))` - Cache hit, tile retrieved successfully
+  - `Ok(Some(None))` - Cache miss, no tile with this key
+  - `Ok(None)` - Could not acquire lock (cache is busy)
+  - `Err(e)` - I/O error reading tile from disk
+- All non-blocking methods maintain LRU ordering and update statistics on success
+- Existing blocking `get()` methods remain unchanged for backward compatibility
+- Thread-safe design enables concurrent access from multiple render threads
+
+**Technical Details:**
+- RAM cache: Uses `try_lock().ok()?` pattern for early return on lock failure
+- GPU cache: Uses `try_lock().ok()?` pattern, returns TextureRef holding guard
+- Disk cache: Uses `match try_lock()` to handle lock failure explicitly before I/O
+- LRU updates: All try_get methods call `state.touch(key)` to mark as recently used
+- Statistics: All try_get methods increment hits/misses counters on success
+- Tests verify: successful retrieval, cache misses, and LRU ordering preservation
+
+**Test Coverage:**
+- RAM cache: test_try_get_non_blocking, test_try_get_lru_update
+- GPU cache: test_try_get_non_blocking, test_try_get_lru_update
+- Disk cache: test_try_get_non_blocking, test_try_get_lru_update
+- All tests verify non-blocking behavior and LRU correctness
+- Total test count: 47 tests (all passing)
+
+**Integration Points:**
+- Ready for Phase 4: Job scheduler can use try_get for non-blocking cache checks
+- Ready for Phase 5: Document loading can check cache without blocking render thread
+- Ready for Phase 6: Viewport compositor can poll caches without stalling
+- Non-blocking reads critical for UI thread responsiveness
+- Enables "check cache, if busy skip and render later" strategies
+- Supports speculative rendering without blocking on cache contention
+
+**Performance Benefits:**
+- UI thread never blocks waiting for cache locks
+- Render threads can skip cache checks if cache is busy
+- Enables optimistic rendering: try cache first, render if unavailable
+- Reduces lock contention in multi-threaded rendering scenarios
+- Supports priority-based rendering: high-priority tiles can skip busy caches
+
+**User Experience Benefits:**
+- No UI stalls from cache lock contention
+- Smoother scrolling and panning (no blocking on cache reads)
+- Faster page switching (can skip busy caches and render directly)
+- Better responsiveness during heavy rendering workloads
+- Predictable frame times (no unbounded lock waits)
+
+**Design Decisions:**
+- Kept blocking `get()` methods for backward compatibility and simple use cases
+- Added separate `try_get()` methods following Rust mutex conventions
+- Return types differ between caches to match their semantic requirements
+- GPU cache returns reference (TextureRef) due to platform-specific handle storage
+- Disk cache uses Result type to propagate I/O errors separately from lock failures
+- LRU updates on success only (failed lock attempts don't affect ordering)
+- Statistics track both blocking and non-blocking accesses uniformly
+

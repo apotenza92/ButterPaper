@@ -63,7 +63,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Build RAM tile cache with LRU eviction
 - [x] Build GPU texture cache (VRAM) with separate budget
 - [x] Build persistent disk cache (content-addressed)
-- [ ] Implement non-blocking cache reads
+- [x] Implement non-blocking cache reads
 - [ ] Add user-configurable cache size and location
 
 ### Phase 4: Job Scheduler
