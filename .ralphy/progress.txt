@@ -27,3 +27,34 @@
 - crates/cache/Cargo.toml, crates/cache/src/lib.rs
 - crates/scheduler/Cargo.toml, crates/scheduler/src/lib.rs
 
+### Task: Set up GPU abstraction layer with Metal backend for macOS
+
+**Status:** Complete
+
+**Changes:**
+- Created GPU abstraction layer in `pdf-editor-ui` crate with platform-agnostic traits
+- Implemented Metal backend for macOS with full GPU context support
+- Added core GPU abstractions: GpuContext, Texture, and Buffer traits
+- Implemented MetalContext with device and command queue initialization
+- Created MetalTexture with support for multiple pixel formats (RGBA/BGRA, sRGB/linear)
+- Created MetalBuffer with managed storage mode and data upload capabilities
+- Added proper error handling with GpuError enum
+- Added platform-specific dependencies: metal, cocoa, core-graphics-types, objc
+- All code compiles successfully with `cargo check`
+- Linting passes with `cargo clippy` (no warnings)
+
+**Files Created:**
+- crates/ui/src/gpu/mod.rs (GPU abstraction layer)
+- crates/ui/src/gpu/metal.rs (Metal backend implementation)
+
+**Files Modified:**
+- crates/ui/Cargo.toml (added Metal dependencies for macOS)
+- crates/ui/src/lib.rs (added gpu module)
+
+**Architecture Notes:**
+- GPU abstraction designed to support future DirectX (Windows) and Vulkan (Linux) backends
+- Metal backend uses managed storage mode for textures and buffers
+- Texture formats support both sRGB and linear color spaces
+- Buffer usage flags prepared for vertex, index, and uniform buffers
+- Frame begin/end hooks ready for rendering pipeline integration
+
