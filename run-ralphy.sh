@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Run ralphy with codex in dangerous mode, logging to file
+# Run ralphy with claude, logging to file
 LOG_DIR="$HOME/code/pdf-editor/logs"
 mkdir -p "$LOG_DIR"
 
@@ -11,7 +11,7 @@ echo "Starting ralphy at $(date)" | tee "$LOG_FILE"
 echo "Log file: $LOG_FILE"
 echo "---" | tee -a "$LOG_FILE"
 
-ralphy --codex -v 2>&1 | tee -a "$LOG_FILE"
+~/code/ralphy/ralphy.sh -v 2>&1 | tee -a "$LOG_FILE"
 
 echo "---" | tee -a "$LOG_FILE"
 echo "Finished at $(date)" | tee -a "$LOG_FILE"
