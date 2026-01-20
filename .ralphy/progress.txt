@@ -776,3 +776,106 @@ Sources:
 - LRU updates on success only (failed lock attempts don't affect ordering)
 - Statistics track both blocking and non-blocking accesses uniformly
 
+
+### Task: Add user-configurable cache size and location
+
+**Status:** Complete
+
+**Changes:**
+- Created comprehensive cache configuration system in crates/cache/src/config.rs
+- Implemented CacheConfig struct with user-configurable settings for RAM, GPU, and disk caches
+- Added support for loading configuration from environment variables
+- Implemented TOML file-based configuration with save/load functionality
+- Added Default trait implementation for CacheConfig with sensible defaults
+- Created builder-style API with fluent method chaining (with_ram_mb, with_gpu_mb, etc.)
+- Implemented platform-specific cache directory detection using dirs crate
+- Added comprehensive error handling with ConfigError enum
+- Created 14 unit tests covering all configuration scenarios
+- Implemented EnvGuard test helper to prevent environment variable pollution between tests
+- All tests pass successfully (58 total tests in cache crate)
+- Linting passes with `cargo clippy -- -D warnings` (no warnings)
+
+**Files Created:**
+- crates/cache/src/config.rs (cache configuration system)
+
+**Files Modified:**
+- crates/cache/Cargo.toml (added dirs dependency)
+- crates/cache/src/lib.rs (added config module and exports)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- CacheConfig centralizes all cache configuration in one place
+- Default values: 256 MB RAM, 512 MB GPU, 1 GB disk
+- Platform-specific cache directories:
+  - macOS: ~/Library/Caches/pdf-editor/tiles
+  - Linux: ~/.cache/pdf-editor/tiles
+  - Windows: %LOCALAPPDATA%\pdf-editor\tiles
+- Configuration can be loaded from multiple sources with priority order
+- Environment variable names: PDF_EDITOR_RAM_CACHE_MB, PDF_EDITOR_GPU_CACHE_MB, etc.
+- TOML format for human-readable configuration files
+- Builder pattern enables flexible configuration construction
+- Implements Default trait for idiomatic Rust usage
+
+**Technical Details:**
+- dirs crate version: 5.0 for cross-platform cache directory detection
+- Configuration supports byte-level precision internally, MB interface for users
+- TOML parsing uses simple manual parser (no external dependency)
+- Environment variable parsing with proper error handling
+- File I/O errors propagated through ConfigError enum
+- Fallback cache directory: "cache/tiles" if platform directories unavailable
+- Helper methods: ram_cache_mb(), gpu_cache_mb(), disk_cache_mb() for easy querying
+- save_to_file() creates human-readable TOML with comments
+
+**API Summary:**
+- `CacheConfig::default()` - Create config with default values
+- `CacheConfig::new(ram_mb, gpu_mb, disk_mb, disk_dir)` - Create with custom values
+- `with_ram_mb(mb)` - Set RAM cache size (builder pattern)
+- `with_gpu_mb(mb)` - Set GPU cache size (builder pattern)
+- `with_disk_mb(mb)` - Set disk cache size (builder pattern)
+- `with_disk_dir(path)` - Set disk cache directory (builder pattern)
+- `from_env()` - Load configuration from environment variables
+- `from_file(path)` - Load configuration from TOML file
+- `save_to_file(path)` - Save configuration to TOML file
+- `default_cache_dir()` - Get platform-specific default cache directory
+- `ram_cache_mb()`, `gpu_cache_mb()`, `disk_cache_mb()` - Query sizes in MB
+
+**Test Coverage:**
+1. test_default_config - Default values
+2. test_new_config - Custom configuration
+3. test_builder_methods - Builder pattern API
+4. test_mb_getters - MB getter methods
+5. test_from_env - Full environment variable loading
+6. test_from_env_partial - Partial environment variables with defaults
+7. test_from_env_invalid - Error handling for invalid env values
+8. test_from_toml - TOML parsing
+9. test_from_toml_partial - Partial TOML with defaults
+10. test_toml_roundtrip - Save and load TOML
+11. test_file_save_and_load - File I/O operations
+12. EnvGuard helper - Prevents test pollution from environment variables
+
+**Integration Points:**
+- Ready for Phase 4: Job scheduler can use config to initialize caches
+- Ready for Phase 5: Document loading can respect user cache preferences
+- Cache implementations (RAM, GPU, Disk) can be initialized with config values
+- Application can load config from file or environment at startup
+- User preferences can be persisted to disk for future sessions
+- Configuration can be exposed in UI for runtime adjustments
+
+**User Experience Benefits:**
+- Users can customize cache sizes based on available system resources
+- Users can choose cache directory (e.g., faster SSD, larger HDD)
+- Configuration persists across application restarts
+- Environment variables enable CI/CD and container customization
+- Sensible defaults work out-of-the-box without configuration
+- Clear error messages for invalid configuration values
+
+**Design Decisions:**
+- Implemented Default trait instead of custom default() method per clippy recommendation
+- Used dirs crate (5.0) for platform-specific directories (stable, well-maintained)
+- Manual TOML parsing avoids heavy dependencies (simple format, predictable)
+- Separate environment variable for each setting (standard practice)
+- Builder pattern enables flexible configuration without large parameter lists
+- EnvGuard pattern prevents test interference (captures and restores env vars)
+- ConfigError enum with Display and Error traits for idiomatic error handling
+- Byte-level internal storage with MB-level API (balances precision and usability)
+

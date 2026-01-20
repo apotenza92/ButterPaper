@@ -5,7 +5,9 @@
 pub mod ram;
 pub mod gpu;
 pub mod disk;
+pub mod config;
 
 pub use ram::{RamTileCache, CacheStats};
 pub use gpu::{GpuTextureCache, GpuCacheStats, GpuTexture, TextureRef, TextureMetadata};
 pub use disk::{DiskTileCache, DiskCacheStats, DiskCachedTile};
+pub use config::{CacheConfig, ConfigError};

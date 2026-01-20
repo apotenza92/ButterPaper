@@ -64,7 +64,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Build GPU texture cache (VRAM) with separate budget
 - [x] Build persistent disk cache (content-addressed)
 - [x] Implement non-blocking cache reads
-- [ ] Add user-configurable cache size and location
+- [x] Add user-configurable cache size and location
 
 ### Phase 4: Job Scheduler
 - [ ] Create job scheduler with priority queue
