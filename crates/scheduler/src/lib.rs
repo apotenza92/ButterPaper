@@ -15,7 +15,7 @@
 //! let scheduler = JobScheduler::new();
 //!
 //! // Submit a high-priority rendering job
-//! let job_id = scheduler.submit(
+//! let (job_id, token) = scheduler.submit(
 //!     JobPriority::Visible,
 //!     JobType::RenderTile {
 //!         page_index: 0,
@@ -30,6 +30,7 @@
 //! // Get the next job to execute
 //! if let Some(job) = scheduler.next_job() {
 //!     println!("Executing job {}", job.id);
+//!     // Worker can check token.is_cancelled() during execution
 //!     // ... execute the job ...
 //!     scheduler.complete_job(job.id);
 //! }
@@ -38,9 +39,11 @@
 //! scheduler.cancel_page_jobs(0);
 //! ```
 
+mod cancel;
 mod priority;
 mod scheduler;
 
 // Re-export public API
+pub use cancel::{CancellationRegistry, CancellationToken};
 pub use priority::{Job, JobId, JobPriority, JobType};
 pub use scheduler::{JobScheduler, SchedulerStats};

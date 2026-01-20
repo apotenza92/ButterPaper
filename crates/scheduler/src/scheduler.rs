@@ -3,6 +3,7 @@
 //! Provides a high-level job scheduler that manages job submission,
 //! priority-based execution ordering, and job lifecycle.
 
+use crate::cancel::{CancellationRegistry, CancellationToken};
 use crate::priority::{Job, JobId, JobPriority, JobType, PriorityQueue};
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +34,7 @@ impl SchedulerStats {
 ///
 /// Thread-safe scheduler that manages job submission and execution ordering.
 /// Jobs are executed in priority order, with higher priority jobs running first.
+/// Supports cancellation tokens for cooperative job cancellation.
 ///
 /// # Example
 ///
@@ -42,19 +44,21 @@ impl SchedulerStats {
 /// let scheduler = JobScheduler::new();
 ///
 /// // Submit a high-priority job
-/// let job_id = scheduler.submit(JobPriority::Visible, JobType::LoadFile {
+/// let (job_id, token) = scheduler.submit(JobPriority::Visible, JobType::LoadFile {
 ///     path: "document.pdf".to_string()
 /// });
 ///
 /// // Get the next job to execute
 /// if let Some(job) = scheduler.next_job() {
 ///     println!("Executing job {}: {:?}", job.id, job.job_type);
+///     // Worker can check token.is_cancelled() during execution
 ///     scheduler.complete_job(job.id);
 /// }
 /// ```
 pub struct JobScheduler {
     queue: PriorityQueue,
     state: Arc<Mutex<SchedulerState>>,
+    cancellation: CancellationRegistry,
 }
 
 struct SchedulerState {
@@ -69,68 +73,106 @@ impl JobScheduler {
             state: Arc::new(Mutex::new(SchedulerState {
                 stats: SchedulerStats::default(),
             })),
+            cancellation: CancellationRegistry::new(),
         }
     }
 
     /// Submit a job to the scheduler
     ///
     /// The job will be queued according to its priority and executed when
-    /// a worker becomes available.
+    /// a worker becomes available. A cancellation token is created for the job
+    /// and registered in the cancellation registry.
     ///
-    /// Returns the assigned job ID.
-    pub fn submit(&self, priority: JobPriority, job_type: JobType) -> JobId {
+    /// Returns a tuple of (job_id, cancellation_token).
+    pub fn submit(&self, priority: JobPriority, job_type: JobType) -> (JobId, CancellationToken) {
         let job_id = self.queue.push(priority, job_type);
+        let token = self.cancellation.register(job_id);
 
         let mut state = self.state.lock().unwrap();
         state.stats.jobs_submitted += 1;
 
-        job_id
+        (job_id, token)
     }
 
     /// Get the next job to execute
     ///
     /// Returns the highest priority job from the queue, or `None` if the queue is empty.
+    /// The job is removed from the queue but its cancellation token remains registered
+    /// until `complete_job()` or `cancel_job()` is called.
     pub fn next_job(&self) -> Option<Job> {
         self.queue.pop()
     }
 
     /// Mark a job as completed
     ///
-    /// This updates the scheduler statistics.
-    pub fn complete_job(&self, _job_id: JobId) {
+    /// This updates the scheduler statistics and unregisters the cancellation token.
+    pub fn complete_job(&self, job_id: JobId) {
         let mut state = self.state.lock().unwrap();
         state.stats.jobs_completed += 1;
+        drop(state); // Release lock before unregistering
+
+        self.cancellation.unregister(job_id);
     }
 
     /// Cancel a specific job by ID
     ///
-    /// Removes the job from the queue if it hasn't started executing yet.
-    /// Returns `true` if the job was found and cancelled.
+    /// Cancels the job's cancellation token and removes it from the queue if it
+    /// hasn't started executing yet. If the job is already running, the token
+    /// is marked as cancelled and the worker should check it cooperatively.
+    /// Returns `true` if the job was found (either in queue or running).
     pub fn cancel_job(&self, job_id: JobId) -> bool {
+        // Cancel the token (works for both queued and running jobs)
+        let token_cancelled = self.cancellation.cancel(job_id);
+
+        // Try to remove from queue (only works if not yet started)
         let removed = self.queue.remove_if(|job| job.id == job_id);
 
         if removed > 0 {
             let mut state = self.state.lock().unwrap();
             state.stats.jobs_cancelled += removed as u64;
+            drop(state);
+
+            // Unregister since it was removed from queue
+            self.cancellation.unregister(job_id);
             true
         } else {
-            false
+            // Job might be running, token was cancelled
+            token_cancelled
         }
     }
 
     /// Cancel all jobs matching a predicate
     ///
-    /// Removes all jobs from the queue that match the given predicate.
+    /// Cancels tokens and removes jobs from the queue that match the predicate.
     /// Returns the number of jobs cancelled.
     pub fn cancel_jobs_if<F>(&self, predicate: F) -> usize
     where
         F: Fn(&Job) -> bool,
     {
+        // Get jobs matching predicate before removing
+        let jobs_to_cancel: Vec<JobId> = self
+            .queue
+            .jobs()
+            .into_iter()
+            .filter(|job| predicate(job))
+            .map(|job| job.id)
+            .collect();
+
+        // Cancel their tokens
+        self.cancellation.cancel_many(&jobs_to_cancel);
+
+        // Remove from queue
         let removed = self.queue.remove_if(predicate);
 
         if removed > 0 {
             let mut state = self.state.lock().unwrap();
             state.stats.jobs_cancelled += removed as u64;
+            drop(state);
+
+            // Unregister cancelled jobs
+            for job_id in jobs_to_cancel {
+                self.cancellation.unregister(job_id);
+            }
         }
 
         removed
@@ -170,14 +212,23 @@ impl JobScheduler {
 
     /// Clear all pending jobs
     ///
-    /// Cancels all jobs in the queue.
+    /// Cancels all jobs in the queue and their cancellation tokens.
     pub fn clear(&self) {
         let cancelled = self.queue.len();
+
+        // Cancel all tokens
+        self.cancellation.cancel_all();
+
+        // Clear queue
         self.queue.clear();
 
         if cancelled > 0 {
             let mut state = self.state.lock().unwrap();
             state.stats.jobs_cancelled += cancelled as u64;
+            drop(state);
+
+            // Clear cancellation registry
+            self.cancellation.clear();
         }
     }
 
@@ -202,6 +253,14 @@ impl JobScheduler {
     pub fn pending_jobs_list(&self) -> Vec<Job> {
         self.queue.jobs()
     }
+
+    /// Get the cancellation token for a job
+    ///
+    /// Returns `None` if the job is not found or has already completed.
+    /// Useful for workers that need to access the token after retrieving a job.
+    pub fn get_cancellation_token(&self, job_id: JobId) -> Option<CancellationToken> {
+        self.cancellation.get(job_id)
+    }
 }
 
 impl Default for JobScheduler {
@@ -221,7 +280,7 @@ mod tests {
         assert_eq!(scheduler.pending_jobs(), 0);
         assert!(!scheduler.has_pending_jobs());
 
-        let job_id = scheduler.submit(
+        let (job_id, token) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
                 path: "test.pdf".to_string(),
@@ -230,6 +289,7 @@ mod tests {
 
         assert_eq!(scheduler.pending_jobs(), 1);
         assert!(scheduler.has_pending_jobs());
+        assert!(!token.is_cancelled());
 
         let job = scheduler.next_job().unwrap();
         assert_eq!(job.id, job_id);
@@ -280,7 +340,7 @@ mod tests {
     fn test_cancel_job() {
         let scheduler = JobScheduler::new();
 
-        let job_id = scheduler.submit(
+        let (job_id, token) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
                 path: "test.pdf".to_string(),
@@ -288,9 +348,11 @@ mod tests {
         );
 
         assert_eq!(scheduler.pending_jobs(), 1);
+        assert!(!token.is_cancelled());
 
         let cancelled = scheduler.cancel_job(job_id);
         assert!(cancelled);
+        assert!(token.is_cancelled());
 
         assert_eq!(scheduler.pending_jobs(), 0);
 
@@ -408,7 +470,7 @@ mod tests {
 
         assert!(scheduler.peek_next_job().is_none());
 
-        let job_id = scheduler.submit(
+        let (job_id, _token) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
                 path: "test.pdf".to_string(),
@@ -437,7 +499,7 @@ mod tests {
         let job1 = scheduler.next_job().unwrap();
         scheduler.complete_job(job1.id);
 
-        let job2_id = scheduler.submit(
+        let (job2_id, _token) = scheduler.submit(
             JobPriority::Margin,
             JobType::RenderTile {
                 page_index: 0,
@@ -478,5 +540,135 @@ mod tests {
 
         let jobs = scheduler.pending_jobs_list();
         assert_eq!(jobs.len(), 2);
+    }
+
+    #[test]
+    fn test_cancellation_token_on_submit() {
+        let scheduler = JobScheduler::new();
+
+        let (job_id, token) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: "test.pdf".to_string(),
+            },
+        );
+
+        // Token should not be cancelled initially
+        assert!(!token.is_cancelled());
+
+        // Cancel the job
+        scheduler.cancel_job(job_id);
+
+        // Token should now be cancelled
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancellation_token_running_job() {
+        let scheduler = JobScheduler::new();
+
+        let (job_id, token) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: "test.pdf".to_string(),
+            },
+        );
+
+        // Retrieve job (starts running)
+        let job = scheduler.next_job().unwrap();
+        assert_eq!(job.id, job_id);
+
+        // Cancel should still work for running jobs
+        let cancelled = scheduler.cancel_job(job_id);
+        assert!(cancelled);
+        assert!(token.is_cancelled());
+
+        // Complete the job
+        scheduler.complete_job(job_id);
+
+        // Token should still be cancelled
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn test_get_cancellation_token() {
+        let scheduler = JobScheduler::new();
+
+        let (job_id, token1) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: "test.pdf".to_string(),
+            },
+        );
+
+        // Get token from scheduler
+        let token2 = scheduler.get_cancellation_token(job_id).unwrap();
+
+        // Cancel via original token
+        token1.cancel();
+
+        // Both tokens should observe cancellation
+        assert!(token1.is_cancelled());
+        assert!(token2.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancel_page_jobs_with_tokens() {
+        let scheduler = JobScheduler::new();
+
+        let (_id1, token1) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+        let (_id2, token2) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 1,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        // Cancel page 0 jobs
+        let cancelled = scheduler.cancel_page_jobs(0);
+        assert_eq!(cancelled, 1);
+
+        // Token for page 0 should be cancelled
+        assert!(token1.is_cancelled());
+        // Token for page 1 should not be cancelled
+        assert!(!token2.is_cancelled());
+    }
+
+    #[test]
+    fn test_clear_with_tokens() {
+        let scheduler = JobScheduler::new();
+
+        let (_id1, token1) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: "test.pdf".to_string(),
+            },
+        );
+        let (_id2, token2) = scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
+
+        assert_eq!(scheduler.pending_jobs(), 2);
+
+        scheduler.clear();
+
+        assert_eq!(scheduler.pending_jobs(), 0);
+
+        // Both tokens should be cancelled
+        assert!(token1.is_cancelled());
+        assert!(token2.is_cancelled());
     }
 }

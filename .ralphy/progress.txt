@@ -994,3 +994,123 @@ Scheduler tests:
 - Job statistics provide debugging visibility
 - Flexible cancellation enables responsive UI (e.g., cancel on scroll)
 
+
+### Task: Implement cancellation tokens for jobs
+
+**Status:** Complete
+
+**Changes:**
+- Created comprehensive cancellation token system in crates/scheduler/src/cancel.rs
+- Implemented CancellationToken struct with atomic boolean for lock-free cancellation checks
+- Created CancellationRegistry for tracking active jobs and their tokens
+- Integrated cancellation system into JobScheduler
+- Updated submit() method to return (JobId, CancellationToken) tuple
+- Implemented cooperative cancellation for queued and running jobs
+- Added cancel(), is_cancelled(), and reset() methods to CancellationToken
+- Implemented registry methods: register(), cancel(), cancel_many(), cancel_all(), unregister(), get()
+- Updated all scheduler cancellation methods to work with tokens
+- Modified complete_job() to unregister cancellation tokens
+- Updated cancel_job() to handle both queued and running jobs
+- Updated cancel_jobs_if() to cancel tokens before removing from queue
+- Updated clear() to cancel all tokens before clearing queue
+- Added get_cancellation_token() method for retrieving tokens by job ID
+- Added 19 comprehensive unit tests for cancellation system
+- Updated all existing scheduler tests to use new API
+- All 40 tests pass successfully
+- Linting passes with `cargo clippy -- -D warnings` (no warnings)
+
+**Files Created:**
+- crates/scheduler/src/cancel.rs (cancellation token implementation)
+
+**Files Modified:**
+- crates/scheduler/src/lib.rs (added cancel module and exports)
+- crates/scheduler/src/scheduler.rs (integrated cancellation system)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- CancellationToken uses Arc<AtomicBool> for lock-free, thread-safe cancellation
+- Clone-able tokens share the same underlying cancellation state
+- Atomic operations use Acquire/Release ordering for proper memory visibility
+- CancellationRegistry uses Arc<Mutex<HashMap>> for thread-safe token storage
+- Tokens remain valid even after job completion (useful for checking final state)
+- Cooperative cancellation: workers must check is_cancelled() periodically
+- Cancellation works for both queued jobs (removed from queue) and running jobs (token marked)
+- Registry automatically manages token lifecycle with job submission and completion
+- get_cancellation_token() allows workers to retrieve tokens after calling next_job()
+
+**Technical Details:**
+- CancellationToken API: new(), cancel(), is_cancelled(), reset()
+- CancellationRegistry API: register(), cancel(), cancel_many(), cancel_all(), unregister(), get(), len(), is_empty(), clear()
+- JobScheduler.submit() now returns (JobId, CancellationToken)
+- JobScheduler.complete_job() unregisters tokens automatically
+- JobScheduler.cancel_job() cancels token and removes from queue if present
+- JobScheduler.cancel_jobs_if() cancels tokens for all matching jobs
+- JobScheduler.clear() cancels all tokens and clears registry
+- AtomicBool with Ordering::Acquire/Release ensures proper memory synchronization
+- Reset operation allows token reuse (useful for job retry scenarios)
+- Idempotent cancellation: calling cancel() multiple times is safe
+
+**Test Coverage:**
+Cancellation token tests:
+1. test_cancellation_token_basic - Basic cancel/check functionality
+2. test_cancellation_token_clone - Shared cancellation state across clones
+3. test_cancellation_token_idempotent - Multiple cancel calls are safe
+4. test_cancellation_token_reset - Reset token to non-cancelled state
+5. test_cancellation_token_default - Default constructor
+
+Registry tests:
+6. test_registry_basic - Register and cancel by ID
+7. test_registry_cancel_not_found - Handle missing job cancellation
+8. test_registry_cancel_many - Cancel multiple jobs at once
+9. test_registry_cancel_all - Cancel all registered jobs
+10. test_registry_unregister - Remove job from registry
+11. test_registry_get - Retrieve token by ID
+12. test_registry_clear - Clear all tokens
+13. test_registry_is_empty - Check empty state
+14. test_registry_default - Default constructor
+
+Scheduler integration tests:
+15. test_cancellation_token_on_submit - Token cancellation on job cancel
+16. test_cancellation_token_running_job - Cancel running job via token
+17. test_get_cancellation_token - Retrieve token from scheduler
+18. test_cancel_page_jobs_with_tokens - Page cancellation affects tokens
+19. test_clear_with_tokens - Clear cancels all tokens
+
+**Integration Points:**
+- Ready for Phase 4: Render worker pool (workers can check tokens during rendering)
+- Ready for Phase 4: IO thread (check cancellation during file operations)
+- Ready for Phase 5: Document loading (cancel loading jobs on navigation)
+- Ready for Phase 6: Viewport compositor (cancel off-screen tile renders)
+- Workers can implement cooperative cancellation by checking is_cancelled() periodically
+- Long-running operations (rendering, OCR, file I/O) can bail out early
+- Cancellation doesn't force-stop threads (safe, cooperative approach)
+
+**Design Decisions:**
+- Used AtomicBool instead of Mutex<bool> for lock-free cancellation checks
+- Arc enables efficient sharing of cancellation state across threads
+- Cooperative cancellation is safer than forced termination
+- Tokens remain valid after job completion (enables final state checking)
+- Registry uses HashMap for O(1) token lookup by job ID
+- cancel_many() and cancel_all() optimize batch cancellation scenarios
+- Separate unregister() method allows manual cleanup if needed
+- Reset operation enables token reuse without allocation
+- Thread-safe design enables concurrent cancellation from multiple threads
+
+**Performance Characteristics:**
+- is_cancelled(): O(1) atomic load (very fast, lock-free)
+- cancel(): O(1) atomic store (very fast, lock-free)
+- register(): O(1) HashMap insert (mutex-protected)
+- unregister(): O(1) HashMap remove (mutex-protected)
+- cancel_many(): O(n) for n jobs (mutex-protected)
+- cancel_all(): O(n) for n registered jobs (mutex-protected)
+- Memory overhead: ~16 bytes per token (Arc + AtomicBool)
+
+**User Experience Benefits:**
+- Workers can stop processing cancelled jobs early (saves CPU/GPU cycles)
+- Page navigation cancels old page renders immediately (responsive UI)
+- Scrolling cancels off-screen tile renders (smooth scrolling)
+- Document switching cancels all old document jobs (fast switching)
+- Long-running OCR can be cancelled when user navigates away
+- Cooperative cancellation prevents wasted work on obsolete jobs
+- Graceful cancellation (no forced thread termination)
+
