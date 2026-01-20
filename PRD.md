@@ -49,7 +49,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Set up GPU abstraction layer with Metal backend for macOS
 - [x] Create basic application window with GPU-rendered UI shell using metal-rs
 - [x] Implement retained scene graph for UI rendering
-- [ ] Build frame loop (game-style, updates every frame)
+- [x] Build frame loop (game-style, updates every frame)
 
 ### Phase 2: PDF Rendering Pipeline
 - [ ] Integrate PDF parsing library (pdfium or mupdf bindings)

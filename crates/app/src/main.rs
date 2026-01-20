@@ -6,6 +6,7 @@ use pdf_editor_ui::gpu;
 use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::{Color, Primitive, Rect, SceneGraph};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -23,6 +24,10 @@ use objc::runtime::YES;
 #[cfg(target_os = "macos")]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+/// Target frame rate (60 FPS)
+const TARGET_FPS: u64 = 60;
+const TARGET_FRAME_TIME: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
+
 /// Application state
 struct App {
     window: Option<Arc<Window>>,
@@ -33,6 +38,12 @@ struct App {
     gpu_context: Option<Box<dyn gpu::GpuContext>>,
     scene_graph: SceneGraph,
     renderer: Option<SceneRenderer>,
+    // Frame loop timing
+    last_update: Instant,
+    delta_time: Duration,
+    frame_count: u64,
+    fps_update_time: Instant,
+    current_fps: f64,
 }
 
 impl App {
@@ -60,6 +71,7 @@ impl App {
             color: Color::rgb(0.2, 0.8, 0.2),
         });
 
+        let now = Instant::now();
         Self {
             window: None,
             #[cfg(target_os = "macos")]
@@ -69,7 +81,40 @@ impl App {
             gpu_context: None,
             scene_graph,
             renderer: None,
+            last_update: now,
+            delta_time: Duration::ZERO,
+            frame_count: 0,
+            fps_update_time: now,
+            current_fps: 0.0,
         }
+    }
+
+    /// Update game state (called every frame)
+    fn update(&mut self) {
+        let now = Instant::now();
+        self.delta_time = now.duration_since(self.last_update);
+        self.last_update = now;
+
+        // Update frame counter
+        self.frame_count += 1;
+
+        // Update FPS counter every second
+        let fps_elapsed = now.duration_since(self.fps_update_time);
+        if fps_elapsed >= Duration::from_secs(1) {
+            self.current_fps = self.frame_count as f64 / fps_elapsed.as_secs_f64();
+            self.frame_count = 0;
+            self.fps_update_time = now;
+
+            // Log FPS for debugging
+            println!(
+                "FPS: {:.1} | Frame time: {:.2}ms",
+                self.current_fps,
+                self.delta_time.as_secs_f64() * 1000.0
+            );
+        }
+
+        // Future: Update scene graph animations, physics, etc.
+        // For now, this is where frame-by-frame updates will happen
     }
 
     #[cfg(target_os = "macos")]
@@ -217,9 +262,25 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            // Game-style frame loop: update every frame
+            self.update();
+
+            // Request immediate redraw for continuous rendering
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+
+            // Optional: Sleep to maintain target frame rate
+            // This prevents excessive CPU usage while maintaining smooth updates
+            let frame_time = Instant::now().duration_since(self.last_update);
+            if frame_time < TARGET_FRAME_TIME {
+                std::thread::sleep(TARGET_FRAME_TIME - frame_time);
+            }
+
+            // Set control flow to poll continuously for game-style updates
+            event_loop.set_control_flow(ControlFlow::Poll);
         }
     }
 }

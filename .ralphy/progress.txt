@@ -140,3 +140,42 @@
 - Sample scene includes red rectangle (center), blue rectangle (top-left), green circle (right)
 - Comprehensive test coverage: node IDs, transforms, dirty tracking, visibility
 
+### Task: Build frame loop (game-style, updates every frame)
+
+**Status:** Complete
+
+**Changes:**
+- Implemented game-style frame loop with continuous update-render cycle
+- Added time tracking system with Instant for delta time measurement
+- Created update() method that runs every frame with delta time tracking
+- Implemented FPS counter that logs frame rate and frame time every second
+- Added frame rate limiting to target 60 FPS with configurable target frame time
+- Integrated frame sleep mechanism to prevent excessive CPU usage
+- Set event loop to ControlFlow::Poll for continuous updates
+- Added frame timing fields to App struct: last_update, delta_time, frame_count, fps_update_time, current_fps
+- All code compiles successfully with `cargo check`
+- Linting passes with `cargo clippy` (no warnings)
+
+**Files Modified:**
+- crates/app/src/main.rs (added frame loop timing and update mechanism)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Frame loop uses update-render pattern common in game engines
+- Update phase runs before rendering every frame
+- Delta time tracking enables frame-rate independent animations and physics
+- FPS counter provides debugging visibility into performance
+- Target frame time set to 60 FPS (16.67ms per frame)
+- Sleep mechanism prevents busy-waiting while maintaining smooth updates
+- Event loop uses ControlFlow::Poll for continuous game-style updates
+- Update method is designed to be extended with scene animations, physics, and state updates
+
+**Technical Details:**
+- Target FPS: 60 (configurable via TARGET_FPS constant)
+- Target frame time: 16,666 microseconds (1/60th of a second)
+- FPS logging occurs every 1 second with frame count averaging
+- Delta time calculated using Instant::now() and duration_since()
+- Frame limiting uses std::thread::sleep() when frame completes early
+- Borrow checker satisfied by checking window existence before update
+- Ready for future integration: animations, physics, input handling, state updates
+
