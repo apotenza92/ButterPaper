@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/ui",
+    "crates/render",
+    "crates/cache",
+    "crates/scheduler",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/pdf-editor"
+
+[workspace.dependencies]
+# Common dependencies will be added here as needed

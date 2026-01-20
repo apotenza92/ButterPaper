@@ -45,7 +45,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 ## Tasks
 
 ### Phase 1: Foundation
-- [ ] Initialize Rust workspace with Cargo.toml and workspace members (core, ui, render, cache, scheduler)
+- [x] Initialize Rust workspace with Cargo.toml and workspace members (core, ui, render, cache, scheduler)
 - [ ] Set up GPU abstraction layer with Metal backend for macOS
 - [ ] Create basic application window with GPU-rendered UI shell using metal-rs
 - [ ] Implement retained scene graph for UI rendering

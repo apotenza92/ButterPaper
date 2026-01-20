@@ -1,0 +1,29 @@
+# Ralphy Progress Log
+
+## 2026-01-21
+
+### Task: Initialize Rust workspace with Cargo.toml and workspace members (core, ui, render, cache, scheduler)
+
+**Status:** Complete
+
+**Changes:**
+- Created root Cargo.toml with workspace configuration
+- Created 5 workspace member crates in `crates/` directory:
+  - `pdf-editor-core`: Document core and state model
+  - `pdf-editor-ui`: UI/viewport compositor with GPU-rendered retained scene graph
+  - `pdf-editor-render`: PDF render pipeline with tile-based rendering
+  - `pdf-editor-cache`: Tile cache system with RAM, VRAM, and disk storage
+  - `pdf-editor-scheduler`: Job scheduler with priority queue and cancellable workers
+- Each crate includes proper Cargo.toml with workspace inheritance
+- Each crate includes lib.rs with module-level documentation
+- All crates compile successfully with `cargo check`
+- Linting passes with `cargo clippy` (no warnings)
+
+**Files Created:**
+- Cargo.toml (workspace root)
+- crates/core/Cargo.toml, crates/core/src/lib.rs
+- crates/ui/Cargo.toml, crates/ui/src/lib.rs
+- crates/render/Cargo.toml, crates/render/src/lib.rs
+- crates/cache/Cargo.toml, crates/cache/src/lib.rs
+- crates/scheduler/Cargo.toml, crates/scheduler/src/lib.rs
+
