@@ -179,3 +179,63 @@
 - Borrow checker satisfied by checking window existence before update
 - Ready for future integration: animations, physics, input handling, state updates
 
+### Task: Integrate PDF parsing library (pdfium or mupdf bindings)
+
+**Status:** Complete
+
+**Changes:**
+- Added pdfium-render v0.8 dependency to pdf-editor-render crate
+- Created comprehensive PDF document abstraction in crates/render/src/pdf.rs
+- Implemented PdfDocument struct wrapping PDFium with high-level operations
+- Added PdfError enum with detailed error types for PDF operations
+- Implemented PdfDocument::open() for loading PDFs from file paths
+- Implemented PdfDocument::from_bytes() for loading PDFs from memory
+- Added page_count() method to query document page count
+- Added get_page() method to retrieve pages by zero-based index
+- Implemented metadata() method to extract PDF metadata (title, author, subject, creator, producer)
+- Created PdfMetadata struct to hold document metadata
+- Created PageDimensions struct for future page dimension queries
+- Added comprehensive error handling with PdfResult type alias
+- Used Box::leak pattern to satisfy PDFium's 'static lifetime requirements
+- All code compiles successfully with `cargo check`
+- Linting passes with `cargo clippy -- -D warnings` (no warnings)
+
+**Files Created:**
+- crates/render/src/pdf.rs (PDF document abstraction layer)
+
+**Files Modified:**
+- crates/render/Cargo.toml (added pdfium-render dependency)
+- crates/render/src/lib.rs (added pdf module export)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Chose pdfium-render over mupdf bindings for its idiomatic Rust API and Chrome-proven reliability
+- PDFium library initialization tries local library first, falls back to system library
+- Document struct uses 'static lifetime by leaking Pdfium instance (acceptable for long-lived documents)
+- Error handling uses custom PdfError enum with Display and Error trait implementations
+- Metadata extraction uses PDFium's metadata API with proper Option handling
+- API designed to be thread-safe and zero-copy where possible
+- Future-ready for tile-based rendering integration (PageDimensions struct prepared)
+
+**Technical Details:**
+- pdfium-render version: 0.8.37
+- Supports loading from file paths via PdfDocument::open()
+- Supports loading from owned byte vectors via PdfDocument::from_bytes()
+- Page indexing is zero-based (consistent with Rust conventions)
+- Metadata fields are optional (returned as Option<String>)
+- Error types cover initialization, loading, invalid pages, and rendering
+- Unit tests verify error display formatting and metadata defaults
+
+**Research Summary:**
+PDFium was selected based on:
+- High-performance rendering (used by Google Chromium)
+- Active Rust bindings maintenance (pdfium-render crate)
+- Built-in tile rendering support for future phases
+- Thread-safe operation via mutex-based access
+- Cross-platform support (macOS, Windows, Linux)
+
+Sources:
+- [pdfium-render - Rust](https://docs.rs/pdfium-render)
+- [GitHub - ajrcarey/pdfium-render](https://github.com/ajrcarey/pdfium-render)
+- [PDFium in 2025: Secure, high-performance PDF rendering](https://www.nutrient.io/blog/why-pdfium-is-a-trusted-platform-for-pdf-rendering/)
+
