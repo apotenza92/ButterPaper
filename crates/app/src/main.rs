@@ -3,6 +3,8 @@
 //! Main application entry point with GPU-rendered UI shell.
 
 use pdf_editor_ui::gpu;
+use pdf_editor_ui::renderer::SceneRenderer;
+use pdf_editor_ui::scene::{Color, Primitive, Rect, SceneGraph};
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -10,6 +12,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated)]
 use cocoa::base::id as cocoa_id;
 #[cfg(target_os = "macos")]
 use core_graphics_types::geometry::CGSize;
@@ -28,10 +31,35 @@ struct App {
     #[cfg(target_os = "macos")]
     device: Option<Device>,
     gpu_context: Option<Box<dyn gpu::GpuContext>>,
+    scene_graph: SceneGraph,
+    renderer: Option<SceneRenderer>,
 }
 
 impl App {
     fn new() -> Self {
+        // Create a sample scene graph with some test primitives
+        let mut scene_graph = SceneGraph::new();
+        let root = scene_graph.root_mut();
+
+        // Add a red rectangle in the center
+        root.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(500.0, 300.0, 200.0, 200.0),
+            color: Color::rgb(0.8, 0.2, 0.2),
+        });
+
+        // Add a blue rectangle in the top-left
+        root.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(50.0, 50.0, 150.0, 100.0),
+            color: Color::rgb(0.2, 0.2, 0.8),
+        });
+
+        // Add a green circle
+        root.add_primitive(Primitive::Circle {
+            center: [900.0, 400.0],
+            radius: 75.0,
+            color: Color::rgb(0.2, 0.8, 0.2),
+        });
+
         Self {
             window: None,
             #[cfg(target_os = "macos")]
@@ -39,10 +67,13 @@ impl App {
             #[cfg(target_os = "macos")]
             device: None,
             gpu_context: None,
+            scene_graph,
+            renderer: None,
         }
     }
 
     #[cfg(target_os = "macos")]
+    #[allow(deprecated)]
     fn setup_metal_layer(&mut self, window: &Window) {
         // Get the raw window handle
         let window_handle = window.window_handle().unwrap();
@@ -81,7 +112,16 @@ impl App {
         #[cfg(target_os = "macos")]
         if let Some(layer) = &self.metal_layer {
             if let Some(drawable) = layer.next_drawable() {
-                // Create a simple render pass that clears to a dark gray
+                // Render the scene graph using our renderer
+                if let (Some(gpu_context), Some(renderer)) = (&mut self.gpu_context, &mut self.renderer) {
+                    // Render scene graph (currently just validates the structure)
+                    if let Err(e) = renderer.render(gpu_context.as_mut(), &self.scene_graph) {
+                        eprintln!("Scene render failed: {}", e);
+                    }
+                }
+
+                // Create a render pass that clears to a dark gray
+                // In a full implementation, the scene renderer would draw primitives here
                 if let Some(device) = &self.device {
                     let command_queue = device.new_command_queue();
                     let command_buffer = command_queue.new_command_buffer();
@@ -127,6 +167,17 @@ impl ApplicationHandler for App {
             // Initialize GPU context
             match gpu::create_context() {
                 Ok(context) => {
+                    // Initialize scene renderer
+                    match SceneRenderer::new(context.as_ref()) {
+                        Ok(renderer) => {
+                            self.renderer = Some(renderer);
+                            println!("Scene renderer initialized successfully");
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to initialize scene renderer: {}", e);
+                        }
+                    }
+
                     self.gpu_context = Some(context);
                     println!("GPU context initialized successfully");
                 }

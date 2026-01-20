@@ -96,3 +96,47 @@
 - Clear color: RGB(0.2, 0.2, 0.2) dark gray
 - Dependencies: winit 0.30, raw-window-handle 0.6, metal 0.29, cocoa 0.26, core-graphics-types 0.1
 
+### Task: Implement retained scene graph for UI rendering
+
+**Status:** Complete
+
+**Changes:**
+- Created comprehensive scene graph system in `pdf-editor-ui` crate
+- Implemented SceneNode with hierarchical structure and dirty tracking
+- Added Transform system for 2D transformations (translation, scale, rotation)
+- Created Primitive enum for GPU-renderable shapes (Rectangle, TexturedQuad, Line, Circle)
+- Implemented SceneGraph with automatic transform propagation
+- Added RenderCommand system for flattening scene graph to GPU commands
+- Created SceneRenderer to integrate scene graph with GPU backend
+- Integrated scene graph into main application with sample primitives
+- Added comprehensive unit tests for scene graph functionality
+- All code compiles successfully with `cargo check`
+- Linting passes with `cargo clippy` (no warnings)
+
+**Files Created:**
+- crates/ui/src/scene.rs (retained scene graph implementation)
+- crates/ui/src/renderer.rs (scene graph GPU renderer)
+
+**Files Modified:**
+- crates/ui/src/lib.rs (added scene and renderer modules)
+- crates/app/src/main.rs (integrated scene graph with sample primitives)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Scene graph uses Arc<SceneNode> for efficient sharing and cloning
+- Dirty tracking system minimizes unnecessary re-renders
+- Transform system uses hierarchical composition (parent → child)
+- Render commands flatten the scene graph into GPU-ready primitives with world transforms
+- Visibility culling at node level (invisible nodes don't generate render commands)
+- NodeId system provides unique identifiers for scene nodes
+- Renderer abstraction allows scene graph to work with any GPU backend
+
+**Technical Details:**
+- SceneNode supports arbitrary hierarchy depth via Vec<Arc<SceneNode>>
+- Transform uses simplified 2D transform (translation, scale, rotation)
+- Color uses RGBA with f32 components (0.0 to 1.0 range)
+- Primitives include: Rectangle, TexturedQuad, Line, Circle
+- Scene graph traversal is depth-first, preserving render order
+- Sample scene includes red rectangle (center), blue rectangle (top-left), green circle (right)
+- Comprehensive test coverage: node IDs, transforms, dirty tracking, visibility
+
