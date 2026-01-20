@@ -879,3 +879,118 @@ Sources:
 - ConfigError enum with Display and Error traits for idiomatic error handling
 - Byte-level internal storage with MB-level API (balances precision and usability)
 
+### Task: Create job scheduler with priority queue
+
+**Status:** Complete
+
+**Changes:**
+- Created comprehensive priority queue system in crates/scheduler/src/priority.rs
+- Implemented JobPriority enum with 5 priority levels (Visible, Margin, Adjacent, Thumbnails, Ocr)
+- Created JobType enum for different job types (RenderTile, LoadFile, GenerateThumbnail, RunOcr)
+- Implemented Job struct with priority and insertion order tracking
+- Created PriorityQueue with thread-safe Arc<Mutex<QueueState>> for concurrent access
+- Added priority-based ordering using BinaryHeap (max heap)
+- Implemented FIFO ordering within same priority level using insertion counter
+- Created JobScheduler in crates/scheduler/src/scheduler.rs with high-level API
+- Added comprehensive statistics tracking (jobs submitted, completed, cancelled)
+- Implemented job cancellation by ID, by predicate, and by page
+- Added 21 comprehensive unit tests covering all functionality
+- All tests pass successfully
+- Linting passes with `cargo clippy -- -D warnings` (no warnings)
+
+**Files Created:**
+- crates/scheduler/src/priority.rs (priority queue implementation)
+- crates/scheduler/src/scheduler.rs (job scheduler implementation)
+
+**Files Modified:**
+- crates/scheduler/src/lib.rs (added modules and public API exports)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Thread-safe design using Arc<Mutex> for multi-threaded access
+- Priority ordering: Visible (highest) > Margin > Adjacent > Thumbnails > Ocr (lowest)
+- FIFO ordering within same priority level via insertion counter
+- Job uniquely identified by JobId (u64)
+- JobType enum supports multiple job types with parameters
+- Scheduler provides high-level API with submit(), next_job(), complete_job()
+- Cancellation support: by ID, by predicate, by page, or all except predicate
+- Statistics tracking for monitoring and debugging
+- BinaryHeap provides O(log n) push and pop operations
+
+**Technical Details:**
+- JobPriority enum values: Ocr = 0, Thumbnails = 1, Adjacent = 2, Margin = 3, Visible = 4
+- JobType variants:
+  - RenderTile: page_index, tile_x, tile_y, zoom_level, rotation, is_preview
+  - LoadFile: path
+  - GenerateThumbnail: page_index, width, height
+  - RunOcr: page_index
+- Job ordering: first by priority (higher first), then by insertion order (FIFO)
+- PriorityQueue API: push(), pop(), peek(), len(), is_empty(), clear(), remove_if(), jobs()
+- JobScheduler API: submit(), next_job(), complete_job(), cancel_job(), cancel_page_jobs(), cancel_all_except()
+- SchedulerStats: jobs_submitted, jobs_completed, jobs_cancelled, queue_size, pending_jobs()
+- Comprehensive test coverage: 21 tests covering ordering, cancellation, statistics
+
+**Test Coverage:**
+Priority queue tests:
+1. test_job_priority_ordering - Verify priority enum ordering
+2. test_priority_queue_basic - Basic push/pop operations
+3. test_priority_queue_ordering - Jobs pop in priority order
+4. test_fifo_within_same_priority - FIFO ordering within priority level
+5. test_peek - Peek without removing
+6. test_clear - Clear all jobs
+7. test_remove_if - Remove jobs by predicate
+8. test_jobs_inspection - Get all jobs for debugging
+9. test_default - Default constructor
+10. test_mixed_priority_fifo - Mixed priority FIFO ordering
+
+Scheduler tests:
+11. test_scheduler_basic - Basic submit/next/complete flow
+12. test_scheduler_priority_ordering - Jobs execute in priority order
+13. test_cancel_job - Cancel by ID
+14. test_cancel_job_not_found - Handle missing job cancellation
+15. test_cancel_page_jobs - Cancel all jobs for a page
+16. test_cancel_all_except - Cancel all except matching predicate
+17. test_clear - Clear all jobs
+18. test_peek_next_job - Peek at next job
+19. test_stats - Statistics tracking
+20. test_default - Default constructor
+21. test_pending_jobs_list - Get pending jobs list
+
+**Integration Points:**
+- Ready for Phase 4: Cancellation tokens (next task)
+- Ready for Phase 4: Render worker pool (submit jobs, workers call next_job())
+- Ready for Phase 4: IO thread (handle LoadFile jobs)
+- Ready for Phase 4: Job priority ordering (visible > margin > adjacent > thumbnails > OCR)
+- Ready for Phase 5: Document loading (submit tile render jobs)
+- Ready for Phase 6: Viewport compositor (submit visible tile jobs)
+- Ready for Phase 7: Annotation engine (submit annotation render jobs)
+- Ready for Phase 8: CAD measurement (submit measurement render jobs)
+- Ready for Phase 9: OCR subsystem (submit OCR jobs with lowest priority)
+- JobType extensible for future job types (e.g., annotation rendering, measurement calculation)
+
+**Design Decisions:**
+- Used BinaryHeap for efficient priority-based ordering (O(log n) operations)
+- Insertion counter ensures FIFO within priority levels (prevents starvation)
+- Thread-safe design enables concurrent job submission from multiple threads
+- Job cancellation by predicate enables flexible cancellation strategies
+- Separate cancel_page_jobs() method for common use case (page navigation)
+- Statistics tracking provides visibility into scheduler performance
+- JobType enum with parameters avoids trait objects (simpler, faster)
+- JobId as u64 provides unique identifiers without UUID dependency
+- Default trait implementation for idiomatic Rust usage
+
+**Performance Characteristics:**
+- push(): O(log n) for heap insertion
+- pop(): O(log n) for heap extraction
+- peek(): O(1) for heap peek
+- remove_if(): O(n log n) for filtering and rebuilding heap
+- cancel_job(): O(n log n) for single job removal
+- Thread-safe operations via mutex (contention possible under heavy load)
+
+**User Experience Benefits:**
+- Visible tiles render first (immediate visual feedback)
+- Background tasks (OCR, thumbnails) run at low priority (don't block UI)
+- Page navigation cancels old page jobs (responsive navigation)
+- Job statistics provide debugging visibility
+- Flexible cancellation enables responsive UI (e.g., cancel on scroll)
+

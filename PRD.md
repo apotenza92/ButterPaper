@@ -67,7 +67,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Add user-configurable cache size and location
 
 ### Phase 4: Job Scheduler
-- [ ] Create job scheduler with priority queue
+- [x] Create job scheduler with priority queue
 - [ ] Implement cancellation tokens for jobs
 - [ ] Build render worker pool (separate from UI thread)
 - [ ] Build IO thread for file operations
