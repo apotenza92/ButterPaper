@@ -53,10 +53,10 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 
 ### Phase 2: PDF Rendering Pipeline
 - [x] Integrate PDF parsing library (pdfium or mupdf bindings)
-- [ ] Implement tile-based page rendering with fixed-size tiles
-- [ ] Create tile identity system (content hash, page, zoom, coords, profile, rotation)
-- [ ] Build preview render profile (fast, lower fidelity)
-- [ ] Build crisp render profile (high fidelity)
+- [x] Implement tile-based page rendering with fixed-size tiles
+- [x] Create tile identity system (content hash, page, zoom, coords, profile, rotation)
+- [x] Build preview render profile (fast, lower fidelity)
+- [x] Build crisp render profile (high fidelity)
 - [ ] Implement progressive tile loading (preview first, then crisp)
 
 ### Phase 3: Caching System
