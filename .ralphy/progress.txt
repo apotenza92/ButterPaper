@@ -293,3 +293,66 @@ Sources:
 - Ready for Phase 6 viewport compositor (RenderedTile provides GPU-ready pixel data)
 - Prepared for future optimizations: viewport-based rendering, progressive loading
 
+### Task: Implement progressive tile loading (preview first, then crisp)
+
+**Status:** Complete
+
+**Changes:**
+- Created comprehensive progressive tile loading system in crates/render/src/progressive.rs
+- Implemented TileState enum to track tile loading state (NotLoaded, PreviewLoaded, CrispLoaded)
+- Created ProgressiveTileLoader struct with two-stage loading strategy
+- Implemented load_tile() method for loading individual tiles progressively (preview → crisp)
+- Implemented load_page_tiles() method for loading all tiles for a page progressively
+- Added ProgressCallback system for progress notifications during loading
+- Implemented tile state tracking with thread-safe HashMap wrapped in Arc<Mutex>
+- Added get_tile_state() method to query current state of any tile
+- Added clear_states() method to reset loader state
+- Added tracked_tile_count() method for monitoring loaded tiles
+- Created comprehensive unit tests for state tracking and callback mechanism
+- All code compiles successfully with `cargo check`
+- Linting passes with `cargo clippy -- -D warnings` (no warnings)
+
+**Files Created:**
+- crates/render/src/progressive.rs (progressive tile loading implementation)
+
+**Files Modified:**
+- crates/render/src/lib.rs (added progressive module export)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Two-stage loading strategy: preview tiles rendered first, then crisp tiles replace them
+- Preview stage uses TileProfile::Preview (fast rendering without form data)
+- Crisp stage uses TileProfile::Crisp (high-quality rendering with print quality)
+- State tracking enables cache integration and prevents duplicate rendering
+- ProgressCallback allows UI updates as tiles load (e.g., for progress bars or visual feedback)
+- Thread-safe state tracking via Arc<Mutex<HashMap>> for concurrent access
+- Callback invoked for each stage completion with tile ID, state, and rendered data
+- load_tile() loads a single tile in two stages, returning both preview and crisp
+- load_page_tiles() loads entire page: all previews first, then all crisp tiles
+- State management separated from rendering logic for clean architecture
+
+**Technical Details:**
+- TileState enum: NotLoaded, PreviewLoaded, CrispLoaded
+- ProgressCallback: Arc<dyn Fn(TileId, TileState, &RenderedTile) + Send + Sync>
+- State tracking uses TileId as key (includes profile distinction)
+- get_tile_state() returns NotLoaded for untracked tiles (safe default)
+- clear_states() useful for document switching or memory management
+- tracked_tile_count() provides visibility into loader memory usage
+- Comprehensive test coverage: state tracking, clearing, callback structure, loader creation
+- Preview-first strategy provides immediate visual feedback (critical for UX)
+- Crisp tiles upgrade preview tiles for final high-quality display
+
+**Integration Points:**
+- Ready for Phase 3 caching system (state tracking prevents re-rendering cached tiles)
+- Ready for Phase 4 job scheduler (progressive loading fits priority-based scheduling)
+- Ready for Phase 5 document loading (fast first-page preview → crisp upgrade)
+- Ready for Phase 6 viewport (callback enables real-time tile display updates)
+- Callback system designed for GPU texture upload notifications
+- State management enables intelligent prefetching decisions
+
+**User Experience Benefits:**
+- Immediate visual feedback: preview tiles load first (fast)
+- Progressive refinement: crisp tiles upgrade quality without blocking UI
+- Perceived performance: user sees content quickly, quality improves automatically
+- Perfect for large documents: prioritize visible content, upgrade quality progressively
+

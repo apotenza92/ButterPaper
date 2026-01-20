@@ -57,7 +57,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Create tile identity system (content hash, page, zoom, coords, profile, rotation)
 - [x] Build preview render profile (fast, lower fidelity)
 - [x] Build crisp render profile (high fidelity)
-- [ ] Implement progressive tile loading (preview first, then crisp)
+- [x] Implement progressive tile loading (preview first, then crisp)
 
 ### Phase 3: Caching System
 - [ ] Build RAM tile cache with LRU eviction
