@@ -13,9 +13,9 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 
 ## Target Platforms
 
-- Windows (DirectX)
-- macOS (Metal)
-- Linux (Vulkan)
+- **macOS (Metal)** - primary development target
+- Windows (DirectX) - future
+- Linux (Vulkan) - future
 
 ## Architecture Overview
 
@@ -46,9 +46,8 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 
 ### Phase 1: Foundation
 - [ ] Initialize Rust workspace with Cargo.toml and workspace members (core, ui, render, cache, scheduler)
-- [ ] Set up GPU abstraction layer supporting Metal, DirectX, Vulkan, and software fallback
-- [ ] Implement GPU backend selection at startup with graceful fallback
-- [ ] Create basic application window with GPU-rendered UI shell
+- [ ] Set up GPU abstraction layer with Metal backend for macOS
+- [ ] Create basic application window with GPU-rendered UI shell using metal-rs
 - [ ] Implement retained scene graph for UI rendering
 - [ ] Build frame loop (game-style, updates every frame)
 
@@ -131,5 +130,4 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [ ] Ensure large PDFs open without UI stalls
 - [ ] Verify page flipping feels instantaneous
 - [ ] Test reopening cached documents (must feel instant)
-- [ ] Add software fallback verification (slower but functional)
-- [ ] Cross-platform testing (Windows, macOS, Linux)
+- [ ] Test on macOS with Metal rendering

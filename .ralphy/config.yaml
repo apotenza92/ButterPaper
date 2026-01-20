@@ -26,7 +26,8 @@ rules:
   - "Measurements use PDF coordinate precision - no rounding until display"
   - "Annotations stored as immutable geometry with stable IDs"
   - "No telemetry, no network access, no cloud dependencies"
-  - "Cross-platform code must work identically on Windows, macOS, and Linux"
+  - "Target macOS with Metal for now - keep GPU abstraction layer for future cross-platform support"
+  - "Use metal-rs crate for Metal bindings"
 
 boundaries:
   never_touch:
