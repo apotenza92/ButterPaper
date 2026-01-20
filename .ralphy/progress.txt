@@ -58,3 +58,41 @@
 - Buffer usage flags prepared for vertex, index, and uniform buffers
 - Frame begin/end hooks ready for rendering pipeline integration
 
+### Task: Create basic application window with GPU-rendered UI shell using metal-rs
+
+**Status:** Complete
+
+**Changes:**
+- Created new binary crate `pdf-editor` in `crates/app` as the main application entry point
+- Implemented cross-platform windowing using winit 0.30
+- Set up Metal rendering pipeline with MetalLayer for GPU-accelerated rendering
+- Implemented basic event loop with ApplicationHandler trait
+- Added window event handling (close, resize, redraw)
+- Integrated with GPU abstraction layer from pdf-editor-ui crate
+- Created simple render pass that clears the window with dark gray color
+- Set up frame-by-frame rendering loop (game-style updates)
+- All code compiles successfully with `cargo check`
+- Linting passes with `cargo clippy` (5 deprecation warnings from cocoa crate are expected)
+
+**Files Created:**
+- crates/app/Cargo.toml (binary crate configuration)
+- crates/app/src/main.rs (application entry point with windowing and rendering)
+
+**Files Modified:**
+- Cargo.toml (added app crate to workspace members)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Application uses winit for cross-platform window management
+- Metal layer is attached directly to the native window view on macOS
+- Rendering uses event-driven model with continuous redraw requests
+- Window size changes update Metal drawable size automatically
+- GPU context initialization is separate from window creation for better modularity
+- Current implementation renders a solid color, ready for scene graph integration
+
+**Technical Details:**
+- Window size: 1200x800 pixels (default)
+- Metal pixel format: BGRA8Unorm_sRGB
+- Clear color: RGB(0.2, 0.2, 0.2) dark gray
+- Dependencies: winit 0.30, raw-window-handle 0.6, metal 0.29, cocoa 0.26, core-graphics-types 0.1
+
