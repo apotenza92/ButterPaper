@@ -356,3 +356,101 @@ Sources:
 - Perceived performance: user sees content quickly, quality improves automatically
 - Perfect for large documents: prioritize visible content, upgrade quality progressively
 
+### Task: Build RAM tile cache with LRU eviction
+
+**Status:** Complete
+
+**Changes:**
+- Created comprehensive RAM tile cache system in crates/cache/src/ram.rs
+- Implemented CachedTile struct to store pixel data with metadata (key, pixels, width, height)
+- Created CacheStats struct for tracking cache performance (hits, misses, evictions, memory usage)
+- Implemented RamTileCache with thread-safe Arc<Mutex<CacheState>> for concurrent access
+- Added LRU (Least Recently Used) eviction policy using VecDeque for tracking access order
+- Implemented automatic eviction when memory limit is exceeded
+- Created comprehensive API: put(), get(), contains(), remove(), clear()
+- Added cache statistics tracking: hit rate, miss rate, memory utilization
+- Implemented configurable memory limits with dynamic adjustment
+- Added 13 comprehensive unit tests covering all functionality
+- All tests pass successfully
+- Linting passes with `cargo clippy -- -D warnings` (no warnings)
+
+**Files Created:**
+- crates/cache/src/ram.rs (RAM tile cache implementation)
+
+**Files Modified:**
+- crates/cache/src/lib.rs (added ram module and exports)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Thread-safe design using Arc<Mutex> for multi-threaded access
+- LRU eviction uses VecDeque: front = least recently used, back = most recently used
+- Cache key is u64 hash (compatible with TileId::cache_key() from render crate)
+- Memory tracking at byte level for precise budget management
+- Automatic eviction ensures memory limit is never exceeded
+- get() updates LRU order (marks tile as recently used)
+- contains() checks presence without affecting LRU order (useful for preflight checks)
+- Statistics enable performance monitoring and debugging
+- CachedTile cloning is efficient for retrieval (pixels are Vec<u8>)
+
+**Technical Details:**
+- Default memory limit: 256MB (configurable via constructor or with_mb_limit())
+- CacheKey type: u64 (hash from TileId)
+- Memory tracking includes only pixel data (Vec<u8> heap allocation)
+- LRU eviction: O(n) worst case for queue manipulation, but fast in practice
+- Touch operation removes and re-adds key to back of queue (marks as most recent)
+- Eviction continues until sufficient space is available for new tile
+- put() with existing key updates the tile (replaces old data)
+- Statistics track: tile_count, memory_used, hits, misses, evictions
+- Helper methods: hit_rate() and memory_utilization() for easy monitoring
+- set_memory_limit() dynamically adjusts limit and evicts if needed
+
+**API Summary:**
+- `new(memory_limit)` - Create cache with byte limit
+- `with_mb_limit(megabytes)` - Create cache with MB limit
+- `put(key, pixels, width, height)` - Store tile (auto-evicts if needed)
+- `get(key)` - Retrieve tile (updates LRU, tracks hit/miss)
+- `contains(key)` - Check presence (no LRU update)
+- `remove(key)` - Explicitly remove tile
+- `clear()` - Remove all tiles
+- `stats()` - Get cache statistics
+- `set_memory_limit(bytes)` - Update memory limit
+- `memory_limit()`, `memory_used()`, `tile_count()` - Query current state
+
+**Test Coverage:**
+1. test_basic_put_get - Basic storage and retrieval
+2. test_cache_miss - Miss tracking and statistics
+3. test_lru_eviction - Automatic eviction when limit exceeded
+4. test_lru_ordering - LRU ordering based on access patterns
+5. test_contains - Presence checking without LRU update
+6. test_remove - Explicit tile removal
+7. test_clear - Clear all tiles
+8. test_stats - Statistics tracking (hits, misses, rates)
+9. test_memory_tracking - Accurate memory usage tracking
+10. test_set_memory_limit - Dynamic limit adjustment with eviction
+11. test_update_existing_tile - Updating existing cache entries
+12. test_default_cache - Default 256MB limit
+13. test_with_mb_limit - MB-based constructor
+
+**Integration Points:**
+- Ready for Phase 3: GPU texture cache (similar LRU strategy for VRAM)
+- Ready for Phase 3: Disk cache (can use RAM cache as L1, disk as L2)
+- Ready for Phase 4: Job scheduler (check cache before scheduling render jobs)
+- Ready for Phase 5: Document loading (cache enables fast reopening)
+- Ready for Phase 6: Viewport compositor (retrieve tiles from cache for display)
+- CacheKey compatible with TileId::cache_key() from render crate
+- Thread-safe design enables concurrent access from render workers
+
+**Performance Characteristics:**
+- put(): O(n) worst case for eviction, O(1) average for insertion
+- get(): O(n) for LRU update (VecDeque retain), but fast for small caches
+- contains(): O(1) HashMap lookup
+- remove(): O(n) for LRU queue update
+- clear(): O(1) with deallocation
+- Memory overhead: ~24 bytes per entry (HashMap + VecDeque nodes)
+
+**Future Optimizations:**
+- Could use a doubly-linked list for O(1) LRU updates (more complex implementation)
+- Could implement approximate LRU with lower overhead (trade accuracy for speed)
+- Could add cache warming strategies (preload commonly used tiles)
+- Could implement multi-level caching (RAM → VRAM → Disk)
+

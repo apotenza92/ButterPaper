@@ -60,7 +60,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Implement progressive tile loading (preview first, then crisp)
 
 ### Phase 3: Caching System
-- [ ] Build RAM tile cache with LRU eviction
+- [x] Build RAM tile cache with LRU eviction
 - [ ] Build GPU texture cache (VRAM) with separate budget
 - [ ] Build persistent disk cache (content-addressed)
 - [ ] Implement non-blocking cache reads
