@@ -624,4 +624,249 @@ mod tests {
         let metadata_overhead = std::mem::size_of::<TileId>() + std::mem::size_of::<u32>() * 2;
         assert!(metadata_overhead < 100, "Tile metadata overhead too large");
     }
+
+    // ================================================================================
+    // Tests for 100MB+ PDF handling (Phase 4.2)
+    // ================================================================================
+    //
+    // These tests validate tile rendering calculations for very large PDFs (100MB+).
+    // A 100MB+ PDF typically contains 1000-2000 pages with images or dense content.
+    // The tile system must efficiently handle these documents without excessive
+    // memory allocation or performance degradation.
+
+    #[test]
+    fn test_tile_grid_for_1000_page_pdf() {
+        // Simulate a 1000+ page PDF (typical for 100MB+ document with images)
+        let renderer = TileRenderer::new();
+        let page_count = 1000;
+        let page_width = 612.0_f32; // US Letter
+        let page_height = 792.0_f32;
+
+        // At 100% zoom
+        let (cols, rows) = renderer.calculate_tile_grid(page_width, page_height, 100);
+        let tiles_per_page = cols * rows;
+        assert_eq!(tiles_per_page, 12);
+
+        // Total tiles needed
+        let total_tiles = page_count * tiles_per_page as usize;
+        assert_eq!(total_tiles, 12000);
+
+        // Verify we can generate unique cache keys for all pages
+        let mut cache_keys = std::collections::HashSet::new();
+        for page_index in 0..page_count {
+            for tile_y in 0..rows {
+                for tile_x in 0..cols {
+                    let tile_id = TileId::new(
+                        page_index as u16,
+                        TileCoordinate::new(tile_x, tile_y),
+                        100,
+                        0,
+                        TileProfile::Preview,
+                    );
+                    cache_keys.insert(tile_id.cache_key());
+                }
+            }
+        }
+
+        // All cache keys should be unique
+        assert_eq!(cache_keys.len(), total_tiles);
+    }
+
+    #[test]
+    fn test_tile_memory_estimation_for_100mb_pdf() {
+        // Calculate memory requirements for a 100MB+ PDF (~1000 pages)
+        let page_count = 1000;
+        let tiles_per_page = 12; // US Letter at 100%
+        let tile_byte_size = 256 * 256 * 4; // RGBA
+
+        // If we cached ALL tiles in RAM, this would be the requirement
+        let total_memory_all_tiles = page_count * tiles_per_page * tile_byte_size;
+        assert_eq!(total_memory_all_tiles, 3_145_728_000); // ~3GB - clearly too much!
+
+        // With progressive loading (Phase 4.2), we should only cache:
+        // - Current viewport tiles: ~12 tiles
+        // - Preview tiles for nearby pages: ~24 tiles (2 pages ahead/behind)
+        // - Navigation buffer: ~60 tiles (5 pages)
+        // Total working set: ~100 tiles
+
+        let working_set_tiles = 100;
+        let working_set_memory = working_set_tiles * tile_byte_size;
+
+        // Working set should be under 30MB
+        assert!(
+            working_set_memory < 30_000_000,
+            "Working set too large: {} bytes",
+            working_set_memory
+        );
+
+        // Verify we can store metadata for all pages efficiently
+        let tile_id_size = std::mem::size_of::<TileId>();
+        let all_metadata_size = page_count * tiles_per_page * tile_id_size;
+
+        // Metadata for all tiles should be under 1MB
+        assert!(
+            all_metadata_size < 1_000_000,
+            "Tile metadata too large: {} bytes",
+            all_metadata_size
+        );
+    }
+
+    #[test]
+    fn test_tile_id_generation_performance_for_1000_pages() {
+        use std::time::Instant;
+
+        let page_count = 1000;
+        let tiles_per_page = 12;
+        let total_tiles = page_count * tiles_per_page;
+
+        let start = Instant::now();
+
+        // Generate tile IDs for all pages
+        let mut tile_ids = Vec::with_capacity(total_tiles);
+        for page_index in 0..page_count {
+            for tile_y in 0..4_u32 {
+                for tile_x in 0..3_u32 {
+                    let tile_id = TileId::new(
+                        page_index as u16,
+                        TileCoordinate::new(tile_x, tile_y),
+                        100,
+                        0,
+                        TileProfile::Preview,
+                    );
+                    tile_ids.push(tile_id);
+                }
+            }
+        }
+
+        let elapsed = start.elapsed();
+
+        // Should be fast even for 12,000 tile IDs (under 200ms)
+        assert!(
+            elapsed.as_millis() < 200,
+            "Tile ID generation for 1000 pages took too long: {:?}",
+            elapsed
+        );
+        assert_eq!(tile_ids.len(), total_tiles);
+    }
+
+    #[test]
+    fn test_cache_key_uniqueness_for_1000_pages() {
+        // Verify no cache key collisions across 1000 pages
+        let mut cache_keys = Vec::new();
+
+        for page_index in 0..1000_u16 {
+            for tile_y in 0..4_u32 {
+                for tile_x in 0..3_u32 {
+                    let tile_id = TileId::new(
+                        page_index,
+                        TileCoordinate::new(tile_x, tile_y),
+                        100,
+                        0,
+                        TileProfile::Preview,
+                    );
+                    cache_keys.push(tile_id.cache_key());
+                }
+            }
+        }
+
+        // Check for collisions
+        let unique_keys: std::collections::HashSet<_> = cache_keys.iter().collect();
+        assert_eq!(
+            unique_keys.len(),
+            cache_keys.len(),
+            "Cache key collision detected for 1000-page PDF"
+        );
+    }
+
+    #[test]
+    fn test_zoom_scaling_for_100mb_pdf() {
+        // Test that zoom calculations remain accurate for large documents
+        let renderer = TileRenderer::new();
+
+        // High-res page (common in scanned PDFs - 8.5x11 at 300 DPI = 2550x3300 pixels)
+        let page_width = 2550.0_f32;
+        let page_height = 3300.0_f32;
+
+        // At various zoom levels
+        let zoom_levels = [25, 50, 100, 200, 400];
+        let mut tile_counts = Vec::new();
+
+        for zoom in zoom_levels {
+            let (cols, rows) = renderer.calculate_tile_grid(page_width, page_height, zoom);
+            let tiles = cols * rows;
+            tile_counts.push((zoom, tiles));
+        }
+
+        // At 25% zoom, should need few tiles
+        assert!(tile_counts[0].1 <= 12, "Too many tiles at 25% zoom");
+
+        // At 400% zoom, should need many tiles
+        // 2550*4/256 = 40 cols, 3300*4/256 = 52 rows = ~2000 tiles per page
+        assert!(tile_counts[4].1 >= 1000, "Not enough tiles at 400% zoom");
+
+        // Tile count should scale roughly with zoom^2
+        let ratio = tile_counts[4].1 as f64 / tile_counts[2].1 as f64;
+        assert!(ratio > 10.0, "Zoom scaling incorrect: ratio = {}", ratio);
+    }
+
+    #[test]
+    fn test_viewport_tile_calculation_for_large_pdf() {
+        // Verify that viewport-based tile calculations work for large documents
+        let renderer = TileRenderer::new();
+
+        // Simulate a 4K display viewport (3840x2160)
+        let viewport_width = 3840.0_f32;
+        let viewport_height = 2160.0_f32;
+
+        // At 100% zoom, how many tiles does the viewport need?
+        let (viewport_cols, viewport_rows) =
+            renderer.calculate_tile_grid(viewport_width, viewport_height, 100);
+        let viewport_tiles = viewport_cols * viewport_rows;
+
+        // A 4K viewport should need ~120 tiles max at 100% zoom
+        // (3840/256 = 15 cols, 2160/256 = 9 rows = 135 tiles)
+        assert!(
+            viewport_tiles <= 150,
+            "Too many viewport tiles: {}",
+            viewport_tiles
+        );
+
+        // Even for a 1000-page PDF, the visible tile count is bounded
+        // by viewport size, not document size
+        let page_count = 1000;
+        let _total_document_tiles = page_count * 12; // 12,000 tiles total
+
+        // But we only ever render viewport_tiles at once
+        assert!(
+            viewport_tiles < 200,
+            "Viewport tiles should be bounded: {}",
+            viewport_tiles
+        );
+    }
+
+    #[test]
+    fn test_tile_profile_memory_efficiency() {
+        // Test that different tile profiles are sized appropriately
+        // for large document handling
+
+        let preview_tile: u64 = 128 * 128 * 4; // Preview: 64KB
+        let regular_tile: u64 = 256 * 256 * 4; // Regular: 256KB
+        let highres_tile: u64 = 512 * 512 * 4; // High-res: 1MB
+
+        // For a 1000-page PDF at different quality levels:
+        let page_count: u64 = 1000;
+        let tiles_per_page: u64 = 12;
+
+        let preview_memory = page_count * tiles_per_page * preview_tile; // ~768MB
+        let regular_memory = page_count * tiles_per_page * regular_tile; // ~3GB
+        let highres_memory = page_count * tiles_per_page * highres_tile; // ~12GB
+
+        // Verify the memory scaling is as expected
+        assert_eq!(preview_memory, 786_432_000_u64);
+        assert_eq!(regular_memory, 3_145_728_000_u64);
+        assert_eq!(highres_memory, 12_582_912_000_u64);
+
+        // This demonstrates why progressive loading is essential for 100MB+ PDFs
+        // Even preview tiles for all pages would use ~768MB
+    }
 }

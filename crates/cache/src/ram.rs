@@ -906,4 +906,188 @@ mod tests {
         // Should have some hits across all threads
         assert!(total_hits > 0, "No cache hits during concurrent access");
     }
+
+    // ================================================================================
+    // Tests for 100MB+ PDF handling (Phase 4.2)
+    // ================================================================================
+    //
+    // These tests validate RAM cache behavior for very large PDFs (100MB+ file size).
+    // A 100MB+ PDF typically has 1000-2000 pages, requiring careful memory management.
+
+    #[test]
+    fn test_memory_bounded_for_1000_page_pdf_simulation() {
+        // Simulate caching tiles for a 1000+ page PDF (100MB+ file)
+        // Cache limit: 100MB (reasonable for a PDF viewer on modern hardware)
+        let cache_limit_mb = 100;
+        let cache = RamTileCache::with_mb_limit(cache_limit_mb);
+
+        let tile_size = 256 * 256 * 4; // 256KB per tile
+        let _page_count = 1000; // Document has 1000 pages
+        let tiles_per_page = 12;
+
+        // Simulate scrolling through a portion of the document
+        // (can't cache all 12,000 tiles in 100MB)
+        let pages_to_view = 200; // Simulate viewing 200 pages
+
+        for page_index in 0..pages_to_view {
+            for tile_index in 0..tiles_per_page {
+                let key = (page_index * tiles_per_page + tile_index) as u64;
+                let pixels = vec![0u8; tile_size];
+                cache.put(key, pixels, 256, 256);
+            }
+        }
+
+        // Memory should stay bounded at 100MB
+        let stats = cache.stats();
+        assert!(
+            stats.memory_used <= cache_limit_mb * 1024 * 1024,
+            "Cache exceeded memory limit: {} > {}",
+            stats.memory_used,
+            cache_limit_mb * 1024 * 1024
+        );
+
+        // Should have evicted many tiles (200 pages * 12 tiles = 2400 tiles)
+        // But 100MB can only hold ~400 tiles
+        assert!(stats.evictions > 0, "Expected evictions for large PDF");
+
+        // Cache should only hold ~400 tiles (100MB / 256KB ≈ 400)
+        let expected_max_tiles = (cache_limit_mb * 1024 * 1024) / tile_size;
+        assert!(
+            stats.tile_count <= expected_max_tiles,
+            "Too many tiles in cache: {} > {}",
+            stats.tile_count,
+            expected_max_tiles
+        );
+    }
+
+    #[test]
+    fn test_working_set_efficiency_for_100mb_pdf() {
+        // Test that the cache efficiently maintains a working set
+        // for viewport-based rendering of large documents
+        let cache = RamTileCache::with_mb_limit(50); // 50MB cache
+
+        let tile_size = 256 * 256 * 4;
+
+        // Simulate rendering viewport pages with prefetching
+        // Working set: current page (12 tiles) + 2 adjacent pages (24 tiles) = 36 tiles
+        let working_set_size = 36;
+        let pixels = vec![0u8; tile_size];
+
+        // First, populate working set for pages 0-2
+        for page in 0..3 {
+            for tile in 0..12 {
+                let key = (page * 12 + tile) as u64;
+                cache.put(key, pixels.clone(), 256, 256);
+            }
+        }
+
+        // Now simulate scrolling: read current working set, add new page
+        for current_page in 3..100 {
+            // Read working set (should have high hit rate)
+            let working_set_start = (current_page - 2) * 12;
+            let mut working_set_hits = 0;
+
+            for offset in 0..(working_set_size as i32) {
+                let key = (working_set_start as i32 + offset) as u64;
+                if cache.get(key).is_some() {
+                    working_set_hits += 1;
+                }
+            }
+
+            // Add tiles for next page (prefetch)
+            for tile in 0..12 {
+                let key = ((current_page + 1) * 12 + tile) as u64;
+                cache.put(key, pixels.clone(), 256, 256);
+            }
+
+            // Working set should mostly be cached
+            let hit_rate = working_set_hits as f64 / working_set_size as f64;
+            assert!(
+                hit_rate > 0.5,
+                "Working set hit rate too low at page {}: {:.2}",
+                current_page,
+                hit_rate
+            );
+        }
+    }
+
+    #[test]
+    fn test_rapid_page_navigation_for_large_pdf() {
+        use std::time::Instant;
+
+        // Simulate rapid page navigation (user jumping around in document)
+        let cache = RamTileCache::with_mb_limit(100);
+        let tile_size = 256 * 256 * 4;
+        let pixels = vec![0u8; tile_size];
+
+        let start = Instant::now();
+
+        // Simulate jumping to random pages in a 1000-page document
+        let page_jumps = [0, 500, 100, 800, 250, 999, 50, 750, 300, 600];
+
+        for &page in &page_jumps {
+            // Load tiles for this page
+            for tile in 0..12 {
+                let key = (page * 12 + tile) as u64;
+                cache.put(key, pixels.clone(), 256, 256);
+            }
+
+            // Immediately try to read them back (simulating render)
+            for tile in 0..12 {
+                let key = (page * 12 + tile) as u64;
+                let _ = cache.get(key);
+            }
+        }
+
+        let elapsed = start.elapsed();
+
+        // Should complete quickly (under 1 second for 120 tiles * 10 jumps)
+        assert!(
+            elapsed.as_secs() < 2,
+            "Page navigation too slow: {:?}",
+            elapsed
+        );
+
+        // Verify cache state is consistent
+        let stats = cache.stats();
+        assert!(stats.tile_count > 0, "Cache should have tiles");
+        assert!(
+            stats.memory_used <= 100 * 1024 * 1024,
+            "Memory limit exceeded"
+        );
+    }
+
+    #[test]
+    fn test_memory_pressure_recovery_for_large_pdf() {
+        // Test that cache properly recovers from memory pressure
+        let cache = RamTileCache::with_mb_limit(100);
+        let tile_size = 256 * 256 * 4;
+        let pixels = vec![0u8; tile_size];
+
+        // Fill cache to capacity
+        let tiles_to_fill = (100 * 1024 * 1024) / tile_size + 50; // Overfill
+        for i in 0..tiles_to_fill {
+            cache.put(i as u64, pixels.clone(), 256, 256);
+        }
+
+        // Verify memory is bounded
+        assert!(
+            cache.memory_used() <= 100 * 1024 * 1024,
+            "Memory not bounded after overfill"
+        );
+
+        // Simulate memory pressure: reduce limit
+        cache.set_memory_limit(50 * 1024 * 1024);
+
+        // Cache should evict to meet new limit
+        assert!(
+            cache.memory_used() <= 50 * 1024 * 1024,
+            "Failed to reduce memory after limit change: {}",
+            cache.memory_used()
+        );
+
+        // New tiles should still work
+        cache.put(999999, pixels.clone(), 256, 256);
+        assert!(cache.contains(999999), "Failed to add new tile after limit reduction");
+    }
 }

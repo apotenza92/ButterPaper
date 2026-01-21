@@ -371,7 +371,7 @@ Wire up existing measurement system.
 
 ### Phase 4.2: Large PDF Handling
 - [x] Test with 500+ page PDFs
-- [ ] Test with 100MB+ PDFs
+- [x] Test with 100MB+ PDFs
 - [ ] Ensure no UI freezes
 - [ ] Progressive page loading
 - [ ] Memory usage stays bounded

@@ -96,9 +96,7 @@ impl CacheState {
         if let Some(key) = self.lru_queue.pop_front() {
             if let Some(path) = self.entries.remove(&key) {
                 // Get file size before removing
-                let file_size = fs::metadata(&path)
-                    .map(|m| m.len() as usize)
-                    .unwrap_or(0);
+                let file_size = fs::metadata(&path).map(|m| m.len() as usize).unwrap_or(0);
 
                 // Remove file
                 if let Err(e) = fs::remove_file(&path) {
@@ -338,9 +336,7 @@ impl DiskTileCache {
         let mut state = self.state.lock().unwrap();
 
         if let Some(path) = state.entries.remove(&key) {
-            let file_size = fs::metadata(&path)
-                .map(|m| m.len() as usize)
-                .unwrap_or(0);
+            let file_size = fs::metadata(&path).map(|m| m.len() as usize).unwrap_or(0);
 
             fs::remove_file(&path)?;
 
@@ -775,6 +771,313 @@ mod tests {
         assert!(cache.contains(3)); // Present
         assert!(cache.contains(4)); // Present
 
+        cleanup_test_cache(cache_dir);
+    }
+
+    // ================================================================================
+    // Tests for 100MB+ PDF handling (Phase 4.2)
+    // ================================================================================
+    //
+    // These tests simulate the disk cache behavior when working with very large PDFs
+    // (100MB+ file size). A 100MB PDF typically has:
+    // - ~1000-2000 pages of dense content, OR
+    // - ~200-500 pages with high-resolution images/scans
+    //
+    // At 100% zoom with 256x256 tiles:
+    // - US Letter page = 12 tiles
+    // - 1000 pages = 12,000 tiles
+    // - Each tile = 256KB (RGBA)
+    // - Full cache would be ~3GB
+    //
+    // The disk cache must efficiently handle this without running out of disk space.
+
+    #[test]
+    fn test_disk_cache_for_100mb_pdf_simulation() {
+        // Simulate caching tiles for a 100MB+ PDF (~1000 pages)
+        // Disk cache limit: 500MB (reasonable for persistent storage)
+        let (cache, cache_dir) = create_test_cache();
+        let _ = cache.set_disk_limit(500 * 1024 * 1024); // 500MB
+
+        let tile_size = 256 * 256 * 4; // 256KB per tile
+        let _page_count = 1000; // Document has 1000 pages
+        let tiles_per_page = 12;
+
+        // Insert tiles for a portion of pages (simulating viewport traversal)
+        // We can't insert all 12,000 tiles, so simulate a user scrolling through
+        // the document, caching visible pages as they go
+        let pages_to_simulate = 100; // Simulate viewing 100 pages
+
+        for page_index in 0..pages_to_simulate {
+            for tile_index in 0..tiles_per_page {
+                let key = (page_index * tiles_per_page + tile_index) as u64;
+                let pixels = vec![0u8; tile_size];
+                cache.put(key, pixels, 256, 256).unwrap();
+            }
+        }
+
+        // Disk usage should stay bounded
+        let stats = cache.stats();
+        assert!(
+            stats.disk_used <= 500 * 1024 * 1024,
+            "Disk cache exceeded limit: {} > {}",
+            stats.disk_used,
+            500 * 1024 * 1024
+        );
+
+        // Should have evicted some tiles to stay within bounds
+        // 100 pages * 12 tiles * 256KB = ~300MB, plus headers
+        // But disk limit is 500MB, so might not need evictions
+        let expected_tiles = 100 * tiles_per_page;
+        assert!(
+            stats.tile_count <= expected_tiles,
+            "Too many tiles: {}",
+            stats.tile_count
+        );
+
+        cleanup_test_cache(cache_dir);
+    }
+
+    #[test]
+    fn test_disk_cache_eviction_pattern_for_large_pdf() {
+        // Test that LRU eviction correctly handles a large number of tiles
+        // simulating a user scrolling through a 100MB+ PDF
+        let (cache, cache_dir) = create_test_cache();
+        let _ = cache.set_disk_limit(50 * 1024 * 1024); // 50MB limit (can hold ~200 tiles)
+
+        let tile_size = 256 * 256 * 4;
+        let pixels = vec![0u8; tile_size];
+
+        // Simulate scrolling through 500 pages, each with 12 tiles
+        // This far exceeds cache capacity, so we verify LRU eviction works
+        let pages_to_scroll = 500;
+        let tiles_per_page = 12;
+
+        for page_index in 0..pages_to_scroll {
+            for tile_index in 0..tiles_per_page {
+                let key = (page_index * tiles_per_page + tile_index) as u64;
+                cache.put(key, pixels.clone(), 256, 256).unwrap();
+            }
+        }
+
+        let stats = cache.stats();
+
+        // Verify evictions occurred
+        assert!(
+            stats.evictions > 0,
+            "Expected evictions for large PDF simulation"
+        );
+
+        // Verify disk stays bounded
+        assert!(
+            stats.disk_used <= 50 * 1024 * 1024,
+            "Disk usage exceeded limit: {}",
+            stats.disk_used
+        );
+
+        // Most recent pages should be in cache
+        // Last ~16 pages worth of tiles (~200 tiles) should be cached
+        let recent_page_start = pages_to_scroll - 16;
+        let mut recent_tiles_found = 0;
+        for page_index in recent_page_start..pages_to_scroll {
+            for tile_index in 0..tiles_per_page {
+                let key = (page_index * tiles_per_page + tile_index) as u64;
+                if cache.contains(key) {
+                    recent_tiles_found += 1;
+                }
+            }
+        }
+
+        // Should have most of the recent tiles cached
+        assert!(
+            recent_tiles_found > 100,
+            "Too few recent tiles cached: {}",
+            recent_tiles_found
+        );
+
+        cleanup_test_cache(cache_dir);
+    }
+
+    #[test]
+    fn test_disk_cache_performance_for_large_pdf() {
+        use std::time::Instant;
+
+        let (cache, cache_dir) = create_test_cache();
+        let _ = cache.set_disk_limit(100 * 1024 * 1024); // 100MB
+
+        let tile_size = 256 * 256 * 4;
+        let operation_count = 1000; // 1000 put/get operations
+
+        // Measure put performance
+        let start = Instant::now();
+        for i in 0..operation_count {
+            let pixels = vec![0u8; tile_size];
+            cache.put(i as u64, pixels, 256, 256).unwrap();
+        }
+        let put_time = start.elapsed();
+
+        // Measure get performance (mix of hits and misses due to eviction)
+        let get_start = Instant::now();
+        let mut hits = 0;
+        for i in 0..operation_count {
+            if cache.get(i as u64).unwrap().is_some() {
+                hits += 1;
+            }
+        }
+        let get_time = get_start.elapsed();
+
+        // Performance assertions - disk I/O is slower than RAM
+        // 1000 puts should complete in under 60 seconds (conservative for HDD/slow SSD)
+        assert!(
+            put_time.as_secs() < 60,
+            "Put operations too slow: {:?}",
+            put_time
+        );
+
+        // 1000 gets should complete in under 30 seconds
+        assert!(
+            get_time.as_secs() < 30,
+            "Get operations too slow: {:?}",
+            get_time
+        );
+
+        // Should have some cache hits
+        assert!(hits > 0, "No cache hits during get operations");
+
+        cleanup_test_cache(cache_dir);
+    }
+
+    #[test]
+    fn test_disk_cache_memory_estimation_for_100mb_pdf() {
+        // Calculate disk cache requirements for a 100MB+ PDF
+        let page_count: u64 = 1000; // Typical for 100MB+ PDF
+        let tiles_per_page: u64 = 12; // US Letter at 100%
+        let tile_byte_size: u64 = 256 * 256 * 4; // RGBA
+
+        // If we cached ALL tiles on disk
+        let total_disk_all_tiles = page_count * tiles_per_page * tile_byte_size;
+        assert_eq!(total_disk_all_tiles, 3_145_728_000_u64); // ~3GB
+
+        // With bounded cache (500MB), we can hold:
+        let cache_limit_mb: u64 = 500;
+        let cache_limit_bytes = cache_limit_mb * 1024 * 1024;
+        let tiles_in_cache = cache_limit_bytes / tile_byte_size;
+
+        // ~2000 tiles can fit in 500MB cache
+        assert!(
+            tiles_in_cache >= 1900 && tiles_in_cache <= 2100,
+            "Unexpected tile count: {}",
+            tiles_in_cache
+        );
+
+        // This covers ~166 pages worth of tiles at 100% zoom
+        let pages_covered = tiles_in_cache / tiles_per_page;
+        assert!(pages_covered >= 150, "Cache covers too few pages: {}", pages_covered);
+    }
+
+    #[test]
+    fn test_disk_cache_persistence_after_restart_simulation() {
+        // Simulate application restart with large PDF cache
+        let cache_dir = env::temp_dir().join(format!("pdf-editor-restart-test-{}", rand::random::<u32>()));
+
+        {
+            // First "session" - write tiles to cache
+            let cache = DiskTileCache::with_mb_limit(&cache_dir, 10).unwrap();
+            let pixels = vec![0u8; 256 * 256 * 4];
+
+            for i in 0..30 {
+                cache.put(i, pixels.clone(), 256, 256).unwrap();
+            }
+
+            assert!(cache.tile_count() > 0);
+        }
+        // Cache goes out of scope (simulates app exit)
+
+        {
+            // Second "session" - recover cache from disk
+            let cache = DiskTileCache::with_mb_limit(&cache_dir, 10).unwrap();
+
+            // Initially empty until we load from disk
+            assert_eq!(cache.tile_count(), 0);
+
+            // Load existing cache
+            cache.load_from_disk().unwrap();
+
+            // Should recover some tiles (not all due to limit)
+            assert!(cache.tile_count() > 0, "Failed to recover cache from disk");
+
+            // Verify we can read the tiles back
+            let mut readable_tiles = 0;
+            for i in 0..30_u64 {
+                if let Ok(Some(_)) = cache.get(i) {
+                    readable_tiles += 1;
+                }
+            }
+            assert!(readable_tiles > 0, "No tiles readable after restart");
+        }
+
+        cleanup_test_cache(cache_dir);
+    }
+
+    #[test]
+    fn test_disk_cache_concurrent_access_for_large_pdf() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let (cache, cache_dir) = create_test_cache();
+        let _ = cache.set_disk_limit(50 * 1024 * 1024); // 50MB
+        let cache = Arc::new(cache);
+
+        let tile_size = 256 * 256 * 4;
+
+        // Spawn multiple threads simulating concurrent tile access
+        // This mimics multiple render workers writing tiles simultaneously
+        let mut handles = vec![];
+
+        for thread_id in 0..4 {
+            let cache_clone = Arc::clone(&cache);
+            let handle = thread::spawn(move || {
+                let pixels = vec![0u8; tile_size];
+
+                // Each thread works on its own page range
+                let start_page = thread_id * 50;
+                let end_page = start_page + 50;
+
+                // Write tiles for 50 pages
+                for page in start_page..end_page {
+                    for tile in 0..12 {
+                        let key = (page * 12 + tile) as u64;
+                        cache_clone.put(key, pixels.clone(), 256, 256).unwrap();
+                    }
+                }
+
+                // Read back some tiles
+                let mut hits = 0;
+                for page in start_page..end_page {
+                    let key = (page * 12) as u64; // First tile of each page
+                    if cache_clone.get(key).unwrap().is_some() {
+                        hits += 1;
+                    }
+                }
+
+                hits
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads
+        let total_hits: usize = handles.into_iter().map(|h| h.join().unwrap()).sum();
+
+        // Cache should remain consistent
+        let stats = cache.stats();
+        assert!(
+            stats.disk_used <= 50 * 1024 * 1024,
+            "Cache exceeded limit during concurrent access"
+        );
+
+        // Should have some hits
+        assert!(total_hits > 0, "No cache hits during concurrent access");
+
+        drop(cache); // Release Arc before cleanup
         cleanup_test_cache(cache_dir);
     }
 }
