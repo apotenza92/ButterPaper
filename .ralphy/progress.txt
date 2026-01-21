@@ -12147,3 +12147,101 @@ Added comprehensive tests to verify the system can handle large PDFs (500+ pages
 - All 74 cache tests pass
 - All 43 render tests pass
 - Linting passes (clippy with -D warnings)
+
+### Task: Ensure no UI freezes (Phase 4.2)
+
+**Status:** Complete
+
+**Changes:**
+Added frame budget tracking and UI freeze prevention mechanisms to the scheduler crate.
+
+**New Module: `crates/scheduler/src/frame_budget.rs`**
+Provides frame budget tracking for UI responsiveness:
+- `FRAME_BUDGET_60FPS` (16.67ms) - Default frame budget for 60 FPS displays
+- `FRAME_BUDGET_120FPS` (8.33ms) - Frame budget for 120 FPS ProMotion displays
+- `EVENT_PROCESSING_RESERVE` (5ms) - Minimum time reserved for event processing
+
+**New Types:**
+1. `FrameBudget` - Tracks time spent on operations within a frame
+   - `new(budget)`, `for_60fps()`, `for_120fps()` - Create budget tracker
+   - `elapsed()`, `remaining()` - Get time information
+   - `is_exceeded()`, `should_yield()` - Check if budget exceeded
+   - `reset()` - Reset for new frame
+   - `with_reserved(duration)` - Set custom reserve time
+
+2. `ChunkedOperation` - Tracks progress through large operations split across frames
+   - `new(total)`, `with_chunk_size(size)` - Create operation tracker
+   - `advance(count)`, `complete_frame()` - Track progress
+   - `progress_percent()`, `is_complete()` - Check completion
+   - `items_for_chunk()`, `chunk_start()`, `chunk_end()` - Get chunk boundaries
+
+3. `WorkYielder` - Check budget periodically with minimal overhead
+   - `new(budget, check_interval)` - Create yielder
+   - `check_yield()` - Check if should yield (checks budget every N iterations)
+   - `reset()` - Reset for new frame
+
+**New Job Type:**
+Added `JobType::ExtractText { page_index: u16 }` to `crates/scheduler/src/priority.rs`
+- Allows text extraction to be scheduled as background jobs
+- Properly handled in `cancel_page_jobs()`, `cancel_offscreen_jobs()`, and `cancel_all_except_visible()`
+- Text extraction for adjacent pages is preserved, distant pages are cancelled
+
+**Tests Added to `crates/scheduler/src/frame_budget.rs` (29 tests):**
+- `test_frame_budget_creation` - Test budget creation methods
+- `test_frame_budget_with_reserved` - Test reserved time configuration
+- `test_frame_budget_remaining` - Test remaining time calculation
+- `test_frame_budget_exceeded` - Test budget exceeded detection
+- `test_frame_budget_reset` - Test budget reset for new frames
+- `test_frame_budget_should_yield` - Test yield check counter
+- `test_frame_budget_default` - Test default budget (60fps)
+- `test_60fps_vs_120fps_budgets` - Verify ProMotion vs standard budgets
+- `test_budget_remaining_never_negative` - Verify saturating subtraction
+- `test_frame_budget_elapsed_accuracy` - Test elapsed time tracking
+- `test_chunked_operation_basic` - Test operation tracker creation
+- `test_chunked_operation_advance` - Test progress tracking
+- `test_chunked_operation_advance_overflow_protection` - Verify bounds checking
+- `test_chunked_operation_with_chunk_size` - Test chunk configuration
+- `test_chunked_operation_chunk_boundaries` - Test chunk start/end calculation
+- `test_chunked_operation_frames_used` - Test frame counter
+- `test_chunked_operation_zero_total` - Edge case: empty operation
+- `test_work_yielder_basic` - Test yielder creation
+- `test_work_yielder_check_interval` - Test interval-based checks
+- `test_work_yielder_minimum_interval` - Verify minimum interval of 1
+- `test_work_yielder_reset` - Test yielder reset
+
+**Tests Added to `crates/scheduler/src/priority.rs` (2 tests):**
+- `test_extract_text_job_type` - Test new ExtractText job type
+- `test_remove_extract_text_jobs` - Test filtering ExtractText jobs
+
+**Tests Added to `crates/scheduler/src/scheduler.rs` (9 tests):**
+- `test_extract_text_job_type_supported` - Test ExtractText job submission
+- `test_cancel_text_extraction_jobs_by_page` - Test page-based cancellation
+- `test_mixed_job_types_priority_ordering` - Test priority with all job types
+- `test_bulk_text_extraction_submission` - Test 1000-page extraction submission
+- `test_cancel_all_text_extraction_jobs` - Test filtering by job type
+- `test_incremental_job_processing_simulation` - Simulate frame-budget-aware processing
+- `test_viewport_change_cancels_text_extraction` - Test viewport-based cancellation
+
+**Key Mechanisms for UI Freeze Prevention:**
+1. **Frame Budget Tracking**: Track time per frame to prevent exceeding 16.67ms (60fps) or 8.33ms (120fps)
+2. **Chunked Operations**: Split large operations across multiple frames
+3. **Periodic Yield Checks**: Check budget periodically to minimize `Instant::now()` overhead
+4. **Text Extraction as Jobs**: Background text extraction via scheduler instead of main thread
+5. **Viewport-Based Cancellation**: Cancel text extraction for distant pages when viewport changes
+
+**Public API Added to `crates/scheduler/src/lib.rs`:**
+```rust
+pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_60FPS, FRAME_BUDGET_120FPS};
+```
+
+**Files Modified:**
+- crates/scheduler/src/lib.rs (added frame_budget module export)
+- crates/scheduler/src/priority.rs (added ExtractText job type + 2 tests)
+- crates/scheduler/src/scheduler.rs (handle ExtractText in match + 9 tests)
+- crates/scheduler/src/frame_budget.rs (new file, 29 tests)
+- PRD.md (marked task complete)
+
+**Test Results:**
+- All 115 scheduler unit tests pass
+- All 11 scheduler doc tests pass
+- Clippy passes with -D warnings

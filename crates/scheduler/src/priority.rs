@@ -51,10 +51,17 @@ pub enum JobType {
     LoadFile { path: PathBuf },
 
     /// Generate page thumbnail (includes page index, size)
-    GenerateThumbnail { page_index: u16, width: u32, height: u32 },
+    GenerateThumbnail {
+        page_index: u16,
+        width: u32,
+        height: u32,
+    },
 
     /// Run OCR on a page (includes page index)
     RunOcr { page_index: u16 },
+
+    /// Extract text from a page (includes page index)
+    ExtractText { page_index: u16 },
 }
 
 /// A scheduled job with priority
@@ -166,7 +173,6 @@ impl PriorityQueue {
         job_id
     }
 
-
     /// Pop the highest priority job from the queue
     ///
     /// Returns `None` if the queue is empty.
@@ -259,7 +265,12 @@ mod tests {
         assert!(queue.is_empty());
         assert_eq!(queue.len(), 0);
 
-        let id1 = queue.push(JobPriority::Visible, JobType::LoadFile { path: PathBuf::from("test.pdf") });
+        let id1 = queue.push(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: PathBuf::from("test.pdf"),
+            },
+        );
         assert!(!queue.is_empty());
         assert_eq!(queue.len(), 1);
 
@@ -276,9 +287,31 @@ mod tests {
 
         // Insert jobs in reverse priority order
         queue.push(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
-        queue.push(JobPriority::Thumbnails, JobType::GenerateThumbnail { page_index: 0, width: 100, height: 100 });
-        queue.push(JobPriority::Visible, JobType::LoadFile { path: PathBuf::from("test.pdf") });
-        queue.push(JobPriority::Margin, JobType::RenderTile { page_index: 0, tile_x: 0, tile_y: 0, zoom_level: 100, rotation: 0, is_preview: true });
+        queue.push(
+            JobPriority::Thumbnails,
+            JobType::GenerateThumbnail {
+                page_index: 0,
+                width: 100,
+                height: 100,
+            },
+        );
+        queue.push(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: PathBuf::from("test.pdf"),
+            },
+        );
+        queue.push(
+            JobPriority::Margin,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
 
         // Pop jobs and verify they come out in priority order
         assert_eq!(queue.pop().unwrap().priority, JobPriority::Visible);
@@ -293,9 +326,39 @@ mod tests {
         let queue = PriorityQueue::new();
 
         // Insert multiple jobs with same priority
-        let id1 = queue.push(JobPriority::Visible, JobType::RenderTile { page_index: 0, tile_x: 0, tile_y: 0, zoom_level: 100, rotation: 0, is_preview: true });
-        let id2 = queue.push(JobPriority::Visible, JobType::RenderTile { page_index: 0, tile_x: 1, tile_y: 0, zoom_level: 100, rotation: 0, is_preview: true });
-        let id3 = queue.push(JobPriority::Visible, JobType::RenderTile { page_index: 0, tile_x: 2, tile_y: 0, zoom_level: 100, rotation: 0, is_preview: true });
+        let id1 = queue.push(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+        let id2 = queue.push(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 1,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+        let id3 = queue.push(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 2,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
 
         // Should come out in FIFO order
         assert_eq!(queue.pop().unwrap().id, id1);
@@ -308,7 +371,12 @@ mod tests {
         let queue = PriorityQueue::new();
         assert!(queue.peek().is_none());
 
-        let id1 = queue.push(JobPriority::Visible, JobType::LoadFile { path: PathBuf::from("test.pdf") });
+        let id1 = queue.push(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: PathBuf::from("test.pdf"),
+            },
+        );
         queue.push(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
 
         let peeked = queue.peek().unwrap();
@@ -323,7 +391,12 @@ mod tests {
     fn test_clear() {
         let queue = PriorityQueue::new();
 
-        queue.push(JobPriority::Visible, JobType::LoadFile { path: PathBuf::from("test.pdf") });
+        queue.push(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: PathBuf::from("test.pdf"),
+            },
+        );
         queue.push(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
         assert_eq!(queue.len(), 2);
 
@@ -338,7 +411,12 @@ mod tests {
 
         queue.push(JobPriority::Visible, JobType::RunOcr { page_index: 0 });
         queue.push(JobPriority::Visible, JobType::RunOcr { page_index: 1 });
-        queue.push(JobPriority::Margin, JobType::LoadFile { path: PathBuf::from("test.pdf") });
+        queue.push(
+            JobPriority::Margin,
+            JobType::LoadFile {
+                path: PathBuf::from("test.pdf"),
+            },
+        );
         assert_eq!(queue.len(), 3);
 
         // Remove all OCR jobs
@@ -351,12 +429,16 @@ mod tests {
         assert!(matches!(remaining.job_type, JobType::LoadFile { .. }));
     }
 
-
     #[test]
     fn test_jobs_inspection() {
         let queue = PriorityQueue::new();
 
-        queue.push(JobPriority::Visible, JobType::LoadFile { path: PathBuf::from("test.pdf") });
+        queue.push(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: PathBuf::from("test.pdf"),
+            },
+        );
         queue.push(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
 
         let jobs = queue.jobs();
@@ -378,11 +460,36 @@ mod tests {
         let queue = PriorityQueue::new();
 
         // Insert jobs with mixed priorities
-        let id1 = queue.push(JobPriority::Visible, JobType::LoadFile { path: PathBuf::from("1.pdf") });
-        let id2 = queue.push(JobPriority::Margin, JobType::LoadFile { path: PathBuf::from("2.pdf") });
-        let id3 = queue.push(JobPriority::Visible, JobType::LoadFile { path: PathBuf::from("3.pdf") });
-        let id4 = queue.push(JobPriority::Margin, JobType::LoadFile { path: PathBuf::from("4.pdf") });
-        let id5 = queue.push(JobPriority::Ocr, JobType::LoadFile { path: PathBuf::from("5.pdf") });
+        let id1 = queue.push(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: PathBuf::from("1.pdf"),
+            },
+        );
+        let id2 = queue.push(
+            JobPriority::Margin,
+            JobType::LoadFile {
+                path: PathBuf::from("2.pdf"),
+            },
+        );
+        let id3 = queue.push(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: PathBuf::from("3.pdf"),
+            },
+        );
+        let id4 = queue.push(
+            JobPriority::Margin,
+            JobType::LoadFile {
+                path: PathBuf::from("4.pdf"),
+            },
+        );
+        let id5 = queue.push(
+            JobPriority::Ocr,
+            JobType::LoadFile {
+                path: PathBuf::from("5.pdf"),
+            },
+        );
 
         // Should get: Visible (id1, id3 in FIFO), then Margin (id2, id4 in FIFO), then Ocr (id5)
         assert_eq!(queue.pop().unwrap().id, id1);
@@ -390,5 +497,40 @@ mod tests {
         assert_eq!(queue.pop().unwrap().id, id2);
         assert_eq!(queue.pop().unwrap().id, id4);
         assert_eq!(queue.pop().unwrap().id, id5);
+    }
+
+    #[test]
+    fn test_extract_text_job_type() {
+        let queue = PriorityQueue::new();
+
+        // Test ExtractText job type can be queued
+        let id = queue.push(
+            JobPriority::Adjacent,
+            JobType::ExtractText { page_index: 5 },
+        );
+
+        let job = queue.pop().unwrap();
+        assert_eq!(job.id, id);
+        assert_eq!(job.priority, JobPriority::Adjacent);
+        assert!(matches!(job.job_type, JobType::ExtractText { page_index: 5 }));
+    }
+
+    #[test]
+    fn test_remove_extract_text_jobs() {
+        let queue = PriorityQueue::new();
+
+        queue.push(JobPriority::Visible, JobType::ExtractText { page_index: 0 });
+        queue.push(JobPriority::Visible, JobType::ExtractText { page_index: 1 });
+        queue.push(JobPriority::Visible, JobType::RunOcr { page_index: 0 });
+        assert_eq!(queue.len(), 3);
+
+        // Remove all ExtractText jobs
+        let removed = queue.remove_if(|job| matches!(job.job_type, JobType::ExtractText { .. }));
+        assert_eq!(removed, 2);
+        assert_eq!(queue.len(), 1);
+
+        // Remaining job should be OCR
+        let remaining = queue.pop().unwrap();
+        assert!(matches!(remaining.job_type, JobType::RunOcr { .. }));
     }
 }

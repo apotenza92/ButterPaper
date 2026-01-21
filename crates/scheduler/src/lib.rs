@@ -40,6 +40,7 @@
 //! ```
 
 mod cancel;
+pub mod frame_budget;
 mod io;
 mod priority;
 mod scheduler;
@@ -48,6 +49,7 @@ mod worker;
 
 // Re-export public API
 pub use cancel::{CancellationRegistry, CancellationToken};
+pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_60FPS, FRAME_BUDGET_120FPS};
 pub use io::{IoExecutor, IoThread, IoThreadConfig};
 pub use priority::{Job, JobId, JobPriority, JobType};
 pub use scheduler::{JobScheduler, SchedulerStats};

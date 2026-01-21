@@ -188,6 +188,7 @@ impl JobScheduler {
             JobType::RenderTile { page_index: pi, .. } => *pi == page_index,
             JobType::GenerateThumbnail { page_index: pi, .. } => *pi == page_index,
             JobType::RunOcr { page_index: pi } => *pi == page_index,
+            JobType::ExtractText { page_index: pi } => *pi == page_index,
             JobType::LoadFile { .. } => false,
         })
     }
@@ -328,6 +329,11 @@ impl JobScheduler {
                     // Always cancel OCR jobs during aggressive cancellation
                     true
                 }
+                JobType::ExtractText { page_index } => {
+                    // Keep text extraction for current and adjacent pages
+                    let priority = calculator.calculate_thumbnail_priority(*page_index);
+                    priority != JobPriority::Margin && priority != JobPriority::Adjacent
+                }
                 JobType::LoadFile { .. } => {
                     // Never cancel file loading jobs
                     false
@@ -375,6 +381,10 @@ impl JobScheduler {
                 }
                 JobType::RunOcr { .. } => {
                     // Cancel all OCR jobs during aggressive cancellation
+                    true
+                }
+                JobType::ExtractText { .. } => {
+                    // Cancel all text extraction jobs during aggressive cancellation
                     true
                 }
                 JobType::LoadFile { .. } => {
@@ -1500,5 +1510,190 @@ mod tests {
                 "Jobs not returned in FIFO order within same priority"
             );
         }
+    }
+
+    // ============================================================================
+    // UI Freeze Prevention Tests (Phase 4.2)
+    // ============================================================================
+
+    #[test]
+    fn test_extract_text_job_type_supported() {
+        let scheduler = JobScheduler::new();
+
+        // Submit text extraction jobs
+        for page_index in 0..10_u16 {
+            scheduler.submit(
+                JobPriority::Adjacent,
+                JobType::ExtractText { page_index },
+            );
+        }
+
+        assert_eq!(scheduler.pending_jobs(), 10);
+
+        // Verify jobs can be retrieved
+        let job = scheduler.next_job().unwrap();
+        assert!(matches!(job.job_type, JobType::ExtractText { .. }));
+    }
+
+    #[test]
+    fn test_cancel_text_extraction_jobs_by_page() {
+        let scheduler = JobScheduler::new();
+
+        // Submit text extraction jobs for multiple pages
+        scheduler.submit(JobPriority::Adjacent, JobType::ExtractText { page_index: 0 });
+        scheduler.submit(JobPriority::Adjacent, JobType::ExtractText { page_index: 1 });
+        scheduler.submit(JobPriority::Adjacent, JobType::ExtractText { page_index: 2 });
+
+        assert_eq!(scheduler.pending_jobs(), 3);
+
+        // Cancel page 1 jobs
+        let cancelled = scheduler.cancel_page_jobs(1);
+        assert_eq!(cancelled, 1);
+        assert_eq!(scheduler.pending_jobs(), 2);
+    }
+
+    #[test]
+    fn test_mixed_job_types_priority_ordering() {
+        let scheduler = JobScheduler::new();
+
+        // Submit various job types at different priorities
+        scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
+        scheduler.submit(JobPriority::Adjacent, JobType::ExtractText { page_index: 0 });
+        scheduler.submit(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+        scheduler.submit(
+            JobPriority::Thumbnails,
+            JobType::GenerateThumbnail {
+                page_index: 0,
+                width: 100,
+                height: 100,
+            },
+        );
+
+        // Jobs should come out in priority order
+        assert_eq!(scheduler.next_job().unwrap().priority, JobPriority::Visible);
+        assert_eq!(scheduler.next_job().unwrap().priority, JobPriority::Adjacent);
+        assert_eq!(scheduler.next_job().unwrap().priority, JobPriority::Thumbnails);
+        assert_eq!(scheduler.next_job().unwrap().priority, JobPriority::Ocr);
+    }
+
+    #[test]
+    fn test_bulk_text_extraction_submission() {
+        let scheduler = JobScheduler::new();
+
+        // Simulate submitting text extraction for all pages in a 1000-page PDF
+        let page_count = 1000_u16;
+        for page_index in 0..page_count {
+            scheduler.submit(JobPriority::Ocr, JobType::ExtractText { page_index });
+        }
+
+        assert_eq!(scheduler.pending_jobs(), page_count as usize);
+
+        // Verify first job
+        let job = scheduler.next_job().unwrap();
+        assert!(matches!(job.job_type, JobType::ExtractText { page_index: 0 }));
+    }
+
+    #[test]
+    fn test_cancel_all_text_extraction_jobs() {
+        let scheduler = JobScheduler::new();
+
+        // Submit mixed jobs
+        scheduler.submit(JobPriority::Visible, JobType::ExtractText { page_index: 0 });
+        scheduler.submit(JobPriority::Adjacent, JobType::ExtractText { page_index: 1 });
+        scheduler.submit(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        assert_eq!(scheduler.pending_jobs(), 3);
+
+        // Cancel all ExtractText jobs
+        let cancelled = scheduler.cancel_jobs_if(|job| {
+            matches!(job.job_type, JobType::ExtractText { .. })
+        });
+        assert_eq!(cancelled, 2);
+        assert_eq!(scheduler.pending_jobs(), 1);
+
+        // Remaining job should be RenderTile
+        let remaining = scheduler.next_job().unwrap();
+        assert!(matches!(remaining.job_type, JobType::RenderTile { .. }));
+    }
+
+    #[test]
+    fn test_incremental_job_processing_simulation() {
+        let scheduler = JobScheduler::new();
+
+        // Submit a batch of jobs (simulating text extraction for large PDF)
+        let total_jobs = 500;
+        for page_index in 0..total_jobs {
+            scheduler.submit(
+                JobPriority::Ocr,
+                JobType::ExtractText { page_index: page_index as u16 },
+            );
+        }
+
+        // Process jobs in chunks (simulating frame-budget-aware processing)
+        let chunk_size = 10;
+        let mut processed = 0;
+        let mut chunks_processed = 0;
+
+        while processed < total_jobs {
+            // Process a chunk
+            for _ in 0..chunk_size {
+                if let Some(job) = scheduler.next_job() {
+                    scheduler.complete_job(job.id);
+                    processed += 1;
+                } else {
+                    break;
+                }
+            }
+            chunks_processed += 1;
+        }
+
+        assert_eq!(processed, total_jobs);
+        assert_eq!(chunks_processed, total_jobs / chunk_size);
+
+        let stats = scheduler.stats();
+        assert_eq!(stats.jobs_completed, total_jobs as u64);
+    }
+
+    #[test]
+    fn test_viewport_change_cancels_text_extraction() {
+        use crate::viewport::Viewport;
+
+        let scheduler = JobScheduler::new();
+
+        // Submit text extraction for current page and adjacent pages
+        scheduler.submit(JobPriority::Visible, JobType::ExtractText { page_index: 5 });
+        scheduler.submit(JobPriority::Adjacent, JobType::ExtractText { page_index: 4 });
+        scheduler.submit(JobPriority::Adjacent, JobType::ExtractText { page_index: 6 });
+        scheduler.submit(JobPriority::Ocr, JobType::ExtractText { page_index: 100 });
+
+        // Viewport on page 5
+        let viewport = Viewport::new(5, 0.0, 0.0, 800.0, 600.0, 100);
+
+        // Cancel off-screen jobs (page 100 is far from page 5)
+        let cancelled = scheduler.cancel_offscreen_jobs(&viewport, 256);
+
+        // Page 100 text extraction should be cancelled (distant page)
+        assert_eq!(cancelled, 1);
+        assert_eq!(scheduler.pending_jobs(), 3);
     }
 }
