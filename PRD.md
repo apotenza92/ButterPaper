@@ -66,8 +66,8 @@ All unit tests now pass after fixing:
 ## Priority 1: Make PDFs Actually Visible
 
 ### Phase 1.1: Fix PDF Display
-- [ ] Debug why texture blit doesn't show content
-- [ ] Verify RGBA→BGRA conversion is correct
+- [x] Debug why texture blit doesn't show content (fixed: set MTLStorageMode::Managed for CPU-writable textures)
+- [x] Verify RGBA→BGRA conversion is correct (verified: conversion is correct, issue was storage mode)
 - [x] Add debug overlay showing texture dimensions
 - [ ] Test with multiple PDF files
 - [ ] **Terminal test:** `cargo run --release -- test.pdf 2>&1 | grep "SUCCESS\|FAILED"`

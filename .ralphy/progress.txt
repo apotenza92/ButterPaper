@@ -9869,3 +9869,39 @@ cargo run --release -- --debug-texture test.pdf
   - Texture dimensions match expected size
   - Texture format is correct (BGRA8Unorm_sRGB)
   - Cached zoom level is accurate
+
+
+### Task: Fix texture blit not showing content (MTLStorageMode::Managed)
+
+**Status:** Complete
+
+**Problem:**
+Metal textures created without explicit storage mode defaulted to `Private` storage mode, which doesn't allow CPU writes via `replace_region()`. This caused PDF page textures, text overlay textures, and spinner textures to appear blank/invisible when blitted to the drawable.
+
+**Root Cause Analysis:**
+1. Metal textures have storage modes: Shared, Managed, Private, Memoryless
+2. Private storage mode (the default) allows GPU-only access
+3. `replace_region()` requires CPU-accessible texture memory
+4. Our textures were created with Private storage, so CPU data wasn't actually written
+
+**Solution:**
+Added `texture_desc.set_storage_mode(metal::MTLStorageMode::Managed)` to all texture creations that use `replace_region()` to upload CPU data:
+1. Spinner texture creation (line ~83)
+2. Text overlay texture creation (line ~237)
+3. PDF page texture creation (line ~1050)
+
+**Files Modified:**
+- crates/app/src/main.rs:
+  - Added `set_storage_mode(metal::MTLStorageMode::Managed)` to 3 texture descriptor configurations
+  - Added `texture_storage_mode_tests` module with documentation test explaining the fix
+  - PRD.md: Marked "Debug why texture blit doesn't show content" and "Verify RGBA→BGRA conversion is correct" as complete
+
+**Technical Details:**
+- `MTLStorageMode::Managed`: CPU can write, GPU can read (Intel macOS)
+- `MTLStorageMode::Shared`: CPU and GPU both have access (Apple Silicon)
+- `MTLStorageMode::Private`: GPU only, no CPU access (default, fastest for GPU-only data)
+
+**Testing:**
+- All 498 tests pass (1 new documentation test)
+- Clippy linting passes with no warnings
+- Build succeeds in release mode

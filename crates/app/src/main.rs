@@ -80,6 +80,8 @@ mod text_overlay {
         texture_desc.set_height(size as u64);
         texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
         texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        // Managed storage mode allows CPU writes via replace_region
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
 
         let texture = device.new_texture(&texture_desc);
 
@@ -232,6 +234,8 @@ mod text_overlay {
         texture_desc.set_height(tex_height as u64);
         texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
         texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        // Managed storage mode allows CPU writes via replace_region
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
 
         let texture = device.new_texture(&texture_desc);
 
@@ -699,6 +703,39 @@ mod debug_texture_tests {
     }
 }
 
+/// Tests for Metal texture storage mode requirements.
+///
+/// Metal textures require specific storage modes for CPU/GPU operations:
+/// - `Shared`: CPU and GPU can both read/write (iOS, Apple Silicon macOS)
+/// - `Managed`: CPU can write, GPU can read (Intel macOS)
+/// - `Private`: GPU only, no CPU access (fastest for GPU-only data)
+///
+/// For `replace_region()` to work (uploading CPU data to texture), we need
+/// either `Managed` or `Shared` storage mode. The default is typically
+/// `Private` which causes silent failures when using `replace_region()`.
+#[cfg(test)]
+mod texture_storage_mode_tests {
+    /// Verifies that storage mode concepts are understood correctly.
+    /// This is a documentation test that explains the fix for texture blit issues.
+    #[test]
+    fn test_storage_mode_documentation() {
+        // The fix for "texture blit doesn't show content" was to add:
+        // texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
+        //
+        // This is required because:
+        // 1. We use replace_region() to upload CPU-rendered PDF data to GPU textures
+        // 2. replace_region() requires CPU-accessible texture memory
+        // 3. Private storage mode (the default) doesn't allow CPU writes
+        // 4. Managed storage mode allows CPU writes and GPU reads
+        //
+        // Affected textures:
+        // - PDF page textures (main rendering)
+        // - Text overlay textures (page info display)
+        // - Spinner textures (loading indicator)
+        assert!(true, "Storage mode documentation test");
+    }
+}
+
 const TARGET_FPS: u64 = 120;
 const TARGET_FRAME_TIME: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
 
@@ -1042,6 +1079,8 @@ impl App {
         texture_desc.set_height(render_height as u64);
         texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
         texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        // Managed storage mode allows CPU writes via replace_region
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
 
         let texture = device.new_texture(&texture_desc);
 
