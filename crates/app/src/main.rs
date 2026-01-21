@@ -2,11 +2,13 @@
 //!
 //! Main application entry point with GPU-rendered UI shell.
 
+use pdf_editor_cache::GpuTextureCache;
 use pdf_editor_render::PdfDocument;
 use pdf_editor_ui::gpu;
 use pdf_editor_ui::input::InputHandler;
 use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::SceneGraph;
+use pdf_editor_ui::thumbnail::ThumbnailStrip;
 use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT, ZOOM_LEVELS};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -921,6 +923,16 @@ struct ToolbarTexture {
     height: u32,
 }
 
+#[cfg(target_os = "macos")]
+struct ThumbnailTexture {
+    texture: metal::Texture,
+    width: u32,
+    height: u32,
+}
+
+/// Width of the thumbnail strip sidebar
+const THUMBNAIL_STRIP_WIDTH: f32 = 136.0; // 120px thumbnail + 8px spacing * 2
+
 struct LoadedDocument {
     pdf: PdfDocument,
     path: PathBuf,
@@ -971,6 +983,15 @@ struct App {
     /// Toolbar texture for rendering
     #[cfg(target_os = "macos")]
     toolbar_texture: Option<ToolbarTexture>,
+    /// GPU texture cache for thumbnail rendering
+    gpu_texture_cache: Arc<GpuTextureCache>,
+    /// Thumbnail strip sidebar
+    thumbnail_strip: ThumbnailStrip,
+    /// Thumbnail strip texture for rendering
+    #[cfg(target_os = "macos")]
+    thumbnail_texture: Option<ThumbnailTexture>,
+    /// Whether the thumbnail strip is visible
+    show_thumbnails: bool,
 }
 
 impl App {
@@ -979,6 +1000,16 @@ impl App {
         let now = Instant::now();
         let input_handler = InputHandler::new(1200.0, 800.0);
         let toolbar = Toolbar::new(1200.0);
+
+        // Create GPU texture cache for thumbnails (64MB VRAM limit)
+        let gpu_texture_cache = Arc::new(GpuTextureCache::new(64 * 1024 * 1024));
+
+        // Create thumbnail strip with initial page count of 0 (no document loaded)
+        let thumbnail_strip = ThumbnailStrip::new(
+            Arc::clone(&gpu_texture_cache),
+            0,
+            (1200.0, 800.0),
+        );
 
         Self {
             window: None,
@@ -1011,6 +1042,11 @@ impl App {
             toolbar,
             #[cfg(target_os = "macos")]
             toolbar_texture: None,
+            gpu_texture_cache,
+            thumbnail_strip,
+            #[cfg(target_os = "macos")]
+            thumbnail_texture: None,
+            show_thumbnails: true,
         }
     }
 
@@ -1082,6 +1118,20 @@ impl App {
                     #[cfg(target_os = "macos")]
                     debug_texture_overlay: None,
                 });
+
+                // Reinitialize thumbnail strip with new page count
+                let viewport_size = self.window.as_ref()
+                    .map(|w| {
+                        let size = w.inner_size();
+                        (size.width as f32, size.height as f32)
+                    })
+                    .unwrap_or((1200.0, 800.0));
+                self.thumbnail_strip = ThumbnailStrip::new(
+                    Arc::clone(&self.gpu_texture_cache),
+                    page_count,
+                    viewport_size,
+                );
+                self.update_thumbnail_texture();
 
                 self.render_current_page();
 
@@ -1676,11 +1726,296 @@ impl App {
     #[cfg(not(target_os = "macos"))]
     fn update_toolbar_texture(&mut self) {}
 
+    /// Update the thumbnail strip texture for rendering
+    #[cfg(target_os = "macos")]
+    fn update_thumbnail_texture(&mut self) {
+        if !self.show_thumbnails {
+            self.thumbnail_texture = None;
+            return;
+        }
+
+        let Some(device) = &self.device else { return };
+        let window_size = self.window.as_ref().map(|w| w.inner_size()).unwrap_or_default();
+        let width = THUMBNAIL_STRIP_WIDTH as u32;
+        let height = window_size.height.saturating_sub(TOOLBAR_HEIGHT as u32);
+
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        // Create BGRA pixel buffer for thumbnail strip
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+        // Fill with dark gray background (BGRA format)
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 4) as usize;
+                pixels[idx] = 38;      // B
+                pixels[idx + 1] = 38;  // G
+                pixels[idx + 2] = 38;  // R
+                pixels[idx + 3] = 242; // A (almost opaque)
+            }
+        }
+
+        // Draw right border (lighter line)
+        let border_x = width - 1;
+        for y in 0..height {
+            let idx = ((y * width + border_x) * 4) as usize;
+            pixels[idx] = 77;      // B
+            pixels[idx + 1] = 77;  // G
+            pixels[idx + 2] = 77;  // R
+            pixels[idx + 3] = 255; // A
+        }
+
+        // Draw page thumbnails
+        self.draw_thumbnail_items(&mut pixels, width, height);
+
+        // Create Metal texture
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(width as u64);
+        texture_desc.set_height(height as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: width as u64,
+                height: height as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            pixels.as_ptr() as *const _,
+            (width * 4) as u64,
+        );
+
+        self.thumbnail_texture = Some(ThumbnailTexture {
+            texture,
+            width,
+            height,
+        });
+    }
+
+    /// Draw thumbnail items onto the pixel buffer
+    #[cfg(target_os = "macos")]
+    fn draw_thumbnail_items(&self, pixels: &mut [u8], tex_width: u32, tex_height: u32) {
+        let Some(doc) = &self.document else { return };
+
+        let thumb_width: u32 = 120;
+        let thumb_height: u32 = 160;
+        let spacing: u32 = 8;
+        let start_x = spacing;
+        let mut y = spacing;
+
+        for page_idx in 0..doc.page_count {
+            // Skip thumbnails above the visible area
+            if y + thumb_height < self.thumbnail_strip.current_page() as u32 * (thumb_height + spacing) {
+                y += thumb_height + spacing;
+                continue;
+            }
+
+            // Stop drawing thumbnails below the visible area
+            if y > tex_height {
+                break;
+            }
+
+            let is_selected = page_idx == doc.current_page;
+
+            // Draw border (highlight for selected)
+            let border_color = if is_selected {
+                (255u8, 153u8, 76u8) // Blue in BGRA
+            } else {
+                (102u8, 102u8, 102u8) // Gray in BGRA
+            };
+            let border_width = if is_selected { 3u32 } else { 2u32 };
+
+            // Draw border rectangle
+            self.draw_rect_border(
+                pixels,
+                tex_width,
+                tex_height,
+                start_x.saturating_sub(border_width),
+                y.saturating_sub(border_width),
+                thumb_width + border_width * 2,
+                thumb_height + border_width * 2,
+                border_width,
+                border_color,
+            );
+
+            // Draw placeholder thumbnail (light gray)
+            self.draw_filled_rect(
+                pixels,
+                tex_width,
+                tex_height,
+                start_x,
+                y,
+                thumb_width,
+                thumb_height,
+                (64, 64, 64, 255),
+            );
+
+            // Draw page number text
+            let page_num = format!("{}", page_idx + 1);
+            let text_x = start_x + thumb_width / 2 - (page_num.len() as u32 * 3);
+            let text_y = y + thumb_height / 2 - 4;
+            self.draw_text_simple(pixels, tex_width, tex_height, text_x, text_y, &page_num);
+
+            y += thumb_height + spacing;
+        }
+    }
+
+    /// Draw a border rectangle
+    #[cfg(target_os = "macos")]
+    fn draw_rect_border(
+        &self,
+        pixels: &mut [u8],
+        tex_width: u32,
+        tex_height: u32,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        border_width: u32,
+        color: (u8, u8, u8),
+    ) {
+        // Top edge
+        for bx in x..x.saturating_add(width).min(tex_width) {
+            for by in y..y.saturating_add(border_width).min(tex_height) {
+                let idx = ((by * tex_width + bx) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx] = color.0;     // B
+                    pixels[idx + 1] = color.1; // G
+                    pixels[idx + 2] = color.2; // R
+                    pixels[idx + 3] = 255;     // A
+                }
+            }
+        }
+        // Bottom edge
+        let bottom_y = y.saturating_add(height).saturating_sub(border_width);
+        for bx in x..x.saturating_add(width).min(tex_width) {
+            for by in bottom_y..y.saturating_add(height).min(tex_height) {
+                let idx = ((by * tex_width + bx) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx] = color.0;
+                    pixels[idx + 1] = color.1;
+                    pixels[idx + 2] = color.2;
+                    pixels[idx + 3] = 255;
+                }
+            }
+        }
+        // Left edge
+        for by in y..y.saturating_add(height).min(tex_height) {
+            for bx in x..x.saturating_add(border_width).min(tex_width) {
+                let idx = ((by * tex_width + bx) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx] = color.0;
+                    pixels[idx + 1] = color.1;
+                    pixels[idx + 2] = color.2;
+                    pixels[idx + 3] = 255;
+                }
+            }
+        }
+        // Right edge
+        let right_x = x.saturating_add(width).saturating_sub(border_width);
+        for by in y..y.saturating_add(height).min(tex_height) {
+            for bx in right_x..x.saturating_add(width).min(tex_width) {
+                let idx = ((by * tex_width + bx) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx] = color.0;
+                    pixels[idx + 1] = color.1;
+                    pixels[idx + 2] = color.2;
+                    pixels[idx + 3] = 255;
+                }
+            }
+        }
+    }
+
+    /// Draw a filled rectangle
+    #[cfg(target_os = "macos")]
+    fn draw_filled_rect(
+        &self,
+        pixels: &mut [u8],
+        tex_width: u32,
+        tex_height: u32,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        color: (u8, u8, u8, u8),
+    ) {
+        for by in y..y.saturating_add(height).min(tex_height) {
+            for bx in x..x.saturating_add(width).min(tex_width) {
+                let idx = ((by * tex_width + bx) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx] = color.0;     // B
+                    pixels[idx + 1] = color.1; // G
+                    pixels[idx + 2] = color.2; // R
+                    pixels[idx + 3] = color.3; // A
+                }
+            }
+        }
+    }
+
+    /// Draw simple text (page numbers) using a tiny built-in font
+    #[cfg(target_os = "macos")]
+    fn draw_text_simple(&self, pixels: &mut [u8], tex_width: u32, tex_height: u32, x: u32, y: u32, text: &str) {
+        // Simple 5x7 bitmap font for digits 0-9
+        let digit_patterns: [[u8; 7]; 10] = [
+            [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110], // 0
+            [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110], // 1
+            [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111], // 2
+            [0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110], // 3
+            [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010], // 4
+            [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110], // 5
+            [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110], // 6
+            [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000], // 7
+            [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110], // 8
+            [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100], // 9
+        ];
+
+        let mut cursor_x = x;
+        for c in text.chars() {
+            if let Some(digit) = c.to_digit(10) {
+                let pattern = &digit_patterns[digit as usize];
+                for (row, &bits) in pattern.iter().enumerate() {
+                    for col in 0..5 {
+                        if (bits >> (4 - col)) & 1 == 1 {
+                            let px = cursor_x + col;
+                            let py = y + row as u32;
+                            if px < tex_width && py < tex_height {
+                                let idx = ((py * tex_width + px) * 4) as usize;
+                                if idx + 3 < pixels.len() {
+                                    pixels[idx] = 200;     // B
+                                    pixels[idx + 1] = 200; // G
+                                    pixels[idx + 2] = 200; // R
+                                    pixels[idx + 3] = 255; // A
+                                }
+                            }
+                        }
+                    }
+                }
+                cursor_x += 6; // 5 pixels + 1 spacing
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn update_thumbnail_texture(&mut self) {}
+
     fn next_page(&mut self) {
         if let Some(doc) = &mut self.document {
             if doc.current_page + 1 < doc.page_count {
                 doc.current_page += 1;
                 println!("Page {}/{}", doc.current_page + 1, doc.page_count);
+                self.thumbnail_strip.set_current_page(doc.current_page);
+                self.update_thumbnail_texture();
                 self.render_current_page();
                 self.update_page_info_overlay();
             }
@@ -1692,10 +2027,34 @@ impl App {
             if doc.current_page > 0 {
                 doc.current_page -= 1;
                 println!("Page {}/{}", doc.current_page + 1, doc.page_count);
+                self.thumbnail_strip.set_current_page(doc.current_page);
+                self.update_thumbnail_texture();
                 self.render_current_page();
                 self.update_page_info_overlay();
             }
         }
+    }
+
+    /// Go to a specific page by index
+    fn goto_page(&mut self, page_index: u16) {
+        if let Some(doc) = &mut self.document {
+            if page_index < doc.page_count && page_index != doc.current_page {
+                doc.current_page = page_index;
+                println!("Page {}/{}", doc.current_page + 1, doc.page_count);
+                self.thumbnail_strip.set_current_page(doc.current_page);
+                self.update_thumbnail_texture();
+                self.render_current_page();
+                self.update_page_info_overlay();
+            }
+        }
+    }
+
+    /// Toggle the visibility of the thumbnail strip
+    fn toggle_thumbnails(&mut self) {
+        self.show_thumbnails = !self.show_thumbnails;
+        self.thumbnail_strip.set_visible(self.show_thumbnails);
+        self.update_thumbnail_texture();
+        println!("Thumbnails: {}", if self.show_thumbnails { "visible" } else { "hidden" });
     }
 
     /// Save the current document to its original file path
@@ -2045,6 +2404,9 @@ impl App {
 
         // Initialize toolbar texture
         self.update_toolbar_texture();
+
+        // Initialize thumbnail strip texture
+        self.update_thumbnail_texture();
     }
 
     fn render(&mut self) {
@@ -2289,6 +2651,38 @@ impl App {
                         blit_encoder.end_encoding();
                     }
 
+                    // Render thumbnail strip on the left side (below toolbar)
+                    if let Some(thumb_tex) = &self.thumbnail_texture {
+                        let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                        let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                        let src_size = metal::MTLSize {
+                            width: thumb_tex.width as u64,
+                            height: thumb_tex.height.min(drawable_height.saturating_sub(TOOLBAR_HEIGHT as u64) as u32) as u64,
+                            depth: 1,
+                        };
+                        // Position below toolbar
+                        let dest_origin = metal::MTLOrigin {
+                            x: 0,
+                            y: TOOLBAR_HEIGHT as u64,
+                            z: 0,
+                        };
+
+                        blit_encoder.copy_from_texture(
+                            &thumb_tex.texture,
+                            0,
+                            0,
+                            src_origin,
+                            src_size,
+                            drawable.texture(),
+                            0,
+                            0,
+                            dest_origin,
+                        );
+
+                        blit_encoder.end_encoding();
+                    }
+
                     command_buffer.present_drawable(drawable);
                     command_buffer.commit();
                 }
@@ -2353,7 +2747,9 @@ impl ApplicationHandler for App {
                 self.input_handler
                     .set_viewport_dimensions(size.width as f32, size.height as f32);
                 self.toolbar.set_viewport_width(size.width as f32);
+                self.thumbnail_strip.set_viewport_size(size.width as f32, size.height as f32);
                 self.update_toolbar_texture();
+                self.update_thumbnail_texture();
 
                 if self.document.is_some() {
                     if let Some(doc) = &mut self.document {
@@ -2415,6 +2811,19 @@ impl ApplicationHandler for App {
                                 self.toolbar.close_zoom_dropdown();
                                 self.handle_toolbar_button(button);
                             }
+                            // Check for thumbnail strip click
+                            else if self.show_thumbnails && x < THUMBNAIL_STRIP_WIDTH && y > TOOLBAR_HEIGHT {
+                                self.toolbar.close_zoom_dropdown();
+                                // Calculate which thumbnail was clicked
+                                let thumbnail_y = y - TOOLBAR_HEIGHT;
+                                let thumb_height = 160.0 + 8.0; // thumbnail height + spacing
+                                let page_index = (thumbnail_y / thumb_height) as u16;
+                                if let Some(doc) = &self.document {
+                                    if page_index < doc.page_count {
+                                        self.goto_page(page_index);
+                                    }
+                                }
+                            }
                             // Otherwise handle as normal click
                             else {
                                 // Close dropdown if clicking outside
@@ -2469,6 +2878,9 @@ impl ApplicationHandler for App {
                         | PhysicalKey::Code(KeyCode::ArrowUp)
                         | PhysicalKey::Code(KeyCode::ArrowLeft) => {
                             self.prev_page();
+                        }
+                        PhysicalKey::Code(KeyCode::KeyT) if is_cmd => {
+                            self.toggle_thumbnails();
                         }
                         _ => {}
                     }

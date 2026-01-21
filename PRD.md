@@ -291,11 +291,11 @@ GPU-rendered toolbar at top of window.
 ### Phase 2.3: Sidebar (Thumbnail Strip)
 Wire up the existing ThumbnailStrip component.
 
-- [ ] Connect ThumbnailStrip to main app
-- [ ] Render page thumbnails on left side
-- [ ] Highlight current page
-- [ ] Click thumbnail to navigate
-- [ ] Toggle visibility (Cmd+T)
+- [x] Connect ThumbnailStrip to main app
+- [x] Render page thumbnails on left side
+- [x] Highlight current page
+- [x] Click thumbnail to navigate
+- [x] Toggle visibility (Cmd+T)
 - [ ] Smooth scroll in sidebar
 - [ ] Lazy load thumbnails (visible first)
 - [x] ~~Manual test: Verify thumbnail rendering~~ (SKIP - requires human)

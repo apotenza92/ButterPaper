@@ -9,6 +9,7 @@ repository.workspace = true
 pdf-editor-ui = { path = "../ui" }
 pdf-editor-core = { path = "../core" }
 pdf-editor-render = { path = "../render" }
+pdf-editor-cache = { path = "../cache" }
 rfd = "0.15"
 dirs = "6"
 image = "0.25"
