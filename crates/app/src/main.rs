@@ -743,6 +743,306 @@ mod selection_highlight {
     }
 }
 
+/// Module for rendering stroke paths (polylines) with Metal
+#[cfg(target_os = "macos")]
+mod stroke_renderer {
+    use metal::{Device, MTLBlendFactor, MTLBlendOperation, MTLPixelFormat, MTLPrimitiveType, MTLVertexFormat, Buffer, RenderPipelineState};
+
+    /// Metal shader source for rendering colored strokes
+    /// Uses the same simple vertex/fragment setup as selection_highlight
+    const SHADER_SOURCE: &str = r#"
+        #include <metal_stdlib>
+        using namespace metal;
+
+        struct VertexIn {
+            float2 position [[attribute(0)]];
+            float4 color [[attribute(1)]];
+        };
+
+        struct VertexOut {
+            float4 position [[position]];
+            float4 color;
+        };
+
+        vertex VertexOut stroke_vertex_main(VertexIn in [[stage_in]]) {
+            VertexOut out;
+            out.position = float4(in.position, 0.0, 1.0);
+            out.color = in.color;
+            return out;
+        }
+
+        fragment float4 stroke_fragment_main(VertexOut in [[stage_in]]) {
+            return in.color;
+        }
+    "#;
+
+    /// Vertex data for a stroke segment
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Vertex {
+        pub position: [f32; 2],
+        pub color: [f32; 4],
+    }
+
+    /// Stroke data for rendering a polyline
+    /// Contains points in screen coordinates and style information
+    pub struct StrokeData {
+        /// Points in screen coordinates (normalized -1 to 1)
+        pub points: Vec<[f32; 2]>,
+        /// Stroke width in screen pixels
+        pub width: f32,
+        /// Stroke color (r, g, b, a)
+        pub color: [f32; 4],
+    }
+
+    /// Stroke renderer using Metal
+    /// Renders polylines as triangle strips for proper line width
+    pub struct StrokeRenderer {
+        pipeline_state: RenderPipelineState,
+        vertex_buffer: Buffer,
+        vertex_capacity: usize,
+    }
+
+    impl StrokeRenderer {
+        /// Create a new stroke renderer
+        pub fn new(device: &Device) -> Option<Self> {
+            // Compile shaders
+            let compile_options = metal::CompileOptions::new();
+            let library = device.new_library_with_source(SHADER_SOURCE, &compile_options).ok()?;
+
+            let vertex_function = library.get_function("stroke_vertex_main", None).ok()?;
+            let fragment_function = library.get_function("stroke_fragment_main", None).ok()?;
+
+            // Create vertex descriptor
+            let vertex_descriptor = metal::VertexDescriptor::new();
+
+            // Position attribute
+            let pos_attr = vertex_descriptor.attributes().object_at(0).unwrap();
+            pos_attr.set_format(MTLVertexFormat::Float2);
+            pos_attr.set_offset(0);
+            pos_attr.set_buffer_index(0);
+
+            // Color attribute
+            let color_attr = vertex_descriptor.attributes().object_at(1).unwrap();
+            color_attr.set_format(MTLVertexFormat::Float4);
+            color_attr.set_offset(8); // After position (2 * f32)
+            color_attr.set_buffer_index(0);
+
+            // Layout
+            let layout = vertex_descriptor.layouts().object_at(0).unwrap();
+            layout.set_stride(24); // 2 * f32 + 4 * f32 = 24 bytes
+
+            // Create pipeline descriptor
+            let pipeline_descriptor = metal::RenderPipelineDescriptor::new();
+            pipeline_descriptor.set_vertex_function(Some(&vertex_function));
+            pipeline_descriptor.set_fragment_function(Some(&fragment_function));
+            pipeline_descriptor.set_vertex_descriptor(Some(&vertex_descriptor));
+
+            // Configure color attachment with alpha blending
+            let color_attachment = pipeline_descriptor.color_attachments().object_at(0).unwrap();
+            color_attachment.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+            color_attachment.set_blending_enabled(true);
+            color_attachment.set_source_rgb_blend_factor(MTLBlendFactor::SourceAlpha);
+            color_attachment.set_destination_rgb_blend_factor(MTLBlendFactor::OneMinusSourceAlpha);
+            color_attachment.set_rgb_blend_operation(MTLBlendOperation::Add);
+            color_attachment.set_source_alpha_blend_factor(MTLBlendFactor::One);
+            color_attachment.set_destination_alpha_blend_factor(MTLBlendFactor::OneMinusSourceAlpha);
+            color_attachment.set_alpha_blend_operation(MTLBlendOperation::Add);
+
+            // Create pipeline state
+            let pipeline_state = device.new_render_pipeline_state(&pipeline_descriptor).ok()?;
+
+            // Create initial vertex buffer (can hold ~1000 stroke segments)
+            let vertex_capacity = 6000; // Each segment needs 6 vertices (2 triangles)
+            let buffer_size = vertex_capacity * std::mem::size_of::<Vertex>();
+            let vertex_buffer = device.new_buffer(buffer_size as u64, metal::MTLResourceOptions::StorageModeManaged);
+
+            Some(Self {
+                pipeline_state,
+                vertex_buffer,
+                vertex_capacity,
+            })
+        }
+
+        /// Render strokes (polylines with width)
+        ///
+        /// # Arguments
+        /// * `device` - The Metal device
+        /// * `command_buffer` - The command buffer to record to
+        /// * `drawable_texture` - The render target texture
+        /// * `strokes` - List of stroke data to render
+        /// * `drawable_width` - Width of the drawable
+        /// * `drawable_height` - Height of the drawable
+        pub fn render(
+            &mut self,
+            device: &Device,
+            command_buffer: &metal::CommandBufferRef,
+            drawable_texture: &metal::TextureRef,
+            strokes: &[StrokeData],
+            drawable_width: f32,
+            drawable_height: f32,
+        ) {
+            if strokes.is_empty() {
+                return;
+            }
+
+            // Calculate total vertices needed
+            // Each segment between points needs 6 vertices (2 triangles forming a quad)
+            let mut total_vertices = 0;
+            for stroke in strokes {
+                if stroke.points.len() >= 2 {
+                    total_vertices += (stroke.points.len() - 1) * 6;
+                }
+            }
+
+            if total_vertices == 0 {
+                return;
+            }
+
+            // Resize buffer if needed
+            if total_vertices > self.vertex_capacity {
+                let new_capacity = total_vertices * 2;
+                let buffer_size = new_capacity * std::mem::size_of::<Vertex>();
+                self.vertex_buffer = device.new_buffer(buffer_size as u64, metal::MTLResourceOptions::StorageModeManaged);
+                self.vertex_capacity = new_capacity;
+            }
+
+            let mut vertices = Vec::with_capacity(total_vertices);
+
+            for stroke in strokes {
+                if stroke.points.len() < 2 {
+                    continue;
+                }
+
+                // Convert stroke width from screen pixels to NDC
+                let half_width_ndc_x = stroke.width / drawable_width;
+                let half_width_ndc_y = stroke.width / drawable_height;
+
+                for i in 0..stroke.points.len() - 1 {
+                    let p1 = stroke.points[i];
+                    let p2 = stroke.points[i + 1];
+
+                    // Convert screen coordinates to NDC (-1 to 1)
+                    let x1 = (p1[0] / drawable_width) * 2.0 - 1.0;
+                    let y1 = 1.0 - (p1[1] / drawable_height) * 2.0;
+                    let x2 = (p2[0] / drawable_width) * 2.0 - 1.0;
+                    let y2 = 1.0 - (p2[1] / drawable_height) * 2.0;
+
+                    // Calculate perpendicular direction for line width
+                    let dx = x2 - x1;
+                    let dy = y2 - y1;
+                    let len = (dx * dx + dy * dy).sqrt();
+
+                    if len < 0.0001 {
+                        continue; // Skip degenerate segments
+                    }
+
+                    // Perpendicular unit vector, scaled by half width
+                    let px = -dy / len * half_width_ndc_x;
+                    let py = dx / len * half_width_ndc_y;
+
+                    // Four corners of the line segment quad
+                    let v1 = [x1 + px, y1 + py]; // Top-left of start
+                    let v2 = [x1 - px, y1 - py]; // Bottom-left of start
+                    let v3 = [x2 + px, y2 + py]; // Top-right of end
+                    let v4 = [x2 - px, y2 - py]; // Bottom-right of end
+
+                    // Triangle 1: v1, v2, v3
+                    vertices.push(Vertex { position: v1, color: stroke.color });
+                    vertices.push(Vertex { position: v2, color: stroke.color });
+                    vertices.push(Vertex { position: v3, color: stroke.color });
+
+                    // Triangle 2: v2, v4, v3
+                    vertices.push(Vertex { position: v2, color: stroke.color });
+                    vertices.push(Vertex { position: v4, color: stroke.color });
+                    vertices.push(Vertex { position: v3, color: stroke.color });
+                }
+            }
+
+            if vertices.is_empty() {
+                return;
+            }
+
+            // Upload vertex data
+            let data_ptr = self.vertex_buffer.contents() as *mut Vertex;
+            unsafe {
+                std::ptr::copy_nonoverlapping(vertices.as_ptr(), data_ptr, vertices.len());
+            }
+            self.vertex_buffer.did_modify_range(metal::NSRange {
+                location: 0,
+                length: (vertices.len() * std::mem::size_of::<Vertex>()) as u64,
+            });
+
+            // Create render pass
+            let render_pass_descriptor = metal::RenderPassDescriptor::new();
+            let color_attachment = render_pass_descriptor.color_attachments().object_at(0).unwrap();
+            color_attachment.set_texture(Some(drawable_texture));
+            color_attachment.set_load_action(metal::MTLLoadAction::Load); // Keep existing content
+            color_attachment.set_store_action(metal::MTLStoreAction::Store);
+
+            let encoder = command_buffer.new_render_command_encoder(&render_pass_descriptor);
+            encoder.set_render_pipeline_state(&self.pipeline_state);
+            encoder.set_vertex_buffer(0, Some(&self.vertex_buffer), 0);
+            encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
+            encoder.end_encoding();
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_vertex_size() {
+            // Verify vertex struct has expected size for Metal alignment
+            assert_eq!(std::mem::size_of::<Vertex>(), 24); // 2 floats (8 bytes) + 4 floats (16 bytes)
+        }
+
+        #[test]
+        fn test_stroke_renderer_creation() {
+            // Test that renderer can be created with a Metal device
+            let device = Device::system_default().expect("Metal device required for test");
+            let renderer = StrokeRenderer::new(&device);
+            assert!(renderer.is_some(), "Stroke renderer should be created successfully");
+        }
+
+        #[test]
+        fn test_stroke_data_creation() {
+            // Test that StrokeData can be created with valid data
+            let stroke = StrokeData {
+                points: vec![[0.0, 0.0], [100.0, 100.0], [200.0, 50.0]],
+                width: 2.0,
+                color: [1.0, 0.0, 0.0, 1.0],
+            };
+            assert_eq!(stroke.points.len(), 3);
+            assert_eq!(stroke.width, 2.0);
+            assert_eq!(stroke.color, [1.0, 0.0, 0.0, 1.0]);
+        }
+
+        #[test]
+        fn test_stroke_data_minimum_points() {
+            // Strokes need at least 2 points to be renderable
+            let stroke = StrokeData {
+                points: vec![[0.0, 0.0], [100.0, 100.0]],
+                width: 1.0,
+                color: [0.0, 0.0, 1.0, 0.5],
+            };
+            assert!(stroke.points.len() >= 2, "Stroke should have at least 2 points");
+        }
+
+        #[test]
+        fn test_stroke_data_empty_points() {
+            // Empty strokes are valid but won't render
+            let stroke = StrokeData {
+                points: vec![],
+                width: 1.0,
+                color: [0.0, 0.0, 0.0, 1.0],
+            };
+            assert!(stroke.points.is_empty());
+        }
+    }
+}
+
 /// Calculate clipping region for blitting a texture with pan offset.
 ///
 /// Returns (src_x, src_y, dest_x, dest_y, copy_width, copy_height) or None if fully clipped.
@@ -1255,6 +1555,9 @@ struct App {
     /// Selection highlight renderer for text selection overlays
     #[cfg(target_os = "macos")]
     selection_highlight_renderer: Option<selection_highlight::SelectionHighlightRenderer>,
+    /// Stroke renderer for freehand drawing and polyline rendering
+    #[cfg(target_os = "macos")]
+    stroke_renderer: Option<stroke_renderer::StrokeRenderer>,
     /// Click tracking for double/triple click detection
     last_click_time: Instant,
     /// Number of consecutive clicks
@@ -1343,6 +1646,8 @@ impl App {
             text_selection_active: false,
             #[cfg(target_os = "macos")]
             selection_highlight_renderer: None,
+            #[cfg(target_os = "macos")]
+            stroke_renderer: None,
             last_click_time: now,
             click_count: 0,
             last_click_pos: (0.0, 0.0),
@@ -3863,11 +4168,18 @@ impl App {
             eprintln!("WARNING: Failed to create selection highlight renderer");
         }
 
+        // Initialize stroke renderer for freehand drawing
+        let stroke_renderer_instance = stroke_renderer::StrokeRenderer::new(&device);
+        if stroke_renderer_instance.is_none() {
+            eprintln!("WARNING: Failed to create stroke renderer");
+        }
+
         self.metal_layer = Some(layer);
         self.loading_spinner = Some(spinner);
-        self.device = Some(device);
+        self.device = Some(device.clone());
         self.command_queue = Some(command_queue);
         self.selection_highlight_renderer = selection_renderer;
+        self.stroke_renderer = stroke_renderer_instance;
 
         // Initialize toolbar texture
         self.update_toolbar_texture();
@@ -4063,6 +4375,97 @@ impl App {
                                 command_buffer,
                                 drawable.texture(),
                                 &highlights_data,
+                                drawable_width as f32,
+                                drawable_height as f32,
+                            );
+                        }
+                    }
+
+                    // Render freehand strokes (after highlights, before overlays)
+                    // Collect stroke data from annotations that have stroke geometry
+                    let mut strokes_data: Vec<stroke_renderer::StrokeData> = Vec::new();
+
+                    if let Some(doc) = &self.document {
+                        if let Some(page_tex) = doc.page_textures.get(&doc.current_page) {
+                            // Calculate page position on screen (same as blit calculation)
+                            let center_x = (drawable_width as f32 - page_tex.width as f32) / 2.0;
+                            let center_y = (drawable_height as f32 - page_tex.height as f32) / 2.0;
+                            let pan_x = center_x - viewport_x;
+                            let pan_y = center_y - viewport_y;
+
+                            // Get zoom scale for coordinate transformation
+                            let zoom_scale = self.input_handler.viewport().zoom_level as f32 / 100.0;
+
+                            // Helper to get page height for Y-coordinate flipping
+                            let page_height = page_tex.height as f32 / zoom_scale;
+
+                            // Collect Freehand and Polyline annotations
+                            for annotation in self.annotations.get_page_annotations(page_index) {
+                                if !annotation.is_visible() {
+                                    continue;
+                                }
+
+                                let points = match annotation.geometry() {
+                                    AnnotationGeometry::Freehand { points } => Some(points),
+                                    AnnotationGeometry::Polyline { points } => Some(points),
+                                    _ => None,
+                                };
+
+                                if let Some(points) = points {
+                                    if points.len() >= 2 {
+                                        // Transform page coordinates to screen coordinates
+                                        let screen_points: Vec<[f32; 2]> = points
+                                            .iter()
+                                            .map(|p| {
+                                                // PDF coordinates have Y=0 at bottom, screen has Y=0 at top
+                                                let screen_x = pan_x + p.x * zoom_scale;
+                                                let screen_y = pan_y + (page_height - p.y) * zoom_scale;
+                                                [screen_x, screen_y]
+                                            })
+                                            .collect();
+
+                                        let style = annotation.style();
+                                        let (r, g, b, a) = style.stroke_color.to_normalized();
+                                        let final_alpha = a * style.opacity;
+
+                                        strokes_data.push(stroke_renderer::StrokeData {
+                                            points: screen_points,
+                                            width: style.stroke_width * zoom_scale,
+                                            color: [r, g, b, final_alpha],
+                                        });
+                                    }
+                                }
+                            }
+
+                            // Also render in-progress freehand drawing
+                            if self.is_drawing && self.freehand_drawing_points.len() >= 2
+                               && self.freehand_drawing_page == page_index {
+                                let screen_points: Vec<[f32; 2]> = self.freehand_drawing_points
+                                    .iter()
+                                    .map(|p| {
+                                        let screen_x = pan_x + p.x * zoom_scale;
+                                        let screen_y = pan_y + (page_height - p.y) * zoom_scale;
+                                        [screen_x, screen_y]
+                                    })
+                                    .collect();
+
+                                // Use red color for in-progress drawing (same as red_markup style)
+                                strokes_data.push(stroke_renderer::StrokeData {
+                                    points: screen_points,
+                                    width: 2.0 * zoom_scale, // Default stroke width
+                                    color: [1.0, 0.0, 0.0, 1.0], // Red, fully opaque
+                                });
+                            }
+                        }
+                    }
+
+                    if !strokes_data.is_empty() {
+                        if let (Some(device), Some(ref mut renderer)) = (&self.device, &mut self.stroke_renderer) {
+                            renderer.render(
+                                device,
+                                command_buffer,
+                                drawable.texture(),
+                                &strokes_data,
                                 drawable_width as f32,
                                 drawable_height as f32,
                             );

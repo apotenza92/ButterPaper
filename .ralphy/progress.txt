@@ -11412,3 +11412,42 @@ Created a GPU-rendered note popup component that displays annotation content whe
 - Uses existing rendering pipeline (compositor.rs already handles Freehand → Polyline)
 - Drawing creates red markup style annotations for visibility
 - Keyboard shortcut 'P' matches Bluebeam's Pen tool shortcut
+
+### Task: Render strokes (Phase 3.3 - Annotations)
+
+**Status:** Complete
+
+**Changes:**
+- Created `stroke_renderer` module in crates/app/src/main.rs for Metal-based polyline rendering
+- Implemented Metal shader pipeline for rendering strokes as triangle strips with proper width
+- Added StrokeRenderer struct with dynamic vertex buffer management
+- Added stroke_renderer field to App state for freehand stroke rendering
+- Integrated stroke rendering in the main render loop after highlight rendering
+- Renders both completed Freehand/Polyline annotations and in-progress drawing
+- Supports stroke width scaling with zoom level
+- Properly transforms page coordinates to screen coordinates with Y-axis flipping
+
+**Files Modified:**
+- crates/app/src/main.rs
+  - Added stroke_renderer module (lines 746-1044) with Metal shader, vertex format, and StrokeRenderer implementation
+  - Added stroke_renderer field to App struct
+  - Added stroke renderer initialization in init_gpu method
+  - Added stroke rendering code in render method to draw freehand annotations and in-progress strokes
+
+**Files Modified:**
+- PRD.md (marked "Render strokes" task as complete)
+
+**Tests Added:**
+- test_vertex_size - Verifies vertex struct alignment for Metal
+- test_stroke_renderer_creation - Verifies renderer can be created with Metal device
+- test_stroke_data_creation - Verifies StrokeData struct works correctly
+- test_stroke_data_minimum_points - Verifies minimum 2 points requirement
+- test_stroke_data_empty_points - Verifies handling of empty strokes
+
+**Technical Details:**
+- Uses triangle strips to render polylines with proper width
+- Calculates perpendicular vectors for line thickness
+- Converts screen coordinates to NDC (-1 to 1) for Metal rendering
+- Supports alpha blending for semi-transparent strokes
+- Dynamically resizes vertex buffer when needed
+- Renders in-progress freehand drawing in red while user is drawing
