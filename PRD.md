@@ -82,7 +82,7 @@ All unit tests now pass after fixing:
 - [x] Make scroll wheel zoom update the visible page
 - [x] Make mouse drag pan the page
 - [x] Add smooth animation for zoom transitions
-- [ ] **Terminal test:** Log viewport state changes
+- [x] **Terminal test:** Log viewport state changes
 
 ---
 

@@ -647,6 +647,30 @@ mod blit_tests {
     }
 }
 
+#[cfg(test)]
+mod viewport_log_tests {
+    use super::*;
+
+    #[test]
+    fn test_viewport_log_state_equality() {
+        let state1 = ViewportLogState { x: 100, y: 200, zoom: 100 };
+        let state2 = ViewportLogState { x: 100, y: 200, zoom: 100 };
+        let state3 = ViewportLogState { x: 101, y: 200, zoom: 100 };
+        let state4 = ViewportLogState { x: 100, y: 200, zoom: 125 };
+
+        assert_eq!(state1, state2);
+        assert_ne!(state1, state3);
+        assert_ne!(state1, state4);
+    }
+
+    #[test]
+    fn test_viewport_log_state_copy() {
+        let state1 = ViewportLogState { x: 100, y: 200, zoom: 100 };
+        let state2 = state1; // Copy
+        assert_eq!(state1, state2);
+    }
+}
+
 const TARGET_FPS: u64 = 120;
 const TARGET_FRAME_TIME: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
 
@@ -724,6 +748,14 @@ impl LoadingSpinner {
     }
 }
 
+/// State for throttled viewport logging
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ViewportLogState {
+    x: i32,       // Rounded pan x
+    y: i32,       // Rounded pan y
+    zoom: u32,    // Discrete zoom level
+}
+
 struct LoadedDocument {
     pdf: PdfDocument,
     #[allow(dead_code)]
@@ -762,6 +794,10 @@ struct App {
     document: Option<LoadedDocument>,
     pending_file_open: bool,
     initial_file: Option<PathBuf>,
+    /// Enable viewport state change logging (--debug-viewport flag)
+    debug_viewport: bool,
+    /// Last logged viewport state for throttled logging
+    last_logged_viewport: Option<ViewportLogState>,
 }
 
 impl App {
@@ -795,6 +831,15 @@ impl App {
             document: None,
             pending_file_open: false,
             initial_file: None,
+            debug_viewport: false,
+            last_logged_viewport: None,
+        }
+    }
+
+    fn set_debug_viewport(&mut self, enabled: bool) {
+        self.debug_viewport = enabled;
+        if enabled {
+            println!("VIEWPORT_DEBUG: enabled");
         }
     }
 
@@ -1070,12 +1115,53 @@ impl App {
 
             // Always update the overlay when viewport changes (to show new zoom %)
             self.update_page_info_overlay();
+
+            // Log viewport state changes (throttled to avoid spam)
+            if self.debug_viewport {
+                self.log_viewport_state();
+            }
         }
 
         // Update the loading spinner animation
         #[cfg(target_os = "macos")]
         if let Some(spinner) = &mut self.loading_spinner {
             spinner.update();
+        }
+    }
+
+    /// Log viewport state changes (throttled to significant changes only)
+    fn log_viewport_state(&mut self) {
+        let viewport = self.input_handler.viewport();
+        let current_state = ViewportLogState {
+            x: viewport.x.round() as i32,
+            y: viewport.y.round() as i32,
+            zoom: viewport.zoom_level,
+        };
+
+        // Only log if state changed significantly
+        let should_log = match self.last_logged_viewport {
+            None => true,
+            Some(last) => last != current_state,
+        };
+
+        if should_log {
+            let visual_zoom = self.input_handler.visual_zoom();
+            let is_animating = self.input_handler.is_zoom_animating();
+            let page_info = self.document.as_ref()
+                .map(|d| format!("page={}/{}", d.current_page + 1, d.page_count))
+                .unwrap_or_else(|| "no_document".to_string());
+
+            println!(
+                "VIEWPORT: x={} y={} zoom={}% visual_zoom={:.1}% animating={} {}",
+                current_state.x,
+                current_state.y,
+                current_state.zoom,
+                visual_zoom,
+                is_animating,
+                page_info
+            );
+
+            self.last_logged_viewport = Some(current_state);
         }
     }
 
@@ -1470,19 +1556,22 @@ fn main() {
     println!("PDF Editor starting...");
     println!("Press ⌘O to open a PDF file, or drag and drop a PDF onto the window");
 
-    // Check for command line argument
+    // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
-    let initial_file = if args.len() > 1 {
-        let path = PathBuf::from(&args[1]);
-        if path.exists() && path.extension().map(|e| e == "pdf").unwrap_or(false) {
-            println!("Will open: {}", path.display());
-            Some(path)
-        } else {
-            None
+    let mut initial_file: Option<PathBuf> = None;
+    let mut debug_viewport = false;
+
+    for arg in args.iter().skip(1) {
+        if arg == "--debug-viewport" {
+            debug_viewport = true;
+        } else if !arg.starts_with('-') {
+            let path = PathBuf::from(arg);
+            if path.exists() && path.extension().map(|e| e == "pdf").unwrap_or(false) {
+                println!("Will open: {}", path.display());
+                initial_file = Some(path);
+            }
         }
-    } else {
-        None
-    };
+    }
 
     #[cfg(target_os = "macos")]
     #[allow(deprecated)]
@@ -1496,6 +1585,9 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::new();
+    if debug_viewport {
+        app.set_debug_viewport(true);
+    }
     if let Some(path) = initial_file {
         app.set_initial_file(path);
     }

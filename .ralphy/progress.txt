@@ -9760,3 +9760,49 @@ Users can now:
 - Metal blit operations don't support scaling, so visual texture scaling would require a render pipeline
   - Current implementation provides smooth viewport panning and overlay updates during zoom
   - Full visual texture scaling could be added later with a proper render pipeline
+
+
+### Task: Terminal test - Log viewport state changes
+
+**Status:** Complete
+
+**Changes:**
+- Added `--debug-viewport` CLI flag to enable verbose viewport state change logging
+- Added `ViewportLogState` struct to track throttled logging state (x, y, zoom)
+- Added `debug_viewport: bool` and `last_logged_viewport: Option<ViewportLogState>` fields to App struct
+- Added `set_debug_viewport()` method to enable viewport debugging
+- Added `log_viewport_state()` method that logs significant viewport changes in format:
+  `VIEWPORT: x=N y=N zoom=N% visual_zoom=N.N% animating=bool page=M/N`
+- Updated main() to parse `--debug-viewport` from command line arguments
+- Logging is throttled to only emit when rounded x/y coordinates or discrete zoom level changes
+
+**Files Modified:**
+- crates/app/src/main.rs:
+  - Added `ViewportLogState` struct with Clone, Copy, Debug, PartialEq derives
+  - Added `debug_viewport` and `last_logged_viewport` fields to App struct
+  - Added `set_debug_viewport()` and `log_viewport_state()` methods
+  - Updated `update()` to call `log_viewport_state()` when viewport changes
+  - Updated `main()` to parse `--debug-viewport` CLI flag
+  - Added `viewport_log_tests` test module with 2 tests
+
+**Tests Added:**
+- `test_viewport_log_state_equality`: Verifies ViewportLogState equality comparison
+- `test_viewport_log_state_copy`: Verifies ViewportLogState is copyable
+
+**Testing:**
+- All 493 tests pass (2 new tests)
+- Clippy linting passes with no warnings
+
+**Usage:**
+```bash
+# Run with viewport debug logging
+cargo run --release -- --debug-viewport test.pdf
+
+# Example output during panning:
+# VIEWPORT: x=100 y=50 zoom=100% visual_zoom=100.0% animating=false page=1/10
+# VIEWPORT: x=150 y=50 zoom=100% visual_zoom=100.0% animating=false page=1/10
+
+# Example output during zooming:
+# VIEWPORT: x=100 y=50 zoom=125% visual_zoom=112.5% animating=true page=1/10
+# VIEWPORT: x=100 y=50 zoom=125% visual_zoom=125.0% animating=false page=1/10
+```
