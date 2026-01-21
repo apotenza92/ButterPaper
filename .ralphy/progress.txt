@@ -3142,3 +3142,193 @@ All Phase 6 tasks are now complete. The viewport and navigation subsystem is ful
 ---
 
 **Next Task:** Phase 7, Task 1 - Design annotation data model (immutable geometry + editable metadata)
+
+---
+
+## Phase 7, Task 1: Design Annotation Data Model
+
+**Date:** 2026-01-21
+
+### Implementation Summary
+
+Designed and implemented a comprehensive annotation data model for the CAD-style PDF editor. The model separates immutable geometry from editable metadata, ensuring predictable rendering and efficient caching.
+
+### Key Components
+
+**1. Core Data Types:**
+
+Created `/Users/alex/code/pdf-editor/crates/core/src/annotation.rs` with the following types:
+
+- `AnnotationId` - UUID v4-based stable identifier
+- `PageCoordinate` - Page-local coordinate in PDF space (bottom-left origin)
+- `Color` - RGBA color with common presets
+- `AnnotationGeometry` - Immutable geometry variants
+- `AnnotationStyle` - Immutable visual styling
+- `AnnotationMetadata` - Editable metadata (labels, tags, timestamps)
+- `Annotation` - Complete annotation combining all components
+- `AnnotationCollection` - Efficient storage and lookup
+
+**2. Geometry Types Supported:**
+
+- Line segments
+- Polylines (open paths)
+- Polygons (closed paths)
+- Rectangles
+- Circles
+- Ellipses
+- Freehand drawing
+- Text annotations
+- Arrows with arrowheads
+
+**3. Key Design Decisions:**
+
+**Immutable Geometry:**
+- Geometry is stored in `Arc<AnnotationGeometry>` and cannot be modified
+- To change geometry, create a new annotation with `with_geometry()`
+- This ensures deterministic rendering and cache-friendly behavior
+- Modifications update the `modified_at` timestamp automatically
+
+**Page-Local Coordinates:**
+- All coordinates use PDF coordinate system (origin at bottom-left, Y up)
+- Coordinates in points (1/72 inch)
+- No dependency on viewport or screen coordinates
+- Enables reliable measurements and annotations across zoom levels
+
+**Stable IDs:**
+- UUID v4 ensures globally unique identifiers
+- IDs persist across save/load cycles
+- IDs preserved when modifying geometry or style via `with_geometry()`/`with_style()`
+
+**Efficient Organization:**
+- `AnnotationCollection` indexes annotations by both ID and page
+- Page-level lookup is O(1) for rendering
+- Annotations sorted by layer for proper z-ordering
+- Hit testing returns results in top-to-bottom order
+
+**4. API Features:**
+
+- Bounding box calculation for all geometry types
+- Hit testing with configurable tolerance
+- Layer/z-index support for stacking order
+- Selection and visibility state management
+- Metadata timestamps (created_at, modified_at)
+- Custom key-value metadata storage
+- Tag-based organization
+
+### Code Quality
+
+**Testing:**
+- 11 comprehensive unit tests covering all major functionality
+- Tests for geometry operations (bounding boxes, hit testing)
+- Tests for collection management (add, remove, lookup)
+- Tests for layer sorting and hit test ordering
+- Tests for geometry/style modification with ID preservation
+- All tests passing ✅
+
+**Linting:**
+- Zero Clippy warnings with `-D warnings`
+- Clean compilation with no unused variables
+- Proper use of Rust idioms (or_default(), pattern matching)
+
+### Integration Points
+
+**Dependencies Added:**
+- `uuid = { version = "1.11", features = ["v4"] }` to core crate
+
+**Public API:**
+Exported from `crates/core/src/lib.rs`:
+- `Annotation`
+- `AnnotationCollection`
+- `AnnotationGeometry`
+- `AnnotationId`
+- `AnnotationMetadata`
+- `AnnotationStyle`
+- `Color`
+- `PageCoordinate`
+
+### Architecture Alignment
+
+The annotation model integrates cleanly with the existing architecture:
+
+1. **Document Core:** Annotations are separate from document state, allowing independent management
+2. **Coordinate System:** Uses same page-local coordinates as tile rendering system
+3. **Rendering Pipeline:** Immutable geometry enables efficient caching and GPU rendering
+4. **Performance:** Arc-based sharing minimizes memory overhead
+5. **Future-Ready:** Design supports upcoming features:
+   - GPU vector primitive rendering (Phase 7, Task 4)
+   - Hit testing infrastructure (Phase 7, Task 5)
+   - Selection handles (Phase 7, Task 6)
+   - CAD measurements with scale (Phase 8)
+
+### Design Rationale
+
+**Why Immutable Geometry?**
+- Predictable rendering: geometry hash never changes
+- Cache-friendly: tile cache doesn't need invalidation on metadata edits
+- Simpler concurrency: no locks needed for geometry access
+- Clear API: modification requires explicit new annotation creation
+
+**Why Separate Metadata?**
+- Metadata changes (labels, tags) don't affect rendering
+- Allows editing user-facing properties without cache invalidation
+- Supports collaborative workflows (author tracking, timestamps)
+- Enables rich organization (tags, custom fields)
+
+**Why Arc-based Sharing?**
+- Zero-copy cloning for read-only access
+- Memory-efficient when annotations are duplicated (undo/redo)
+- Thread-safe sharing between render and UI threads
+- Small overhead (single pointer indirection)
+
+**Why Page-Local Coordinates?**
+- Scale-independent: annotations don't change when zooming
+- Rotation-friendly: works correctly at all rotation angles
+- Measurement-ready: direct support for CAD measurements in Phase 8
+- PDF-standard: aligns with PDF specification for annotations
+
+### Next Steps
+
+The annotation data model is now complete and ready for the following tasks:
+
+**Phase 7, Task 2:** Implement stable annotation IDs
+- Already implemented via UUID v4
+- IDs persist through geometry/style modifications
+- Ready for serialization/deserialization
+
+**Phase 7, Task 3:** Build page-local coordinate system
+- Already implemented via `PageCoordinate`
+- PDF coordinate system (origin bottom-left, Y up)
+- Ready for viewport transformations
+
+**Phase 7, Task 4:** Render annotations as GPU vector primitives
+- Geometry types ready for GPU tessellation
+- Bounding boxes available for culling
+- Style properties ready for shader uniforms
+
+**Phase 7, Task 5:** Implement vector-based hit testing
+- Hit testing foundation already implemented
+- `contains_point()` handles all geometry types
+- Tolerance-based selection ready
+
+**Phase 7, Task 6:** Add annotation selection and manipulation handles
+- Selection state management already implemented
+- Layer system supports handle rendering on top
+- Bounding boxes available for handle placement
+
+### Validation
+
+✅ Annotation data model designed and implemented
+✅ Immutable geometry with Arc-based sharing
+✅ Editable metadata separate from geometry
+✅ Stable UUID-based annotation IDs
+✅ Page-local coordinate system (PDF standard)
+✅ Comprehensive geometry types (9 variants)
+✅ Hit testing with tolerance support
+✅ Layer/z-index for render ordering
+✅ Efficient collection with page-based indexing
+✅ 11 unit tests, all passing
+✅ Zero linting warnings
+✅ Clean integration with existing architecture
+
+**Phase 7, Task 1: COMPLETE ✅**
+

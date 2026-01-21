@@ -89,7 +89,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Implement page rotation support
 
 ### Phase 7: Annotation Engine
-- [ ] Design annotation data model (immutable geometry + editable metadata)
+- [x] Design annotation data model (immutable geometry + editable metadata)
 - [ ] Implement stable annotation IDs
 - [ ] Build page-local coordinate system for annotations
 - [ ] Render annotations as GPU vector primitives
