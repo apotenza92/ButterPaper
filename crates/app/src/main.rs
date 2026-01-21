@@ -671,6 +671,34 @@ mod viewport_log_tests {
     }
 }
 
+#[cfg(test)]
+mod debug_texture_tests {
+    use super::*;
+
+    #[test]
+    fn test_app_debug_texture_default_false() {
+        let app = App::new();
+        assert!(!app.debug_texture);
+    }
+
+    #[test]
+    fn test_app_set_debug_texture_enables_flag() {
+        let mut app = App::new();
+        assert!(!app.debug_texture);
+        app.set_debug_texture(true);
+        assert!(app.debug_texture);
+    }
+
+    #[test]
+    fn test_app_set_debug_texture_can_disable() {
+        let mut app = App::new();
+        app.set_debug_texture(true);
+        assert!(app.debug_texture);
+        app.set_debug_texture(false);
+        assert!(!app.debug_texture);
+    }
+}
+
 const TARGET_FPS: u64 = 120;
 const TARGET_FRAME_TIME: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
 
@@ -756,6 +784,14 @@ struct ViewportLogState {
     zoom: u32,    // Discrete zoom level
 }
 
+/// Debug texture overlay showing texture dimensions and format
+#[cfg(target_os = "macos")]
+struct DebugTextureOverlay {
+    texture: metal::Texture,
+    width: u32,
+    height: u32,
+}
+
 struct LoadedDocument {
     pdf: PdfDocument,
     #[allow(dead_code)]
@@ -767,6 +803,8 @@ struct LoadedDocument {
     cached_zoom_level: u32,
     #[cfg(target_os = "macos")]
     page_info_overlay: Option<PageInfoOverlay>,
+    #[cfg(target_os = "macos")]
+    debug_texture_overlay: Option<DebugTextureOverlay>,
 }
 
 struct App {
@@ -798,6 +836,8 @@ struct App {
     debug_viewport: bool,
     /// Last logged viewport state for throttled logging
     last_logged_viewport: Option<ViewportLogState>,
+    /// Enable debug texture overlay (--debug-texture flag)
+    debug_texture: bool,
 }
 
 impl App {
@@ -833,6 +873,14 @@ impl App {
             initial_file: None,
             debug_viewport: false,
             last_logged_viewport: None,
+            debug_texture: false,
+        }
+    }
+
+    fn set_debug_texture(&mut self, enabled: bool) {
+        self.debug_texture = enabled;
+        if enabled {
+            println!("TEXTURE_DEBUG: enabled - will show texture dimensions overlay");
         }
     }
 
@@ -884,6 +932,8 @@ impl App {
                     cached_zoom_level: self.input_handler.viewport().zoom_level,
                     #[cfg(target_os = "macos")]
                     page_info_overlay: None,
+                    #[cfg(target_os = "macos")]
+                    debug_texture_overlay: None,
                 });
 
                 self.render_current_page();
@@ -1027,6 +1077,9 @@ impl App {
 
         // Update the page info overlay
         self.update_page_info_overlay();
+
+        // Update the debug texture overlay if enabled
+        self.update_debug_texture_overlay();
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -1059,6 +1112,56 @@ impl App {
 
     #[cfg(not(target_os = "macos"))]
     fn update_page_info_overlay(&mut self) {}
+
+    /// Update the debug texture overlay showing texture dimensions and format info
+    #[cfg(target_os = "macos")]
+    fn update_debug_texture_overlay(&mut self) {
+        if !self.debug_texture {
+            return;
+        }
+
+        let Some(device) = &self.device else { return; };
+        let Some(doc) = &mut self.document else { return; };
+
+        // Get current page texture dimensions
+        let (tex_width, tex_height) = if let Some(tex) = doc.page_textures.get(&doc.current_page) {
+            (tex.width, tex.height)
+        } else {
+            (0, 0)
+        };
+
+        // Get window/drawable dimensions
+        let window_size = self.window.as_ref().map(|w| w.inner_size()).unwrap_or_default();
+
+        // Format debug info text
+        let text = format!(
+            "{}x{} BGRA8",
+            tex_width, tex_height
+        );
+
+        // Log detailed texture debug info to console
+        println!(
+            "TEXTURE_DEBUG: page={} tex={}x{} window={}x{} format=BGRA8Unorm_sRGB cached_zoom={}%",
+            doc.current_page + 1,
+            tex_width,
+            tex_height,
+            window_size.width,
+            window_size.height,
+            doc.cached_zoom_level
+        );
+
+        // Render the debug overlay text (scale = 2, padding = 6)
+        if let Some(overlay) = text_overlay::render_text_overlay(device, &text, 2, 6) {
+            doc.debug_texture_overlay = Some(DebugTextureOverlay {
+                texture: overlay.texture,
+                width: overlay.width,
+                height: overlay.height,
+            });
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn update_debug_texture_overlay(&mut self) {}
 
     fn next_page(&mut self) {
         if let Some(doc) = &mut self.document {
@@ -1345,6 +1448,41 @@ impl App {
 
                             blit_encoder.end_encoding();
                         }
+
+                        // Blit the debug texture overlay to the top-left corner
+                        if let Some(debug_overlay) = &doc.debug_texture_overlay {
+                            let margin = 16u64;
+                            let dest_x = margin;
+                            let dest_y = margin;
+
+                            let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                            let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                            let src_size = metal::MTLSize {
+                                width: debug_overlay.width as u64,
+                                height: debug_overlay.height as u64,
+                                depth: 1,
+                            };
+                            let dest_origin = metal::MTLOrigin {
+                                x: dest_x,
+                                y: dest_y,
+                                z: 0,
+                            };
+
+                            blit_encoder.copy_from_texture(
+                                &debug_overlay.texture,
+                                0,
+                                0,
+                                src_origin,
+                                src_size,
+                                drawable.texture(),
+                                0,
+                                0,
+                                dest_origin,
+                            );
+
+                            blit_encoder.end_encoding();
+                        }
                     }
 
                     // Render loading spinner in the center if active
@@ -1560,10 +1698,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut initial_file: Option<PathBuf> = None;
     let mut debug_viewport = false;
+    let mut debug_texture = false;
 
     for arg in args.iter().skip(1) {
         if arg == "--debug-viewport" {
             debug_viewport = true;
+        } else if arg == "--debug-texture" {
+            debug_texture = true;
         } else if !arg.starts_with('-') {
             let path = PathBuf::from(arg);
             if path.exists() && path.extension().map(|e| e == "pdf").unwrap_or(false) {
@@ -1587,6 +1728,9 @@ fn main() {
     let mut app = App::new();
     if debug_viewport {
         app.set_debug_viewport(true);
+    }
+    if debug_texture {
+        app.set_debug_texture(true);
     }
     if let Some(path) = initial_file {
         app.set_initial_file(path);

@@ -68,7 +68,7 @@ All unit tests now pass after fixing:
 ### Phase 1.1: Fix PDF Display
 - [ ] Debug why texture blit doesn't show content
 - [ ] Verify RGBA→BGRA conversion is correct
-- [ ] Add debug overlay showing texture dimensions
+- [x] Add debug overlay showing texture dimensions
 - [ ] Test with multiple PDF files
 - [ ] **Terminal test:** `cargo run --release -- test.pdf 2>&1 | grep "SUCCESS\|FAILED"`
 

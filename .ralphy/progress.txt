@@ -9806,3 +9806,66 @@ cargo run --release -- --debug-viewport test.pdf
 # VIEWPORT: x=100 y=50 zoom=125% visual_zoom=112.5% animating=true page=1/10
 # VIEWPORT: x=100 y=50 zoom=125% visual_zoom=125.0% animating=false page=1/10
 ```
+
+
+### Task: Add debug overlay showing texture dimensions
+
+**Status:** Complete
+
+**Changes:**
+- Added `--debug-texture` CLI flag to enable debug texture overlay
+- Added `DebugTextureOverlay` struct to hold the overlay texture, width, and height
+- Added `debug_texture_overlay` field to `LoadedDocument` struct
+- Added `debug_texture: bool` field to `App` struct
+- Added `set_debug_texture()` method to enable/disable the feature
+- Added `update_debug_texture_overlay()` method that:
+  - Only runs when `--debug-texture` flag is enabled
+  - Gets current page texture dimensions from cache
+  - Gets window dimensions
+  - Logs detailed texture debug info to console (TEXTURE_DEBUG format)
+  - Renders a small overlay showing "WxH BGRA8" in the top-left corner
+- Updated `render_current_page()` to call `update_debug_texture_overlay()` after rendering
+- Updated `render()` to blit the debug texture overlay to the top-left corner (16px margin)
+- Updated `main()` to parse `--debug-texture` CLI flag
+
+**Files Modified:**
+- crates/app/src/main.rs:
+  - Added `DebugTextureOverlay` struct
+  - Added `debug_texture_overlay` field to `LoadedDocument`
+  - Added `debug_texture` field to `App` struct
+  - Added `set_debug_texture()` method
+  - Added `update_debug_texture_overlay()` method with macOS-specific implementation
+  - Added blit code for debug texture overlay in render loop
+  - Added CLI argument parsing for `--debug-texture`
+  - Added `debug_texture_tests` test module with 3 tests
+
+**Tests Added:**
+- `test_app_debug_texture_default_false`: Verifies debug_texture is false by default
+- `test_app_set_debug_texture_enables_flag`: Verifies set_debug_texture(true) enables the flag
+- `test_app_set_debug_texture_can_disable`: Verifies the flag can be disabled after enabling
+
+**Testing:**
+- All 497 tests pass (3 new tests in main.rs)
+- Clippy linting passes with no warnings
+
+**Usage:**
+```bash
+# Run with texture debug overlay
+cargo run --release -- --debug-texture test.pdf
+
+# Example console output:
+# TEXTURE_DEBUG: enabled - will show texture dimensions overlay
+# TEXTURE_DEBUG: page=1 tex=1160x760 window=1200x800 format=BGRA8Unorm_sRGB cached_zoom=100%
+
+# The overlay shows "1160x760 BGRA8" in the top-left corner of the window
+```
+
+**Architecture Notes:**
+- The debug texture overlay is separate from the page info overlay (which shows page number and zoom)
+- Debug overlay appears in top-left corner, page info overlay in bottom-right corner
+- The overlay only appears when --debug-texture flag is passed
+- Logs detailed texture info to console for debugging rendering issues
+- This feature helps diagnose "texture blit doesn't show content" issues by verifying:
+  - Texture dimensions match expected size
+  - Texture format is correct (BGRA8Unorm_sRGB)
+  - Cached zoom level is accurate
