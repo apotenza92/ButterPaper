@@ -79,12 +79,14 @@ impl DocumentLoader {
             file_size,
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
+            text_edits: Vec::new(),
         };
 
-        // Try to load persisted metadata (scale systems, etc.)
+        // Try to load persisted metadata (scale systems, text edits, etc.)
         if let Ok(Some(persisted)) = crate::persistence::load_metadata(path) {
             metadata.scale_systems = persisted.scale_systems;
             metadata.default_scales = persisted.default_scales;
+            metadata.text_edits = persisted.text_edits;
         }
 
         // Note: pdf_doc is dropped here, closing the file

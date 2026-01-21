@@ -649,6 +649,7 @@ mod tests {
             file_size: 1024,
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
+            text_edits: Vec::new(),
         };
 
         Document::new(1, metadata)

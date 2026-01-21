@@ -15,6 +15,7 @@ pub mod preview;
 pub mod progressive_ocr;
 pub mod scale_detection;
 pub mod snapping;
+pub mod text_edit;
 pub mod text_layer;
 
 pub use annotation::{
@@ -44,6 +45,9 @@ pub use persistence::{
 pub use preview::{AsyncPreviewRenderer, PreviewRenderer, PreviewHandle, PreviewResult};
 pub use scale_detection::{detect_scales, get_best_scale, DetectedScale};
 pub use snapping::{SnapConfig, SnapEngine, SnapTarget, SnapType};
+pub use text_edit::{
+    PageTextEdits, TextEdit, TextEditId, TextEditManager,
+};
 pub use text_layer::{
     PageTextLayer, SearchMatch, TextBoundingBox, TextLayerManager, TextLayerStats, TextSpan,
 };

@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use crate::measurement::{ScaleSystem, ScaleSystemId};
+use crate::text_edit::PageTextEdits;
 
 /// Unique identifier for a document
 pub type DocumentId = u64;
@@ -44,6 +45,10 @@ pub struct DocumentMetadata {
     /// Default scale system per page (page_index -> scale_system_id)
     #[serde(default)]
     pub default_scales: std::collections::HashMap<u16, ScaleSystemId>,
+
+    /// Text edits for the document (per-page)
+    #[serde(default)]
+    pub text_edits: Vec<PageTextEdits>,
 }
 
 impl DocumentMetadata {
@@ -92,6 +97,37 @@ impl DocumentMetadata {
         // Clear any default scale references
         self.default_scales.retain(|_, scale_id| *scale_id != id);
     }
+
+    /// Get text edits for a specific page
+    pub fn get_text_edits_for_page(&self, page_index: u16) -> Option<&PageTextEdits> {
+        self.text_edits.iter().find(|e| e.page_index == page_index)
+    }
+
+    /// Get mutable text edits for a specific page
+    pub fn get_text_edits_for_page_mut(&mut self, page_index: u16) -> Option<&mut PageTextEdits> {
+        self.text_edits.iter_mut().find(|e| e.page_index == page_index)
+    }
+
+    /// Set text edits for a specific page
+    pub fn set_text_edits_for_page(&mut self, page_edits: PageTextEdits) {
+        // Remove existing edits for this page
+        self.text_edits.retain(|e| e.page_index != page_edits.page_index);
+
+        // Only add if there are edits
+        if !page_edits.edits.is_empty() {
+            self.text_edits.push(page_edits);
+        }
+    }
+
+    /// Clear all text edits for a specific page
+    pub fn clear_text_edits_for_page(&mut self, page_index: u16) {
+        self.text_edits.retain(|e| e.page_index != page_index);
+    }
+
+    /// Get total number of text edits across all pages
+    pub fn total_text_edit_count(&self) -> usize {
+        self.text_edits.iter().map(|p| p.edits.len()).sum()
+    }
 }
 
 impl Default for DocumentMetadata {
@@ -107,6 +143,7 @@ impl Default for DocumentMetadata {
             file_size: 0,
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
+            text_edits: Vec::new(),
         }
     }
 }
@@ -419,6 +456,7 @@ mod tests {
             file_size: 1024,
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
+            text_edits: Vec::new(),
         }
     }
 

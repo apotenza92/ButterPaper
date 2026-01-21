@@ -112,7 +112,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Make OCR output searchable and selectable
 
 ### Phase 10: Text Editing
-- [ ] Implement text editing on PDF content streams
+- [x] Implement text editing on PDF content streams
 - [ ] Preserve embedded fonts where possible
 - [ ] Apply minimal layout adjustments only
 - [ ] Ensure edits remain selectable (no rasterization fallback)

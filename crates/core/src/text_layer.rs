@@ -51,7 +51,7 @@ impl TextSpan {
 }
 
 /// Bounding box in page coordinates
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TextBoundingBox {
     /// X coordinate of bottom-left corner (points)
     pub x: f32,
