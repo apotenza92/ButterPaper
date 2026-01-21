@@ -11310,3 +11310,56 @@ SEARCH: OK total_matches=5 pages_with_matches=2 time=50ms
 - Note content is stored in the annotation metadata label field
 - Notes can be moved via single handle manipulation
 - Serialization preserves Note geometry across save/load cycles
+
+---
+
+## Session: Note Popup Implementation (Phase 3.3)
+
+**Task:** Click note to show popup
+
+**Implementation:**
+
+Created a GPU-rendered note popup component that displays annotation content when a note icon is clicked.
+
+**Key Components:**
+
+1. **NotePopup struct (crates/ui/src/note_popup.rs)**:
+   - Renders a light yellow popup with title bar and close button
+   - Displays note content, author, and creation timestamp
+   - Handles text wrapping for long content
+   - Hit testing for close button with hover state
+   - Position clamping to keep popup within viewport
+
+2. **Integration in main.rs**:
+   - handle_note_click() - detects clicks on note annotations via hit testing
+   - update_note_popup_texture() - renders popup to Metal texture
+   - draw_note_popup_elements() - draws popup background, border, text
+   - Keyboard Escape closes popup
+   - Mouse hover on close button shows red highlight
+
+3. **NoteData struct**:
+   - content: String - the note's main text
+   - author: Option<String> - annotation creator
+   - created_at: Option<String> - formatted timestamp
+
+**Files Created:**
+- crates/ui/src/note_popup.rs (new file, ~550 lines)
+
+**Files Modified:**
+- crates/ui/src/lib.rs (added note_popup module)
+- crates/app/src/main.rs (added NotePopup integration, ~300 lines)
+- PRD.md (marked "Click note to show popup" as complete)
+
+**Testing:**
+- 17 unit tests for NotePopup
+- All 212+ workspace tests pass
+- Build completes without errors
+- Clippy passes (no new errors)
+
+**Features:**
+- Click on note icon to show popup with content
+- Popup displays "Note" title, content text, author (if set), date (if set)
+- Close button in title bar with hover highlight
+- Click outside popup or press Escape to close
+- Text wraps to fit popup width
+- Popup stays within viewport bounds

@@ -14,6 +14,7 @@ use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::SceneGraph;
 use pdf_editor_ui::text_selection::TextSearchManager;
 use pdf_editor_ui::thumbnail::ThumbnailStrip;
+use pdf_editor_ui::note_popup::{NotePopup, NoteData};
 use pdf_editor_ui::search_bar::{SearchBar, SearchBarButton, SEARCH_BAR_HEIGHT};
 use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT, ZOOM_LEVELS};
 use std::collections::HashMap;
@@ -1176,6 +1177,13 @@ struct SearchBarTexture {
     height: u32,
 }
 
+#[cfg(target_os = "macos")]
+struct NotePopupTexture {
+    texture: metal::Texture,
+    width: u32,
+    height: u32,
+}
+
 /// Width of the thumbnail strip sidebar
 const THUMBNAIL_STRIP_WIDTH: f32 = 136.0; // 120px thumbnail + 8px spacing * 2
 
@@ -1260,6 +1268,11 @@ struct App {
     /// Search bar texture for rendering
     #[cfg(target_os = "macos")]
     search_bar_texture: Option<SearchBarTexture>,
+    /// Note popup for displaying annotation content
+    note_popup: NotePopup,
+    /// Note popup texture for rendering
+    #[cfg(target_os = "macos")]
+    note_popup_texture: Option<NotePopupTexture>,
     /// Annotation collection for the current document
     annotations: AnnotationCollection,
 }
@@ -1271,6 +1284,7 @@ impl App {
         let input_handler = InputHandler::new(1200.0, 800.0);
         let toolbar = Toolbar::new(1200.0);
         let search_bar = SearchBar::new(1200.0);
+        let note_popup = NotePopup::new(1200.0, 800.0);
 
         // Create GPU texture cache for thumbnails (64MB VRAM limit)
         let gpu_texture_cache = Arc::new(GpuTextureCache::new(64 * 1024 * 1024));
@@ -1330,6 +1344,9 @@ impl App {
             search_bar,
             #[cfg(target_os = "macos")]
             search_bar_texture: None,
+            note_popup,
+            #[cfg(target_os = "macos")]
+            note_popup_texture: None,
             annotations: AnnotationCollection::new(),
         }
     }
@@ -2988,6 +3005,316 @@ impl App {
         );
     }
 
+    /// Handle a click on a note annotation - shows the popup with note content
+    fn handle_note_click(&mut self, screen_x: f32, screen_y: f32) {
+        // Get current page
+        let page_index = self.input_handler.viewport().page_index;
+
+        // Convert screen to page coordinates
+        let page_coord = self.input_handler.screen_to_page(screen_x, screen_y);
+
+        // Hit test against annotations on current page
+        let hit_tolerance = 10.0; // Generous tolerance for note icons
+        let hits = self.annotations.hit_test(page_index, &page_coord, hit_tolerance);
+
+        // Find the first Note annotation that was clicked
+        for annotation in hits {
+            if let AnnotationGeometry::Note { .. } = annotation.geometry() {
+                // Found a note! Extract its content and show popup
+                let content = annotation.metadata().label.clone().unwrap_or_default();
+                let author = annotation.metadata().author.clone();
+
+                // Format creation timestamp
+                let created_at = {
+                    let timestamp = annotation.metadata().created_at;
+                    if timestamp > 0 {
+                        // Simple timestamp formatting (Unix timestamp to readable date)
+                        let days = timestamp / 86400;
+                        let years = 1970 + days / 365;
+                        let day_of_year = days % 365;
+                        let month = (day_of_year / 30).min(11) + 1;
+                        let day = (day_of_year % 30) + 1;
+                        Some(format!("{:04}-{:02}-{:02}", years, month, day))
+                    } else {
+                        None
+                    }
+                };
+
+                let note_data = NoteData::with_metadata(content, author, created_at);
+
+                // Position popup near the click but offset slightly to not cover the note icon
+                let popup_x = screen_x + 20.0;
+                let popup_y = screen_y - 10.0;
+
+                self.note_popup.show(note_data, popup_x, popup_y);
+                self.update_note_popup_texture();
+
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+
+                println!("Showing note popup for annotation");
+                return;
+            }
+        }
+    }
+
+    /// Update the note popup texture for rendering
+    #[cfg(target_os = "macos")]
+    fn update_note_popup_texture(&mut self) {
+        let Some(device) = &self.device else { return };
+
+        if !self.note_popup.is_visible() {
+            self.note_popup_texture = None;
+            return;
+        }
+
+        // Get popup dimensions from the scene node primitives
+        // The popup calculates its own size based on content
+        let width = 260_u32;  // POPUP_WIDTH + border
+        let height = 320_u32; // MAX_POPUP_HEIGHT + extra
+
+        // Create pixel buffer (BGRA format)
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+        // Draw popup elements
+        self.draw_note_popup_elements(&mut pixels, width, height);
+
+        // Create Metal texture
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(width as u64);
+        texture_desc.set_height(height as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: width as u64,
+                height: height as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            pixels.as_ptr() as *const _,
+            (width * 4) as u64,
+        );
+
+        self.note_popup_texture = Some(NotePopupTexture {
+            texture,
+            width,
+            height,
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn update_note_popup_texture(&mut self) {
+        // No-op on non-macOS platforms
+    }
+
+    /// Draw note popup elements to pixel buffer
+    #[cfg(target_os = "macos")]
+    fn draw_note_popup_elements(&self, pixels: &mut [u8], tex_width: u32, tex_height: u32) {
+        let Some(note_data) = self.note_popup.note_data() else { return };
+
+        // Draw to pixels (BGRA format)
+        // Note: We're drawing relative to (0,0) since the texture will be positioned at popup position
+
+        // Background (light yellow)
+        let bg_color: [u8; 4] = [217, 255, 255, 250]; // BGRA - light yellow
+        for y in 0..tex_height.min(280) {
+            for x in 0..tex_width.min(252) {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&bg_color);
+                }
+            }
+        }
+
+        // Border (darker yellow/brown)
+        let border_color: [u8; 4] = [102, 165, 178, 255]; // BGRA
+        for y in 0..tex_height.min(280) {
+            for x in 0..tex_width.min(252) {
+                // Draw 2px border
+                if x < 2 || x >= 250 || y < 2 || y >= 278 {
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx..idx + 4].copy_from_slice(&border_color);
+                    }
+                }
+            }
+        }
+
+        // Title bar (slightly darker yellow)
+        let title_bar_color: [u8; 4] = [178, 230, 242, 255]; // BGRA
+        for y in 2..26 {
+            for x in 2..250 {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&title_bar_color);
+                }
+            }
+        }
+
+        // Title bar text "Note" (simple pixel rendering)
+        let text_color: [u8; 4] = [26, 26, 26, 255]; // BGRA - dark text
+        self.draw_text_to_pixels(pixels, tex_width, "Note", 8, 6, &text_color);
+
+        // Content text
+        let content_y = 32_u32;
+        let wrapped_content = Self::wrap_text_simple(&note_data.content, 32);
+        for (i, line) in wrapped_content.iter().enumerate().take(12) {
+            let line_y = content_y + (i as u32) * 14;
+            if line_y < tex_height - 20 {
+                self.draw_text_to_pixels(pixels, tex_width, line, 8, line_y, &text_color);
+            }
+        }
+
+        // Author (if present)
+        let muted_color: [u8; 4] = [102, 102, 102, 255]; // BGRA - gray
+        let mut metadata_y = content_y + (wrapped_content.len() as u32 * 14).min(180) + 16;
+
+        if let Some(ref author) = note_data.author {
+            let author_text = format!("By: {}", author);
+            if metadata_y < tex_height - 20 {
+                self.draw_text_to_pixels(pixels, tex_width, &author_text, 8, metadata_y, &muted_color);
+                metadata_y += 14;
+            }
+        }
+
+        // Timestamp (if present)
+        if let Some(ref created_at) = note_data.created_at {
+            if metadata_y < tex_height - 10 {
+                self.draw_text_to_pixels(pixels, tex_width, created_at, 8, metadata_y, &muted_color);
+            }
+        }
+    }
+
+    /// Draw text to pixel buffer using simple bitmap font
+    #[cfg(target_os = "macos")]
+    fn draw_text_to_pixels(&self, pixels: &mut [u8], tex_width: u32, text: &str, start_x: u32, start_y: u32, color: &[u8; 4]) {
+        let char_width = 6_u32;
+
+        let mut x = start_x;
+        for c in text.chars() {
+            if x + char_width >= tex_width {
+                break;
+            }
+            self.draw_char_to_pixels(pixels, tex_width, c, x, start_y, color);
+            x += char_width + 1;
+        }
+    }
+
+    /// Draw a single character using 3x5 bitmap font
+    #[cfg(target_os = "macos")]
+    fn draw_char_to_pixels(&self, pixels: &mut [u8], tex_width: u32, c: char, x: u32, y: u32, color: &[u8; 4]) {
+        let pattern: [u8; 5] = match c {
+            '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+            '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+            '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+            '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+            '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+            '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+            '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+            '7' => [0b111, 0b001, 0b001, 0b001, 0b001],
+            '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+            '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+            ' ' => [0b000, 0b000, 0b000, 0b000, 0b000],
+            '.' => [0b000, 0b000, 0b000, 0b000, 0b010],
+            ':' => [0b000, 0b010, 0b000, 0b010, 0b000],
+            '-' => [0b000, 0b000, 0b111, 0b000, 0b000],
+            '(' => [0b010, 0b100, 0b100, 0b100, 0b010],
+            ')' => [0b010, 0b001, 0b001, 0b001, 0b010],
+            'a' | 'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
+            'b' | 'B' => [0b110, 0b101, 0b110, 0b101, 0b110],
+            'c' | 'C' => [0b011, 0b100, 0b100, 0b100, 0b011],
+            'd' | 'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
+            'e' | 'E' => [0b111, 0b100, 0b110, 0b100, 0b111],
+            'f' | 'F' => [0b111, 0b100, 0b110, 0b100, 0b100],
+            'g' | 'G' => [0b011, 0b100, 0b101, 0b101, 0b011],
+            'h' | 'H' => [0b101, 0b101, 0b111, 0b101, 0b101],
+            'i' | 'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
+            'j' | 'J' => [0b001, 0b001, 0b001, 0b101, 0b010],
+            'k' | 'K' => [0b101, 0b101, 0b110, 0b101, 0b101],
+            'l' | 'L' => [0b100, 0b100, 0b100, 0b100, 0b111],
+            'm' | 'M' => [0b101, 0b111, 0b101, 0b101, 0b101],
+            'n' | 'N' => [0b101, 0b111, 0b111, 0b101, 0b101],
+            'o' | 'O' => [0b010, 0b101, 0b101, 0b101, 0b010],
+            'p' | 'P' => [0b110, 0b101, 0b110, 0b100, 0b100],
+            'q' | 'Q' => [0b010, 0b101, 0b101, 0b111, 0b011],
+            'r' | 'R' => [0b110, 0b101, 0b110, 0b101, 0b101],
+            's' | 'S' => [0b011, 0b100, 0b010, 0b001, 0b110],
+            't' | 'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
+            'u' | 'U' => [0b101, 0b101, 0b101, 0b101, 0b010],
+            'v' | 'V' => [0b101, 0b101, 0b101, 0b101, 0b010],
+            'w' | 'W' => [0b101, 0b101, 0b101, 0b111, 0b101],
+            'x' | 'X' => [0b101, 0b101, 0b010, 0b101, 0b101],
+            'y' | 'Y' => [0b101, 0b101, 0b010, 0b010, 0b010],
+            'z' | 'Z' => [0b111, 0b001, 0b010, 0b100, 0b111],
+            _ => [0b000, 0b000, 0b000, 0b000, 0b000],
+        };
+
+        let pixel_w = 2_u32;
+        let pixel_h = 2_u32;
+
+        for (row_idx, &row) in pattern.iter().enumerate() {
+            for col in 0..3_u32 {
+                let bit = (row >> (2 - col)) & 1;
+                if bit == 1 {
+                    // Draw a 2x2 pixel block for each bit
+                    for py in 0..pixel_h {
+                        for px in 0..pixel_w {
+                            let pixel_x = x + col * pixel_w + px;
+                            let pixel_y = y + (row_idx as u32) * pixel_h + py;
+                            let idx = ((pixel_y * tex_width + pixel_x) * 4) as usize;
+                            if idx + 3 < pixels.len() {
+                                pixels[idx..idx + 4].copy_from_slice(color);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Simple text wrapping helper
+    fn wrap_text_simple(text: &str, chars_per_line: usize) -> Vec<String> {
+        if text.is_empty() {
+            return vec!["(No content)".to_string()];
+        }
+
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+
+        for word in text.split_whitespace() {
+            if current_line.is_empty() {
+                current_line = word.to_string();
+            } else if current_line.len() + 1 + word.len() <= chars_per_line {
+                current_line.push(' ');
+                current_line.push_str(word);
+            } else {
+                lines.push(current_line);
+                current_line = word.to_string();
+            }
+        }
+
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+
+        lines
+    }
+
     /// Perform search based on current search bar text
     fn perform_search(&mut self) {
         let query = self.search_bar.search_text().to_string();
@@ -3851,6 +4178,41 @@ impl App {
                         blit_encoder.end_encoding();
                     }
 
+                    // Render note popup (if visible)
+                    if let Some(popup_tex) = &self.note_popup_texture {
+                        if self.note_popup.is_visible() {
+                            let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                            let (popup_x, popup_y) = self.note_popup.position();
+
+                            let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                            let src_size = metal::MTLSize {
+                                width: popup_tex.width.min((drawable_width as u32).saturating_sub(popup_x as u32)) as u64,
+                                height: popup_tex.height.min((drawable_height as u32).saturating_sub(popup_y as u32)) as u64,
+                                depth: 1,
+                            };
+                            let dest_origin = metal::MTLOrigin {
+                                x: popup_x as u64,
+                                y: popup_y as u64,
+                                z: 0,
+                            };
+
+                            blit_encoder.copy_from_texture(
+                                &popup_tex.texture,
+                                0,
+                                0,
+                                src_origin,
+                                src_size,
+                                drawable.texture(),
+                                0,
+                                0,
+                                dest_origin,
+                            );
+
+                            blit_encoder.end_encoding();
+                        }
+                    }
+
                     command_buffer.present_drawable(drawable);
                     command_buffer.commit();
                 }
@@ -3916,9 +4278,11 @@ impl ApplicationHandler for App {
                     .set_viewport_dimensions(size.width as f32, size.height as f32);
                 self.toolbar.set_viewport_width(size.width as f32);
                 self.search_bar.set_viewport_width(size.width as f32);
+                self.note_popup.set_viewport_dimensions(size.width as f32, size.height as f32);
                 self.thumbnail_strip.set_viewport_size(size.width as f32, size.height as f32);
                 self.update_toolbar_texture();
                 self.update_search_bar_texture();
+                self.update_note_popup_texture();
                 self.update_thumbnail_texture();
 
                 if self.document.is_some() {
@@ -3970,6 +4334,18 @@ impl ApplicationHandler for App {
                 if self.toolbar.is_zoom_dropdown_open() {
                     let hovered_item = self.toolbar.hit_test_zoom_dropdown_item(x, y);
                     self.toolbar.set_zoom_dropdown_hover(hovered_item);
+                }
+
+                // Update note popup close button hover state
+                if self.note_popup.is_visible() {
+                    let hovering = self.note_popup.hit_test_close_button(x, y);
+                    self.note_popup.set_close_button_hovered(hovering);
+                    if hovering {
+                        self.update_note_popup_texture();
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
+                    }
                 }
 
                 // Update cursor for text hover detection
@@ -4114,7 +4490,29 @@ impl ApplicationHandler for App {
                                         window.request_redraw();
                                     }
                                 } else {
-                                    self.input_handler.on_mouse_down(x, y);
+                                    // Check if note popup is visible and click is on close button
+                                    if self.note_popup.is_visible() {
+                                        if self.note_popup.hit_test_close_button(x, y) {
+                                            self.note_popup.hide();
+                                            self.update_note_popup_texture();
+                                            if let Some(window) = &self.window {
+                                                window.request_redraw();
+                                            }
+                                            // Don't fall through to other handlers
+                                        } else if self.note_popup.contains_point(x, y) {
+                                            // Click is inside popup but not on close button - ignore
+                                        } else {
+                                            // Click outside popup - close it and check for note click
+                                            self.note_popup.hide();
+                                            self.update_note_popup_texture();
+                                            self.handle_note_click(x, y);
+                                            self.input_handler.on_mouse_down(x, y);
+                                        }
+                                    } else {
+                                        // Check if clicking on a note annotation
+                                        self.handle_note_click(x, y);
+                                        self.input_handler.on_mouse_down(x, y);
+                                    }
                                 }
                             }
                         }
@@ -4213,8 +4611,14 @@ impl ApplicationHandler for App {
                             self.update_search_bar_texture();
                         }
                         PhysicalKey::Code(KeyCode::Escape) => {
-                            // Close search bar with Escape
-                            if self.search_bar.is_visible() {
+                            // Close note popup first, then search bar with Escape
+                            if self.note_popup.is_visible() {
+                                self.note_popup.hide();
+                                self.update_note_popup_texture();
+                                if let Some(window) = &self.window {
+                                    window.request_redraw();
+                                }
+                            } else if self.search_bar.is_visible() {
                                 self.search_bar.set_visible(false);
                                 self.update_search_bar_texture();
                             }

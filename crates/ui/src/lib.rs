@@ -5,6 +5,7 @@
 pub mod compositor;
 pub mod gpu;
 pub mod input;
+pub mod note_popup;
 pub mod renderer;
 pub mod scene;
 pub mod search_bar;
