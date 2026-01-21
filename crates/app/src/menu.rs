@@ -26,13 +26,24 @@ use objc::runtime::{Class, Object, Sel};
 #[cfg(target_os = "macos")]
 use objc::{class, msg_send, sel, sel_impl};
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 /// Global flag indicating "Open..." menu item was clicked
 static MENU_OPEN_CLICKED: AtomicBool = AtomicBool::new(false);
 
 /// Global flag indicating "Close" menu item was clicked
 static MENU_CLOSE_CLICKED: AtomicBool = AtomicBool::new(false);
+
+/// Global flag indicating "Clear Menu" in Open Recent was clicked
+static MENU_CLEAR_RECENT_CLICKED: AtomicBool = AtomicBool::new(false);
+
+/// Global index of which recent file menu item was clicked (0-9, or usize::MAX for none)
+static RECENT_FILE_INDEX: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+/// Global storage for recent file paths for menu item lookups
+static RECENT_FILE_PATHS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// Check if the "Open..." menu action was triggered and reset the flag
 pub fn poll_open_action() -> bool {
@@ -42,6 +53,22 @@ pub fn poll_open_action() -> bool {
 /// Check if the "Close" menu action was triggered and reset the flag
 pub fn poll_close_action() -> bool {
     MENU_CLOSE_CLICKED.swap(false, Ordering::SeqCst)
+}
+
+/// Check if "Clear Menu" was clicked and reset the flag
+pub fn poll_clear_recent_action() -> bool {
+    MENU_CLEAR_RECENT_CLICKED.swap(false, Ordering::SeqCst)
+}
+
+/// Check if a recent file menu item was clicked and return its path
+pub fn poll_open_recent_action() -> Option<PathBuf> {
+    let index = RECENT_FILE_INDEX.swap(usize::MAX, Ordering::SeqCst);
+    if index == usize::MAX {
+        return None;
+    }
+
+    let paths = RECENT_FILE_PATHS.lock().ok()?;
+    paths.get(index).cloned()
 }
 
 /// Menu action identifiers for routing menu selections to app handlers.
@@ -128,6 +155,39 @@ unsafe fn register_menu_handler_class() -> *const Class {
         sel!(closeWindow:),
         close_window as extern "C" fn(&Object, Sel, id),
     );
+
+    // Add the clearRecentFiles: method
+    extern "C" fn clear_recent_files(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_CLEAR_RECENT_CLICKED.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(clearRecentFiles:),
+        clear_recent_files as extern "C" fn(&Object, Sel, id),
+    );
+
+    // Add openRecentFile0: through openRecentFile9: methods
+    macro_rules! add_recent_file_method {
+        ($decl:expr, $index:expr, $sel:ident, $fn_name:ident) => {
+            extern "C" fn $fn_name(_this: &Object, _cmd: Sel, _sender: id) {
+                RECENT_FILE_INDEX.store($index, Ordering::SeqCst);
+            }
+            $decl.add_method(
+                sel!($sel:),
+                $fn_name as extern "C" fn(&Object, Sel, id),
+            );
+        };
+    }
+
+    add_recent_file_method!(decl, 0, openRecentFile0, open_recent_0);
+    add_recent_file_method!(decl, 1, openRecentFile1, open_recent_1);
+    add_recent_file_method!(decl, 2, openRecentFile2, open_recent_2);
+    add_recent_file_method!(decl, 3, openRecentFile3, open_recent_3);
+    add_recent_file_method!(decl, 4, openRecentFile4, open_recent_4);
+    add_recent_file_method!(decl, 5, openRecentFile5, open_recent_5);
+    add_recent_file_method!(decl, 6, openRecentFile6, open_recent_6);
+    add_recent_file_method!(decl, 7, openRecentFile7, open_recent_7);
+    add_recent_file_method!(decl, 8, openRecentFile8, open_recent_8);
+    add_recent_file_method!(decl, 9, openRecentFile9, open_recent_9);
 
     // Add validateMenuItem: to enable our custom menu items
     extern "C" fn validate_menu_item(_this: &Object, _cmd: Sel, _item: id) -> BOOL {
@@ -312,6 +372,127 @@ unsafe fn add_app_menu(main_menu: id) {
     main_menu.addItem_(app_menu_item);
 }
 
+/// Create the Open Recent submenu populated with recent files
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+unsafe fn create_open_recent_menu(handler: id) -> id {
+    let recent_menu = NSMenu::alloc(nil).initWithTitle_(ns_string("Open Recent")).autorelease();
+
+    // Get recent files from the global manager
+    let recent_files_arc = crate::recent_files::get_recent_files();
+    let recent_files = recent_files_arc.read().ok();
+
+    if let Some(files) = recent_files {
+        let paths: Vec<PathBuf> = files.files().to_vec();
+
+        // Store paths in global for lookup when menu items are clicked
+        if let Ok(mut stored_paths) = RECENT_FILE_PATHS.lock() {
+            *stored_paths = paths.clone();
+        }
+
+        // Add menu items for each recent file
+        for (i, path) in paths.iter().enumerate() {
+            if i >= 10 {
+                break; // Max 10 recent files
+            }
+
+            // Get the filename for display
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown");
+
+            // Select the appropriate selector based on index
+            let action_sel = match i {
+                0 => sel!(openRecentFile0:),
+                1 => sel!(openRecentFile1:),
+                2 => sel!(openRecentFile2:),
+                3 => sel!(openRecentFile3:),
+                4 => sel!(openRecentFile4:),
+                5 => sel!(openRecentFile5:),
+                6 => sel!(openRecentFile6:),
+                7 => sel!(openRecentFile7:),
+                8 => sel!(openRecentFile8:),
+                9 => sel!(openRecentFile9:),
+                _ => continue,
+            };
+
+            let item = menu_item_with_target(
+                filename,
+                action_sel,
+                "",
+                NSEventModifierFlags::empty(),
+                handler,
+            );
+            recent_menu.addItem_(item);
+        }
+
+        // Add separator and "Clear Menu" if there are any recent files
+        if !paths.is_empty() {
+            recent_menu.addItem_(separator_item());
+
+            let clear_item = menu_item_with_target(
+                "Clear Menu",
+                sel!(clearRecentFiles:),
+                "",
+                NSEventModifierFlags::empty(),
+                handler,
+            );
+            recent_menu.addItem_(clear_item);
+        }
+    }
+
+    // If no recent files, show a disabled "No Recent Items" entry
+    let item_count: usize = msg_send![recent_menu, numberOfItems];
+    if item_count == 0 {
+        recent_menu.addItem_(menu_item_disabled("No Recent Items"));
+    }
+
+    recent_menu
+}
+
+/// Refresh the Open Recent submenu with current recent files
+///
+/// This function should be called after loading a file or clearing recent files
+/// to update the menu contents.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+pub fn refresh_open_recent_menu() {
+    unsafe {
+        let app = NSApp();
+        let main_menu: id = msg_send![app, mainMenu];
+        if main_menu == nil {
+            return;
+        }
+
+        // Find the File menu (index 1, after the app menu)
+        let file_menu_item: id = msg_send![main_menu, itemAtIndex: 1i64];
+        if file_menu_item == nil {
+            return;
+        }
+
+        let file_menu: id = msg_send![file_menu_item, submenu];
+        if file_menu == nil {
+            return;
+        }
+
+        // Find the Open Recent submenu item (index 1, after Open...)
+        let recent_item: id = msg_send![file_menu, itemAtIndex: 1i64];
+        if recent_item == nil {
+            return;
+        }
+
+        // Create new submenu with updated content
+        let handler = get_menu_handler();
+        let new_recent_menu = create_open_recent_menu(handler);
+        let () = msg_send![recent_item, setSubmenu: new_recent_menu];
+    }
+}
+
+/// No-op on non-macOS platforms
+#[cfg(not(target_os = "macos"))]
+pub fn refresh_open_recent_menu() {}
+
 /// Add the File menu
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
@@ -329,8 +510,8 @@ unsafe fn add_file_menu(main_menu: id) {
         handler,
     ));
 
-    // Open Recent submenu (placeholder - will be populated dynamically)
-    let recent_menu = NSMenu::alloc(nil).initWithTitle_(ns_string("Open Recent")).autorelease();
+    // Open Recent submenu
+    let recent_menu = create_open_recent_menu(handler);
     let recent_item = NSMenuItem::alloc(nil)
         .initWithTitle_action_keyEquivalent_(ns_string("Open Recent"), Sel::from_ptr(std::ptr::null()), ns_string(""))
         .autorelease();
@@ -702,5 +883,62 @@ mod tests {
         assert!(result);
         // After swap, subsequent reads see false
         assert!(!poll_close_action());
+    }
+
+    #[test]
+    fn test_poll_clear_recent_action_initially_false() {
+        // Poll to reset, then check again
+        let _ = poll_clear_recent_action();
+        assert!(!poll_clear_recent_action(), "poll_clear_recent_action should return false when no action triggered");
+    }
+
+    #[test]
+    fn test_poll_clear_recent_action_resets_after_poll() {
+        MENU_CLEAR_RECENT_CLICKED.store(true, Ordering::SeqCst);
+        assert!(poll_clear_recent_action(), "First poll should return true");
+        assert!(!poll_clear_recent_action(), "Second poll should return false (flag was reset)");
+    }
+
+    #[test]
+    fn test_poll_open_recent_action_initially_none() {
+        // Reset to MAX
+        RECENT_FILE_INDEX.store(usize::MAX, Ordering::SeqCst);
+        assert!(poll_open_recent_action().is_none(), "poll_open_recent_action should return None when no action triggered");
+    }
+
+    #[test]
+    fn test_poll_open_recent_action_with_stored_path() {
+        // Store a test path
+        {
+            let mut paths = RECENT_FILE_PATHS.lock().unwrap();
+            paths.clear();
+            paths.push(PathBuf::from("/test/path.pdf"));
+        }
+
+        // Set index to 0
+        RECENT_FILE_INDEX.store(0, Ordering::SeqCst);
+
+        let result = poll_open_recent_action();
+        assert!(result.is_some(), "Should return Some when index is set");
+        assert_eq!(result.unwrap(), PathBuf::from("/test/path.pdf"));
+
+        // Subsequent poll should return None
+        assert!(poll_open_recent_action().is_none());
+    }
+
+    #[test]
+    fn test_poll_open_recent_action_invalid_index() {
+        // Store a test path
+        {
+            let mut paths = RECENT_FILE_PATHS.lock().unwrap();
+            paths.clear();
+            paths.push(PathBuf::from("/test/path.pdf"));
+        }
+
+        // Set index out of bounds
+        RECENT_FILE_INDEX.store(10, Ordering::SeqCst);
+
+        let result = poll_open_recent_action();
+        assert!(result.is_none(), "Should return None for out-of-bounds index");
     }
 }

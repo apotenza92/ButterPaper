@@ -10,6 +10,7 @@ pdf-editor-ui = { path = "../ui" }
 pdf-editor-core = { path = "../core" }
 pdf-editor-render = { path = "../render" }
 rfd = "0.15"
+dirs = "6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 winit = "0.30"

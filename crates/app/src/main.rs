@@ -33,6 +33,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
 
 mod menu;
+mod recent_files;
 
 #[cfg(target_os = "macos")]
 mod text_overlay {
@@ -1043,6 +1044,16 @@ impl App {
                 let page_count = pdf.page_count();
                 println!("SUCCESS: Loaded PDF with {} pages", page_count);
 
+                // Add to recent files
+                if let Ok(mut recent) = recent_files::get_recent_files().write() {
+                    recent.add(path);
+                    if let Err(e) = recent.save() {
+                        eprintln!("Warning: Could not save recent files: {}", e);
+                    }
+                }
+                // Refresh the Open Recent menu
+                menu::refresh_open_recent_menu();
+
                 self.document = Some(LoadedDocument {
                     pdf,
                     path: path.clone(),
@@ -1803,6 +1814,24 @@ impl ApplicationHandler for App {
             println!("Close requested via menu, exiting");
             event_loop.exit();
             return;
+        }
+
+        // Check for recent file selection
+        if let Some(path) = menu::poll_open_recent_action() {
+            println!("Opening recent file: {}", path.display());
+            self.load_pdf(&path);
+        }
+
+        // Check for clear recent files action
+        if menu::poll_clear_recent_action() {
+            println!("Clearing recent files");
+            if let Ok(mut recent) = recent_files::get_recent_files().write() {
+                recent.clear();
+                if let Err(e) = recent.save() {
+                    eprintln!("Warning: Could not save recent files: {}", e);
+                }
+            }
+            menu::refresh_open_recent_menu();
         }
 
         self.process_file_open();

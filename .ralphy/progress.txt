@@ -10180,3 +10180,109 @@ When user presses Cmd+W or clicks File > Close in the menu bar:
 ### Architecture Notes
 
 This follows the same pattern established for the Open menu action, using atomic flags for menu-to-event-loop communication. This is a common approach when bridging Objective-C callbacks to Rust application logic in winit-based apps that don't use the standard NSDocument architecture.
+
+---
+
+## Task: Implement Open Recent submenu
+
+**Date:** 2026-01-21
+
+### Summary
+
+Implemented the "Open Recent" submenu in the File menu that tracks and displays recently opened PDF files. The submenu allows users to quickly reopen files they have previously viewed, and includes a "Clear Menu" option to reset the list.
+
+### Technical Approach
+
+1. Created a new `recent_files.rs` module in `crates/app/src/` that:
+   - Manages a list of up to 10 recently opened files
+   - Persists the list to `~/Library/Application Support/pdf-editor/recent_files.json`
+   - Uses a thread-safe global singleton via `OnceLock<Arc<RwLock<RecentFiles>>>`
+   - Implements a simple JSON parser/serializer (no external JSON crate needed)
+   - Filters out non-existent files when loading
+
+2. Extended the MenuHandler Objective-C class with:
+   - `clearRecentFiles:` method to handle Clear Menu clicks
+   - `openRecentFile0:` through `openRecentFile9:` methods for recent file selection
+   - Used a macro (`add_recent_file_method!`) to generate the 10 handler methods
+
+3. Added atomic flags and storage for menu communication:
+   - `MENU_CLEAR_RECENT_CLICKED` atomic flag for Clear Menu action
+   - `RECENT_FILE_INDEX` atomic counter for selected file index
+   - `RECENT_FILE_PATHS` Mutex-protected Vec for path lookups
+
+4. Created `create_open_recent_menu()` function that:
+   - Reads recent files from the global manager
+   - Creates menu items with file names as titles
+   - Adds separator and "Clear Menu" item when files exist
+   - Shows "No Recent Items" (disabled) when empty
+
+5. Added `refresh_open_recent_menu()` public function to update the submenu:
+   - Finds the File menu and Open Recent submenu item
+   - Replaces the submenu with freshly created content
+   - Called after loading a file or clearing the list
+
+6. Updated the main event loop to:
+   - Poll for recent file selection and open the selected file
+   - Poll for Clear Menu action and clear the list
+
+### Files Created
+
+1. `crates/app/src/recent_files.rs`:
+   - `RecentFiles` struct with add, clear, load, save methods
+   - `get_recent_files()` global accessor function
+   - `RecentFilesError` enum for error handling
+   - 14 unit tests for all functionality
+
+### Files Modified
+
+1. `crates/app/src/menu.rs`:
+   - Added atomic flags and Mutex for recent files state
+   - Added `poll_clear_recent_action()` and `poll_open_recent_action()` functions
+   - Added handlers for recent file selection (macro-generated)
+   - Added `create_open_recent_menu()` function
+   - Added `refresh_open_recent_menu()` public function
+   - Updated `add_file_menu()` to use dynamic Open Recent submenu
+   - Added 5 unit tests for new polling functions
+
+2. `crates/app/src/main.rs`:
+   - Added `mod recent_files` declaration
+   - Updated `load_pdf()` to add files to recent list and refresh menu
+   - Added polling for recent file and clear recent actions in event loop
+
+3. `crates/app/Cargo.toml`:
+   - Added `dirs = "6"` dependency for platform-specific data directory
+
+4. `PRD.md`:
+   - Marked "Open Recent → submenu" as complete
+
+### Test Results
+
+- 55 tests pass for the pdf-editor crate (16 new tests added)
+- All workspace tests pass (no regressions)
+- Clippy passes with only pre-existing deprecation warnings from cocoa/objc crates
+
+### How It Works
+
+1. When the app opens a PDF file (via Open dialog, drag-drop, or command line):
+   - The file path is added to the RecentFiles list
+   - The list is saved to disk
+   - The Open Recent menu is refreshed
+
+2. When user clicks a recent file in the menu:
+   - The corresponding `openRecentFileN:` ObjC method is called
+   - The index is stored in `RECENT_FILE_INDEX`
+   - On next event loop iteration, `poll_open_recent_action()` returns the path
+   - The file is loaded via `load_pdf()`
+
+3. When user clicks "Clear Menu":
+   - The `clearRecentFiles:` ObjC method sets the flag
+   - On next event loop iteration, the list is cleared and saved
+   - The Open Recent menu is refreshed to show "No Recent Items"
+
+### Architecture Notes
+
+- Files are stored persistently across app sessions
+- Non-existent files are automatically filtered out when loading
+- The submenu is dynamically recreated whenever files are added or cleared
+- Maximum of 10 recent files (configurable via `MAX_RECENT_FILES` constant)
+- Thread-safe design allows menu updates from any thread
