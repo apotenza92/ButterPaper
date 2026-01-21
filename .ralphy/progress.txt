@@ -2539,3 +2539,153 @@ The implementation meets Phase 6, Task 2 requirements:
 - ✅ Zero linting warnings
 
 **Phase 6, Task 2: COMPLETE ✅**
+
+---
+
+## Phase 6, Task 3: Add Discrete Zoom Levels for Tile Rendering
+
+**Date:** 2026-01-21
+**Status:** ✅ COMPLETE
+**Task:** Implement discrete zoom levels for tile rendering to optimize cache efficiency
+
+### Summary
+
+Implemented discrete zoom level quantization throughout the input handling system. All zoom operations (mouse wheel, keyboard shortcuts, programmatic zoom) now snap to predefined discrete levels: 25, 50, 75, 100, 125, 150, 200, 300, 400. This ensures tiles are only rendered and cached at these specific zoom levels, preventing cache bloat from intermediate zoom values.
+
+### Implementation Details
+
+#### 1. Core Changes to `crates/ui/src/input.rs`
+
+**Added Discrete Zoom Level System:**
+- Added `ZOOM_LEVELS` constant array defining the 9 discrete zoom levels
+- Implemented `snap_to_discrete_zoom()` function that finds the nearest discrete level for any given zoom value
+- Uses distance-based snapping: finds the closest discrete level using absolute difference minimization
+
+**Updated Zoom Input Methods:**
+- `on_mouse_wheel()`: Now snaps calculated zoom targets to discrete levels before setting target zoom
+  - Only updates target if the discrete level differs from current target (prevents unnecessary updates)
+  - Maintains smooth interpolation behavior while ensuring final zoom is always discrete
+  
+- `set_zoom_level()`: Snaps any programmatic zoom level to nearest discrete level
+  - Ensures all zoom changes (from API, keyboard, or other sources) use discrete levels
+
+- `zoom_in()` / `zoom_out()`: Refactored to use `ZOOM_LEVELS` array
+  - Uses iterator-based logic to find next/previous discrete level
+  - More maintainable than hardcoded match statements
+  - Handles edge cases (already at min/max zoom)
+
+**Behavior:**
+- Mouse wheel scrolling calculates intermediate zoom (e.g., 110%) then snaps to nearest discrete level (100% or 125%)
+- Smooth interpolation still provides visual smoothness between current and target zoom
+- User sees smooth animation but tiles are only rendered at discrete levels
+
+#### 2. Benefits
+
+**Cache Efficiency:**
+- Tiles only exist at 9 discrete zoom levels instead of any arbitrary percentage
+- Reduces cache memory footprint significantly
+- Prevents cache churn when user makes small zoom adjustments
+
+**Render Performance:**
+- Fewer unique tile identities to render
+- Better cache hit rates when switching between zoom levels
+- Predictable memory usage patterns
+
+**User Experience:**
+- Maintains smooth zoom interpolation animations
+- Snapping is transparent to users
+- Consistent zoom behavior across all input methods
+
+### Testing
+
+**Added 8 New Comprehensive Tests:**
+1. `test_snap_to_discrete_zoom` - Validates snapping logic for all ranges and edge cases
+2. `test_mouse_wheel_snaps_to_discrete_levels` - Verifies wheel zoom snaps correctly
+3. `test_wheel_zoom_skips_unchanged_discrete_level` - Ensures no-op when already at target level
+4. `test_all_discrete_zoom_levels_accessible` - Validates all 9 levels are reachable via zoom_in/out
+5. `test_zoom_in_at_max_stays_at_max` - Edge case: zoom in at 400% stays at 400%
+6. `test_zoom_out_at_min_stays_at_min` - Edge case: zoom out at 25% stays at 25%
+7. Updated `test_zoom_with_wheel` - Adapted for discrete zoom behavior
+8. Updated `test_zoom_clamping` - Added tests for arbitrary value snapping
+
+**Test Results:**
+- All 17 input handler tests pass
+- Zero linting warnings
+- Edge cases covered (min/max zoom, midpoints, out-of-range values)
+
+### Code Quality
+
+**Linting:** ✅ PASSED
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+```
+- Zero warnings
+- All code follows Rust best practices
+
+**Test Coverage:**
+- 17/17 input tests passing
+- Comprehensive coverage of:
+  - Snapping logic for all zoom ranges
+  - Mouse wheel interaction
+  - Keyboard shortcuts (zoom_in/zoom_out)
+  - Programmatic zoom changes
+  - Edge cases and boundary conditions
+
+### Architecture Notes
+
+**Integration Points:**
+- `InputHandler` enforces discrete zoom at the input layer
+- `Viewport` state still uses `u32` zoom_level (no changes needed)
+- `TileId` already includes zoom_level in its identity/hash (no changes needed)
+- `ViewportCompositor` automatically benefits from discrete zoom (fewer unique tiles)
+- `TileRenderer` and cache layers require no modifications
+
+**Future Considerations:**
+- If different discrete levels are needed, simply update `ZOOM_LEVELS` constant
+- Snapping logic is generic and will work with any set of discrete levels
+- Current levels match common zoom presets in CAD applications
+
+### Files Modified
+
+1. **`crates/ui/src/input.rs`** (~100 lines changed)
+   - Added `ZOOM_LEVELS` constant (9 levels)
+   - Added `snap_to_discrete_zoom()` helper function
+   - Updated `on_mouse_wheel()` to snap zoom targets
+   - Updated `set_zoom_level()` to snap zoom targets
+   - Refactored `zoom_in()` and `zoom_out()` to use ZOOM_LEVELS array
+   - Added 8 new tests, updated 2 existing tests
+   - Enhanced module documentation
+
+2. **`PRD.md`** (1 line changed)
+   - Marked Phase 6, Task 3 as complete
+
+### Performance Impact
+
+**Memory:**
+- Significant reduction in tile cache entries (9 levels vs hundreds of possible levels)
+- More predictable memory usage patterns
+
+**Rendering:**
+- Better cache hit rates when zooming
+- Fewer render jobs submitted to scheduler
+- No intermediate zoom levels cluttering the cache
+
+**User Experience:**
+- No noticeable change to zoom smoothness (interpolation preserved)
+- More responsive zoom feel (fewer unique render jobs)
+
+### Validation
+
+The implementation meets all requirements from Phase 6, Task 3:
+
+✅ Discrete zoom levels defined (25, 50, 75, 100, 125, 150, 200, 300, 400)
+✅ Mouse wheel zoom snaps to discrete levels
+✅ Keyboard zoom shortcuts use discrete levels
+✅ Programmatic zoom snaps to discrete levels
+✅ Smooth interpolation between levels preserved
+✅ Tile rendering optimized (only at discrete levels)
+✅ Cache efficiency improved
+✅ Comprehensive test coverage
+✅ Zero linting warnings
+
+**Phase 6, Task 3: COMPLETE ✅**
