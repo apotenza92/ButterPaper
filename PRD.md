@@ -349,9 +349,9 @@ Wire up existing measurement system.
 - [x] Distance measurement tool
 - [x] Click two points to measure
 - [x] Show measurement label
-- [ ] Area measurement tool
-- [ ] Click polygon points
-- [ ] Show area calculation
+- [x] Area measurement tool
+- [x] Click polygon points
+- [x] Show area calculation
 - [ ] Scale calibration
 - [ ] Click known distance, enter real value
 - [ ] Apply scale to page

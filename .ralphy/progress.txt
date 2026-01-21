@@ -11595,3 +11595,62 @@ This completes the first 3 tasks of Phase 3.4 (Measurements):
 - [x] Distance measurement tool
 - [x] Click two points to measure  
 - [x] Show measurement label
+
+## 2026-01-21: Add area measurement tool (Phase 3.4)
+
+### What was done:
+- Implemented area measurement tool for measuring polygon areas on PDFs
+- Added `AreaMeasureTool` button to toolbar with polygon icon (4-sided shape with corner markers)
+- Added area measurement state fields to App struct:
+  - `is_area_measuring: bool` - tracks if user is placing polygon points
+  - `area_measurement_points: Vec<PageCoordinate>` - polygon vertices
+  - `area_measurement_page: u16` - page where measurement started
+- Implemented area measurement methods:
+  - `add_area_measurement_point()` - adds point to polygon, starts new measurement if needed
+  - `finish_area_measurement()` - creates Polygon geometry and Area Measurement (requires 3+ points)
+  - `cancel_area_measurement()` - cancels in-progress measurement (Escape key)
+- Uses existing measurement system with Shoelace formula for area calculation
+- Area measurement rendering:
+  - Completed measurements shown as green polygon outlines with corner markers
+  - In-progress measurements show existing edges + preview line to cursor + closing line preview
+  - Corner markers are crosses, first point highlighted in brighter green
+- Keyboard shortcuts:
+  - Shift+Alt+A to select AreaMeasureTool (Bluebeam-compatible)
+  - Enter to finish area measurement when in progress
+  - Escape to cancel in-progress measurement
+- Double-click finishes the measurement
+- All 220+ tests pass, no new clippy warnings
+- Added 4 new tests for AreaMeasureTool in toolbar tests
+
+### Files changed:
+- `crates/ui/src/toolbar.rs`:
+  - Added `AreaMeasureTool` to `ToolbarButton` enum
+  - Added icon primitives (filled polygon + corner markers)
+  - Added to toolbar layout between MeasureTool and FreedrawTool
+  - Added to button list in test
+  - Added 4 new tests for AreaMeasureTool
+- `crates/app/src/main.rs`:
+  - Added area measurement state fields to App struct
+  - Initialized area measurement fields in App::new()
+  - Added AreaMeasureTool to handle_toolbar_button match
+  - Added `add_area_measurement_point()`, `finish_area_measurement()`, `cancel_area_measurement()` methods
+  - Added AreaMeasureTool click handler with double-click to finish
+  - Added area measurement rendering (completed + in-progress) in render loop
+  - Added Shift+Alt+A keyboard shortcut for AreaMeasureTool
+  - Added Enter key handler to finish area measurement
+  - Integrated area measurement cancellation into Escape key handler
+- `PRD.md` (marked tasks complete)
+
+### How to use:
+1. Press Shift+Alt+A or click the polygon icon in toolbar to select Area Measure tool
+2. Click to place first point of polygon
+3. Click to add more points (need at least 3 for valid polygon)
+4. Preview shows current polygon outline and closing line to first point
+5. Double-click or press Enter to complete the measurement
+6. Area is shown in square inches (e.g., "5.25in²")
+7. Press Escape to cancel an in-progress measurement
+
+This completes Phase 3.4 area measurement tasks:
+- [x] Area measurement tool
+- [x] Click polygon points
+- [x] Show area calculation

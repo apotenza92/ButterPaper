@@ -1599,6 +1599,12 @@ struct App {
     measurement_start_point: Option<PageCoordinate>,
     /// The page index where measurement started
     measurement_page: u16,
+    /// Whether the user is currently creating an area measurement (placing polygon points)
+    is_area_measuring: bool,
+    /// The points of the current area measurement polygon in page coordinates
+    area_measurement_points: Vec<PageCoordinate>,
+    /// The page index where area measurement started
+    area_measurement_page: u16,
 }
 
 impl App {
@@ -1681,6 +1687,9 @@ impl App {
             is_measuring: false,
             measurement_start_point: None,
             measurement_page: 0,
+            is_area_measuring: false,
+            area_measurement_points: Vec::new(),
+            area_measurement_page: 0,
         }
     }
 
@@ -3537,6 +3546,120 @@ impl App {
         }
     }
 
+    /// Start or continue an area measurement at the specified screen position
+    ///
+    /// This is called when the user clicks with the AreaMeasureTool selected.
+    /// Each click adds a point to the polygon. Double-click or Escape finishes the measurement.
+    fn add_area_measurement_point(&mut self, screen_x: f32, screen_y: f32) {
+        // Get current page from document
+        let page_index = match &self.document {
+            Some(doc) => doc.current_page,
+            None => {
+                println!("No document loaded - cannot add area measurement point");
+                return;
+            }
+        };
+
+        // Convert screen coordinates to page coordinates
+        let page_coord = self.input_handler.screen_to_page(screen_x, screen_y);
+        let point = PageCoordinate::new(page_coord.x, page_coord.y);
+
+        if !self.is_area_measuring {
+            // Start a new area measurement
+            self.area_measurement_points.clear();
+            self.area_measurement_points.push(point);
+            self.is_area_measuring = true;
+            self.area_measurement_page = page_index;
+            println!(
+                "Started area measurement on page {} at ({:.1}, {:.1}) - click more points, double-click to finish",
+                page_index + 1,
+                point.x,
+                point.y
+            );
+        } else if self.area_measurement_page != page_index {
+            // Switched pages - cancel current measurement and start a new one
+            println!("Switched pages - starting new area measurement");
+            self.area_measurement_points.clear();
+            self.area_measurement_points.push(point);
+            self.area_measurement_page = page_index;
+        } else {
+            // Add another point to the current polygon
+            self.area_measurement_points.push(point);
+            println!(
+                "Added point {} to area measurement at ({:.1}, {:.1})",
+                self.area_measurement_points.len(),
+                point.x,
+                point.y
+            );
+        }
+    }
+
+    /// Finish the current area measurement and create the polygon measurement
+    fn finish_area_measurement(&mut self) {
+        if !self.is_area_measuring {
+            return;
+        }
+
+        if self.area_measurement_points.len() < 3 {
+            println!("Area measurement cancelled - need at least 3 points for a polygon");
+            self.cancel_area_measurement();
+            return;
+        }
+
+        // Ensure we have a default scale for this page
+        let scale_id = if let Some(scale) = self.measurements.get_default_scale(self.area_measurement_page) {
+            scale.id()
+        } else {
+            // Create default scale: 72 points per inch (standard PDF)
+            let scale = ScaleSystem::manual(self.area_measurement_page, 72.0, "in");
+            self.measurements.add_scale(scale)
+        };
+
+        // Create Polygon geometry for the measurement
+        let geometry = AnnotationGeometry::Polygon {
+            points: self.area_measurement_points.clone(),
+        };
+
+        // Create the measurement
+        let measurement = Measurement::new(
+            self.area_measurement_page,
+            geometry,
+            MeasurementType::Area,
+            scale_id,
+        );
+
+        // Get the measurement ID before adding
+        let measurement_id = measurement.id();
+        self.measurements.add(measurement);
+
+        // Get the computed value for display
+        let formatted = self.measurements
+            .get(measurement_id)
+            .and_then(|m| m.formatted_label())
+            .unwrap_or("--")
+            .to_string();
+
+        println!(
+            "Created area measurement on page {} with {} points: {}",
+            self.area_measurement_page + 1,
+            self.area_measurement_points.len(),
+            formatted
+        );
+
+        // Clear the area measurement state
+        self.is_area_measuring = false;
+        self.area_measurement_points.clear();
+    }
+
+    /// Cancel the current area measurement in progress
+    fn cancel_area_measurement(&mut self) {
+        if self.is_area_measuring {
+            self.is_area_measuring = false;
+            self.area_measurement_points.clear();
+            println!("Area measurement cancelled");
+        }
+    }
+
     /// Handle a click on a note annotation - shows the popup with note content
     fn handle_note_click(&mut self, screen_x: f32, screen_y: f32) {
         // Get current page
@@ -4339,6 +4462,7 @@ impl App {
             | ToolbarButton::HighlightTool
             | ToolbarButton::CommentTool
             | ToolbarButton::MeasureTool
+            | ToolbarButton::AreaMeasureTool
             | ToolbarButton::FreedrawTool => {
                 self.toolbar.set_selected_tool(button);
                 self.text_selection_active = false;
@@ -4858,6 +4982,131 @@ impl App {
                                         ],
                                         width: 1.5 * zoom_scale,
                                         color: [0.0, 0.5, 1.0, 1.0],
+                                    });
+                                }
+                            }
+
+                            // Render completed area measurements (polygon outlines)
+                            for measurement in self.measurements.get_visible_for_page(page_index) {
+                                if measurement.measurement_type() == MeasurementType::Area {
+                                    if let AnnotationGeometry::Polygon { points } = measurement.geometry() {
+                                        if points.len() >= 3 {
+                                            // Convert polygon points to screen coordinates
+                                            let screen_points: Vec<[f32; 2]> = points.iter()
+                                                .map(|p| {
+                                                    let screen_x = pan_x + p.x * zoom_scale;
+                                                    let screen_y = pan_y + (page_height - p.y) * zoom_scale;
+                                                    [screen_x, screen_y]
+                                                })
+                                                .collect();
+
+                                            // Render polygon outline
+                                            for i in 0..screen_points.len() {
+                                                let start = screen_points[i];
+                                                let end = screen_points[(i + 1) % screen_points.len()];
+                                                strokes_data.push(stroke_renderer::StrokeData {
+                                                    points: vec![start, end],
+                                                    width: 2.0 * zoom_scale,
+                                                    color: [0.0, 0.7, 0.3, 1.0], // Green for area measurements
+                                                });
+                                            }
+
+                                            // Render corner markers
+                                            let marker_size = 4.0 * zoom_scale;
+                                            for point in &screen_points {
+                                                // Horizontal marker
+                                                strokes_data.push(stroke_renderer::StrokeData {
+                                                    points: vec![
+                                                        [point[0] - marker_size, point[1]],
+                                                        [point[0] + marker_size, point[1]],
+                                                    ],
+                                                    width: 1.5 * zoom_scale,
+                                                    color: [0.0, 0.7, 0.3, 1.0],
+                                                });
+                                                // Vertical marker
+                                                strokes_data.push(stroke_renderer::StrokeData {
+                                                    points: vec![
+                                                        [point[0], point[1] - marker_size],
+                                                        [point[0], point[1] + marker_size],
+                                                    ],
+                                                    width: 1.5 * zoom_scale,
+                                                    color: [0.0, 0.7, 0.3, 1.0],
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Render in-progress area measurement (polygon preview)
+                            if self.is_area_measuring && self.area_measurement_page == page_index && !self.area_measurement_points.is_empty() {
+                                // Convert polygon points to screen coordinates
+                                let screen_points: Vec<[f32; 2]> = self.area_measurement_points.iter()
+                                    .map(|p| {
+                                        let screen_x = pan_x + p.x * zoom_scale;
+                                        let screen_y = pan_y + (page_height - p.y) * zoom_scale;
+                                        [screen_x, screen_y]
+                                    })
+                                    .collect();
+
+                                // Render edges between existing points
+                                for i in 0..screen_points.len().saturating_sub(1) {
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![screen_points[i], screen_points[i + 1]],
+                                        width: 2.0 * zoom_scale,
+                                        color: [0.0, 0.7, 0.3, 0.8], // Semi-transparent green
+                                    });
+                                }
+
+                                // Render preview line from last point to current mouse position
+                                if let Some(last_point) = screen_points.last() {
+                                    let mouse_pos = self.input_handler.mouse_position();
+                                    let current_page_coord = self.input_handler.screen_to_page(mouse_pos.0, mouse_pos.1);
+                                    let screen_mouse_x = pan_x + current_page_coord.x * zoom_scale;
+                                    let screen_mouse_y = pan_y + (page_height - current_page_coord.y) * zoom_scale;
+
+                                    // Line from last point to mouse
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![*last_point, [screen_mouse_x, screen_mouse_y]],
+                                        width: 2.0 * zoom_scale,
+                                        color: [0.0, 0.7, 0.3, 0.4], // More transparent for preview
+                                    });
+
+                                    // Closing line preview (from mouse to first point)
+                                    if screen_points.len() >= 2 {
+                                        strokes_data.push(stroke_renderer::StrokeData {
+                                            points: vec![[screen_mouse_x, screen_mouse_y], screen_points[0]],
+                                            width: 1.5 * zoom_scale,
+                                            color: [0.0, 0.7, 0.3, 0.3], // Even more transparent for closing line
+                                        });
+                                    }
+                                }
+
+                                // Render corner markers for existing points
+                                let marker_size = 4.0 * zoom_scale;
+                                for (i, point) in screen_points.iter().enumerate() {
+                                    let color = if i == 0 {
+                                        [0.0, 1.0, 0.3, 1.0] // Brighter green for first point
+                                    } else {
+                                        [0.0, 0.7, 0.3, 1.0]
+                                    };
+                                    // Horizontal marker
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [point[0] - marker_size, point[1]],
+                                            [point[0] + marker_size, point[1]],
+                                        ],
+                                        width: 1.5 * zoom_scale,
+                                        color,
+                                    });
+                                    // Vertical marker
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [point[0], point[1] - marker_size],
+                                            [point[0], point[1] + marker_size],
+                                        ],
+                                        width: 1.5 * zoom_scale,
+                                        color,
                                     });
                                 }
                             }
@@ -5417,6 +5666,18 @@ impl ApplicationHandler for App {
                                     if let Some(window) = &self.window {
                                         window.request_redraw();
                                     }
+                                } else if self.toolbar.selected_tool() == Some(ToolbarButton::AreaMeasureTool) {
+                                    // AreaMeasureTool: add point to area measurement polygon
+                                    // Double-click finishes the measurement
+                                    if self.click_count >= 2 && self.is_area_measuring {
+                                        self.finish_area_measurement();
+                                    } else {
+                                        self.add_area_measurement_point(x, y);
+                                    }
+                                    // Request redraw to show measurement in progress
+                                    if let Some(window) = &self.window {
+                                        window.request_redraw();
+                                    }
                                 } else {
                                     // Check if note popup is visible and click is on close button
                                     if self.note_popup.is_visible() {
@@ -5556,8 +5817,14 @@ impl ApplicationHandler for App {
                                 self.search_bar.set_visible(false);
                                 self.update_search_bar_texture();
                             } else if self.is_measuring {
-                                // Cancel in-progress measurement
+                                // Cancel in-progress distance measurement
                                 self.cancel_measurement();
+                                if let Some(window) = &self.window {
+                                    window.request_redraw();
+                                }
+                            } else if self.is_area_measuring {
+                                // Cancel in-progress area measurement
+                                self.cancel_area_measurement();
                                 if let Some(window) = &self.window {
                                     window.request_redraw();
                                 }
@@ -5623,7 +5890,24 @@ impl ApplicationHandler for App {
                             self.text_selection_active = false;
                             // Cancel any in-progress measurement when switching to measurement tool
                             self.cancel_measurement();
+                            self.cancel_area_measurement();
                             println!("Measure tool selected - click two points to measure distance");
+                        }
+                        PhysicalKey::Code(KeyCode::KeyA) if is_shift && self.modifiers.alt_key() && !is_cmd => {
+                            // Shift+Alt+A = Area measurement tool (Bluebeam-compatible)
+                            self.toolbar.set_selected_tool(ToolbarButton::AreaMeasureTool);
+                            self.text_selection_active = false;
+                            // Cancel any in-progress measurements when switching to area tool
+                            self.cancel_measurement();
+                            self.cancel_area_measurement();
+                            println!("Area measure tool selected - click polygon points, double-click or Enter to finish");
+                        }
+                        PhysicalKey::Code(KeyCode::Enter) if self.is_area_measuring && !is_cmd && !is_shift => {
+                            // Enter finishes area measurement when in progress
+                            self.finish_area_measurement();
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
+                            }
                         }
                         _ => {}
                     }

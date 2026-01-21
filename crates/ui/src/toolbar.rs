@@ -95,6 +95,8 @@ pub enum ToolbarButton {
     HighlightTool,
     CommentTool,
     MeasureTool,
+    /// Area measurement tool (polygon)
+    AreaMeasureTool,
     /// Freehand drawing/pen tool
     FreedrawTool,
 }
@@ -296,6 +298,43 @@ impl ToolbarButton {
                 Primitive::Rectangle {
                     rect: Rect::new(center_x + half_icon * 0.6, center_y - half_icon * 0.3, 1.5, half_icon * 0.3),
                     color: Color::rgba(0.1, 0.1, 0.1, 1.0),
+                },
+            ],
+
+            // Area measure tool: polygon/quadrilateral shape representing area
+            ToolbarButton::AreaMeasureTool => vec![
+                // Filled polygon shape
+                Primitive::Polygon {
+                    points: vec![
+                        [center_x - half_icon * 0.7, center_y - half_icon * 0.5],
+                        [center_x + half_icon * 0.7, center_y - half_icon * 0.7],
+                        [center_x + half_icon * 0.5, center_y + half_icon * 0.7],
+                        [center_x - half_icon * 0.5, center_y + half_icon * 0.5],
+                    ],
+                    fill_color: Some(Color::rgba(color.r, color.g, color.b, 0.3)),
+                    stroke_color: color,
+                    stroke_width: 1.5,
+                },
+                // Corner markers
+                Primitive::Circle {
+                    center: [center_x - half_icon * 0.7, center_y - half_icon * 0.5],
+                    radius: 2.0,
+                    color,
+                },
+                Primitive::Circle {
+                    center: [center_x + half_icon * 0.7, center_y - half_icon * 0.7],
+                    radius: 2.0,
+                    color,
+                },
+                Primitive::Circle {
+                    center: [center_x + half_icon * 0.5, center_y + half_icon * 0.7],
+                    radius: 2.0,
+                    color,
+                },
+                Primitive::Circle {
+                    center: [center_x - half_icon * 0.5, center_y + half_icon * 0.5],
+                    radius: 2.0,
+                    color,
                 },
             ],
 
@@ -804,6 +843,7 @@ impl Toolbar {
         x = self.add_button(&mut new_node, ToolbarButton::HighlightTool, x, button_y);
         x = self.add_button(&mut new_node, ToolbarButton::CommentTool, x, button_y);
         x = self.add_button(&mut new_node, ToolbarButton::MeasureTool, x, button_y);
+        x = self.add_button(&mut new_node, ToolbarButton::AreaMeasureTool, x, button_y);
         let _ = self.add_button(&mut new_node, ToolbarButton::FreedrawTool, x, button_y);
 
         self.scene_node = Arc::new(new_node);
@@ -1308,6 +1348,7 @@ mod tests {
             ToolbarButton::HighlightTool,
             ToolbarButton::CommentTool,
             ToolbarButton::MeasureTool,
+            ToolbarButton::AreaMeasureTool,
             ToolbarButton::FreedrawTool,
         ];
 
@@ -1908,6 +1949,90 @@ mod tests {
             .button_states
             .iter()
             .find(|(b, _, _)| *b == ToolbarButton::FreedrawTool)
+            .map(|(_, s, _)| *s);
+        assert_eq!(state, Some(ButtonState::Hover));
+    }
+
+    // AreaMeasureTool tests
+
+    #[test]
+    fn test_toolbar_area_measure_tool_icon() {
+        let color = Color::rgb(1.0, 1.0, 1.0);
+        let primitives = ToolbarButton::AreaMeasureTool.icon_primitives(0.0, 0.0, 32.0, color);
+
+        // AreaMeasureTool should have primitives for polygon and corner markers
+        assert!(
+            !primitives.is_empty(),
+            "AreaMeasureTool should have icon primitives"
+        );
+
+        // Should contain a polygon primitive for the area shape
+        let polygon_count = primitives
+            .iter()
+            .filter(|p| matches!(p, Primitive::Polygon { .. }))
+            .count();
+        assert!(
+            polygon_count >= 1,
+            "AreaMeasureTool icon should have polygon primitives for area shape"
+        );
+
+        // Should contain circle primitives for corner markers
+        let circle_count = primitives
+            .iter()
+            .filter(|p| matches!(p, Primitive::Circle { .. }))
+            .count();
+        assert!(
+            circle_count >= 4,
+            "AreaMeasureTool icon should have 4 corner marker circles"
+        );
+    }
+
+    #[test]
+    fn test_toolbar_select_area_measure_tool() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Initially not AreaMeasureTool
+        assert_ne!(
+            toolbar.selected_tool(),
+            Some(ToolbarButton::AreaMeasureTool)
+        );
+
+        // Select AreaMeasureTool
+        toolbar.set_selected_tool(ToolbarButton::AreaMeasureTool);
+        assert_eq!(
+            toolbar.selected_tool(),
+            Some(ToolbarButton::AreaMeasureTool)
+        );
+    }
+
+    #[test]
+    fn test_toolbar_area_measure_tool_in_button_list() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // AreaMeasureTool button should exist in the button states
+        let has_area_measure = toolbar
+            .button_states
+            .iter()
+            .any(|(btn, _, _)| *btn == ToolbarButton::AreaMeasureTool);
+
+        assert!(
+            has_area_measure,
+            "AreaMeasureTool should be included in toolbar buttons"
+        );
+    }
+
+    #[test]
+    fn test_toolbar_area_measure_tool_hover() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Set hover on AreaMeasureTool
+        toolbar.set_button_hover(ToolbarButton::AreaMeasureTool, true);
+
+        // Verify AreaMeasureTool is hovered
+        let state = toolbar
+            .button_states
+            .iter()
+            .find(|(b, _, _)| *b == ToolbarButton::AreaMeasureTool)
             .map(|(_, s, _)| *s);
         assert_eq!(state, Some(ButtonState::Hover));
     }
