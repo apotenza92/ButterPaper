@@ -102,11 +102,7 @@ impl ScaleSystem {
         distance: f32,
         unit: impl Into<String>,
     ) -> Self {
-        Self::new(
-            page_index,
-            ScaleType::TwoPoint { p1, p2, distance },
-            unit,
-        )
+        Self::new(page_index, ScaleType::TwoPoint { p1, p2, distance }, unit)
     }
 
     /// Create an OCR-detected scale system
@@ -448,11 +444,9 @@ impl Measurement {
     pub fn label_position(&self) -> PageCoordinate {
         match self.geometry.as_ref() {
             // Line and Arrow: midpoint
-            AnnotationGeometry::Line { start, end }
-            | AnnotationGeometry::Arrow { start, end } => PageCoordinate::new(
-                (start.x + end.x) / 2.0,
-                (start.y + end.y) / 2.0,
-            ),
+            AnnotationGeometry::Line { start, end } | AnnotationGeometry::Arrow { start, end } => {
+                PageCoordinate::new((start.x + end.x) / 2.0, (start.y + end.y) / 2.0)
+            }
 
             // Polyline: midpoint of total path
             AnnotationGeometry::Polyline { points } => {
@@ -464,10 +458,7 @@ impl Measurement {
                 }
 
                 // Find midpoint along the path length
-                let total_length: f32 = points
-                    .windows(2)
-                    .map(|w| w[0].distance_to(&w[1]))
-                    .sum();
+                let total_length: f32 = points.windows(2).map(|w| w[0].distance_to(&w[1])).sum();
                 let half_length = total_length / 2.0;
 
                 let mut accumulated = 0.0;
@@ -525,6 +516,9 @@ impl Measurement {
 
             // Text: use position directly
             AnnotationGeometry::Text { position, .. } => *position,
+
+            // Note: use position directly
+            AnnotationGeometry::Note { position, .. } => *position,
         }
     }
 }
@@ -598,10 +592,7 @@ impl MeasurementCollection {
         }
 
         self.measurements.insert(id, measurement);
-        self.by_page
-            .entry(page_index)
-            .or_default()
-            .push(id);
+        self.by_page.entry(page_index).or_default().push(id);
     }
 
     /// Remove a measurement
@@ -627,7 +618,11 @@ impl MeasurementCollection {
     pub fn get_for_page(&self, page_index: u16) -> Vec<&Measurement> {
         self.by_page
             .get(&page_index)
-            .map(|ids| ids.iter().filter_map(|id| self.measurements.get(id)).collect())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| self.measurements.get(id))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -644,7 +639,9 @@ impl MeasurementCollection {
         if let Some(ids) = self.by_page.get(&page_index).cloned() {
             for id in ids {
                 let scale_id = self.measurements.get(&id).map(|m| m.scale_system_id());
-                if let (Some(measurement), Some(scale_id)) = (self.measurements.get_mut(&id), scale_id) {
+                if let (Some(measurement), Some(scale_id)) =
+                    (self.measurements.get_mut(&id), scale_id)
+                {
                     if let Some(scale) = self.scales.get(&scale_id) {
                         measurement.compute_value(scale);
                     }

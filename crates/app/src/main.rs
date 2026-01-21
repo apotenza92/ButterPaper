@@ -2947,6 +2947,47 @@ impl App {
         }
     }
 
+    /// Create a comment/note annotation at the specified screen position
+    ///
+    /// This is called when the user clicks with the CommentTool selected.
+    /// It creates a note icon at the clicked position.
+    fn create_note_at_position(&mut self, screen_x: f32, screen_y: f32) {
+        // Get current page from document
+        let page_index = match &self.document {
+            Some(doc) => doc.current_page,
+            None => {
+                println!("No document loaded - cannot create note");
+                return;
+            }
+        };
+
+        // Convert screen coordinates to page coordinates
+        let page_coord = self.input_handler.screen_to_page(screen_x, screen_y);
+
+        // Create Note geometry at the clicked position
+        // Default icon size of 24 points (similar to standard PDF note icons)
+        let geometry = AnnotationGeometry::Note {
+            position: PageCoordinate::new(page_coord.x, page_coord.y),
+            icon_size: 24.0,
+        };
+
+        // Use the comment note style
+        let style = AnnotationStyle::comment_note();
+
+        // Create the annotation
+        let annotation = Annotation::new(page_index, geometry, style);
+
+        // Add to the collection
+        self.annotations.add(annotation);
+
+        println!(
+            "Created note annotation on page {} at ({:.1}, {:.1})",
+            page_index + 1,
+            page_coord.x,
+            page_coord.y
+        );
+    }
+
     /// Perform search based on current search bar text
     fn perform_search(&mut self) {
         let query = self.search_bar.search_text().to_string();
@@ -4065,6 +4106,13 @@ impl ApplicationHandler for App {
                                             }
                                         }
                                     }
+                                } else if self.toolbar.selected_tool() == Some(ToolbarButton::CommentTool) {
+                                    // CommentTool: create note annotation at click position
+                                    self.create_note_at_position(x, y);
+                                    // Request redraw to show the new note
+                                    if let Some(window) = &self.window {
+                                        window.request_redraw();
+                                    }
                                 } else {
                                     self.input_handler.on_mouse_down(x, y);
                                 }
@@ -4212,6 +4260,12 @@ impl ApplicationHandler for App {
                         PhysicalKey::Code(KeyCode::KeyH) if !is_cmd && !is_shift => {
                             // H = Highlight tool (create highlight from text selection)
                             self.create_highlight_from_selection();
+                        }
+                        PhysicalKey::Code(KeyCode::KeyN) if !is_cmd && !is_shift => {
+                            // N = Note tool (click to place comment/note)
+                            self.toolbar.set_selected_tool(ToolbarButton::CommentTool);
+                            self.text_selection_active = false;
+                            println!("Note tool selected - click to place a note");
                         }
                         _ => {}
                     }

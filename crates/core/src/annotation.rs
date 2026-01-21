@@ -158,6 +158,17 @@ pub enum AnnotationGeometry {
         start: PageCoordinate,
         end: PageCoordinate,
     },
+
+    /// Sticky note/comment annotation at a specific point
+    ///
+    /// Displays as a small icon (typically a speech bubble or note icon) at the position.
+    /// The note content is stored in the annotation's metadata label field.
+    Note {
+        /// Position of the note icon (center point)
+        position: PageCoordinate,
+        /// Icon size in points (default 24x24)
+        icon_size: f32,
+    },
 }
 
 impl AnnotationGeometry {
@@ -236,6 +247,15 @@ impl AnnotationGeometry {
                 let max_y = start.y.max(end.y);
                 (min_x, min_y, max_x, max_y)
             }
+            AnnotationGeometry::Note { position, icon_size } => {
+                let half_size = icon_size / 2.0;
+                (
+                    position.x - half_size,
+                    position.y - half_size,
+                    position.x + half_size,
+                    position.y + half_size,
+                )
+            }
         }
     }
 
@@ -299,6 +319,14 @@ impl AnnotationGeometry {
             } => {
                 let (min_x, min_y, max_x, max_y) = self.bounding_box();
                 point.x >= min_x && point.x <= max_x && point.y >= min_y && point.y <= max_y
+            }
+            AnnotationGeometry::Note { position, icon_size } => {
+                // Hit test against the note icon bounds
+                let half_size = icon_size / 2.0;
+                point.x >= position.x - half_size - tolerance
+                    && point.x <= position.x + half_size + tolerance
+                    && point.y >= position.y - half_size - tolerance
+                    && point.y <= position.y + half_size + tolerance
             }
         }
     }
@@ -449,6 +477,22 @@ impl AnnotationStyle {
             dash_pattern: Vec::new(),
             opacity: 0.5,
             font_size: 12.0,
+            font_family: "Helvetica".to_string(),
+        }
+    }
+
+    /// Create style for comment/note annotations
+    ///
+    /// Uses a yellow fill with subtle orange stroke for visibility.
+    /// The note content text uses the font settings.
+    pub fn comment_note() -> Self {
+        Self {
+            stroke_color: Color::rgb(200, 150, 0), // Gold/orange outline
+            stroke_width: 1.0,
+            fill_color: Some(Color::new(255, 240, 130, 230)), // Light yellow, mostly opaque
+            dash_pattern: Vec::new(),
+            opacity: 0.95,
+            font_size: 11.0,
             font_family: "Helvetica".to_string(),
         }
     }
@@ -1130,5 +1174,180 @@ mod tests {
         // Point on the edge should hit (within tolerance)
         let point_on_edge = PageCoordinate::new(100.0, 110.0);
         assert!(highlight.hit_test(&point_on_edge, 1.0));
+    }
+
+    #[test]
+    fn test_note_bounding_box() {
+        let geometry = AnnotationGeometry::Note {
+            position: PageCoordinate::new(100.0, 100.0),
+            icon_size: 24.0,
+        };
+        let (min_x, min_y, max_x, max_y) = geometry.bounding_box();
+        assert_eq!(min_x, 88.0); // 100 - 12
+        assert_eq!(min_y, 88.0); // 100 - 12
+        assert_eq!(max_x, 112.0); // 100 + 12
+        assert_eq!(max_y, 112.0); // 100 + 12
+    }
+
+    #[test]
+    fn test_note_hit_testing() {
+        let note = Annotation::new(
+            0,
+            AnnotationGeometry::Note {
+                position: PageCoordinate::new(100.0, 100.0),
+                icon_size: 24.0,
+            },
+            AnnotationStyle::comment_note(),
+        );
+
+        // Point at the note center should hit
+        let point_center = PageCoordinate::new(100.0, 100.0);
+        assert!(note.hit_test(&point_center, 0.0));
+
+        // Point inside the note icon bounds should hit
+        let point_inside = PageCoordinate::new(105.0, 105.0);
+        assert!(note.hit_test(&point_inside, 0.0));
+
+        // Point just outside but within tolerance should hit
+        let point_near_edge = PageCoordinate::new(115.0, 100.0);
+        assert!(note.hit_test(&point_near_edge, 5.0));
+
+        // Point far outside should not hit
+        let point_outside = PageCoordinate::new(200.0, 200.0);
+        assert!(!note.hit_test(&point_outside, 5.0));
+    }
+
+    #[test]
+    fn test_comment_note_style() {
+        let style = AnnotationStyle::comment_note();
+
+        // Check stroke is set
+        assert_eq!(style.stroke_width, 1.0);
+        assert_eq!(style.stroke_color.r, 200); // Gold/orange
+        assert_eq!(style.stroke_color.g, 150);
+        assert_eq!(style.stroke_color.b, 0);
+
+        // Check fill color is light yellow
+        assert!(style.fill_color.is_some());
+        let fill = style.fill_color.unwrap();
+        assert_eq!(fill.r, 255);
+        assert_eq!(fill.g, 240);
+        assert_eq!(fill.b, 130);
+        assert_eq!(fill.a, 230); // Mostly opaque
+
+        // Check opacity
+        assert!((style.opacity - 0.95).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_note_annotation_creation() {
+        let page_index = 2u16;
+        let position_x = 150.0;
+        let position_y = 200.0;
+        let icon_size = 24.0;
+
+        let geometry = AnnotationGeometry::Note {
+            position: PageCoordinate::new(position_x, position_y),
+            icon_size,
+        };
+
+        let style = AnnotationStyle::comment_note();
+        let mut annotation = Annotation::new(page_index, geometry, style);
+
+        // Add note content as label
+        annotation.metadata_mut().label = Some("This is a comment note".to_string());
+
+        // Verify annotation properties
+        assert_eq!(annotation.page_index(), page_index);
+        assert!(annotation.is_visible());
+        assert!(!annotation.is_selected());
+
+        // Verify bounding box is centered on position
+        let (min_x, min_y, max_x, max_y) = annotation.bounding_box();
+        let half_size = icon_size / 2.0;
+        assert_eq!(min_x, position_x - half_size);
+        assert_eq!(min_y, position_y - half_size);
+        assert_eq!(max_x, position_x + half_size);
+        assert_eq!(max_y, position_y + half_size);
+
+        // Verify metadata
+        assert_eq!(
+            annotation.metadata().label,
+            Some("This is a comment note".to_string())
+        );
+    }
+
+    #[test]
+    fn test_note_annotation_in_collection() {
+        let mut collection = AnnotationCollection::new();
+
+        // Create notes on different pages
+        let note1 = Annotation::new(
+            0,
+            AnnotationGeometry::Note {
+                position: PageCoordinate::new(50.0, 50.0),
+                icon_size: 24.0,
+            },
+            AnnotationStyle::comment_note(),
+        );
+
+        let note2 = Annotation::new(
+            0,
+            AnnotationGeometry::Note {
+                position: PageCoordinate::new(100.0, 150.0),
+                icon_size: 24.0,
+            },
+            AnnotationStyle::comment_note(),
+        );
+
+        let note3 = Annotation::new(
+            1, // Different page
+            AnnotationGeometry::Note {
+                position: PageCoordinate::new(75.0, 80.0),
+                icon_size: 24.0,
+            },
+            AnnotationStyle::comment_note(),
+        );
+
+        collection.add(note1);
+        collection.add(note2);
+        collection.add(note3);
+
+        // Verify collection counts
+        assert_eq!(collection.len(), 3);
+        assert_eq!(collection.get_page_annotations(0).len(), 2);
+        assert_eq!(collection.get_page_annotations(1).len(), 1);
+        assert_eq!(collection.get_page_annotations(2).len(), 0);
+    }
+
+    #[test]
+    fn test_note_serialization() {
+        let geometry = AnnotationGeometry::Note {
+            position: PageCoordinate::new(100.0, 100.0),
+            icon_size: 24.0,
+        };
+        let style = AnnotationStyle::comment_note();
+        let mut annotation = Annotation::new(0, geometry, style);
+        annotation.metadata_mut().label = Some("Test note content".to_string());
+
+        // Convert to serializable
+        let serializable: SerializableAnnotation = (&annotation).into();
+
+        // Verify geometry is preserved
+        match &serializable.geometry {
+            AnnotationGeometry::Note { position, icon_size } => {
+                assert_eq!(position.x, 100.0);
+                assert_eq!(position.y, 100.0);
+                assert_eq!(*icon_size, 24.0);
+            }
+            _ => panic!("Expected Note geometry"),
+        }
+
+        // Convert back
+        let restored: Annotation = serializable.into();
+        assert_eq!(
+            restored.metadata().label,
+            Some("Test note content".to_string())
+        );
     }
 }

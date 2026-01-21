@@ -71,10 +71,7 @@ impl ManipulationHandle {
 ///
 /// Returns a vector of handles based on the annotation's geometry.
 /// Different geometry types have different handle configurations.
-pub fn generate_handles(
-    annotation: &Annotation,
-    handle_size: f32,
-) -> Vec<ManipulationHandle> {
+pub fn generate_handles(annotation: &Annotation, handle_size: f32) -> Vec<ManipulationHandle> {
     let mut handles = Vec::new();
     let annotation_id = annotation.id();
 
@@ -111,7 +108,10 @@ pub fn generate_handles(
             ));
         }
 
-        AnnotationGeometry::Rectangle { top_left, bottom_right } => {
+        AnnotationGeometry::Rectangle {
+            top_left,
+            bottom_right,
+        } => {
             // Rectangle: 8 handles (4 corners + 4 edges) + rotation
             let top_right = PageCoordinate::new(bottom_right.x, top_left.y);
             let bottom_left = PageCoordinate::new(top_left.x, bottom_right.y);
@@ -208,7 +208,11 @@ pub fn generate_handles(
             ));
         }
 
-        AnnotationGeometry::Ellipse { center, radius_x, radius_y } => {
+        AnnotationGeometry::Ellipse {
+            center,
+            radius_x,
+            radius_y,
+        } => {
             // Ellipse: 4 handles on the axes
             handles.push(ManipulationHandle::new(
                 HandleType::Top,
@@ -236,9 +240,9 @@ pub fn generate_handles(
             ));
         }
 
-        AnnotationGeometry::Polyline { points } |
-        AnnotationGeometry::Polygon { points } |
-        AnnotationGeometry::Freehand { points } => {
+        AnnotationGeometry::Polyline { points }
+        | AnnotationGeometry::Polygon { points }
+        | AnnotationGeometry::Freehand { points } => {
             // Polyline/Polygon/Freehand: handle at each point for vertex editing
             for (i, point) in points.iter().enumerate() {
                 // Use different handle types to distinguish points
@@ -259,6 +263,16 @@ pub fn generate_handles(
 
         AnnotationGeometry::Text { position, .. } => {
             // Text: single move handle at position
+            handles.push(ManipulationHandle::new(
+                HandleType::Move,
+                *position,
+                handle_size,
+                annotation_id,
+            ));
+        }
+
+        AnnotationGeometry::Note { position, .. } => {
+            // Note: single move handle at position
             handles.push(ManipulationHandle::new(
                 HandleType::Move,
                 *position,
@@ -358,83 +372,59 @@ impl ManipulationState {
                 }
             }
 
-            AnnotationGeometry::Arrow { start, end } => {
-                match self.handle_type {
-                    HandleType::TopLeft => {
-                        AnnotationGeometry::Arrow {
-                            start: PageCoordinate::new(start.x + delta_x, start.y + delta_y),
-                            end: *end,
-                        }
-                    }
-                    HandleType::BottomRight => {
-                        AnnotationGeometry::Arrow {
-                            start: *start,
-                            end: PageCoordinate::new(end.x + delta_x, end.y + delta_y),
-                        }
-                    }
-                    _ => self.original_geometry.clone(),
-                }
-            }
+            AnnotationGeometry::Arrow { start, end } => match self.handle_type {
+                HandleType::TopLeft => AnnotationGeometry::Arrow {
+                    start: PageCoordinate::new(start.x + delta_x, start.y + delta_y),
+                    end: *end,
+                },
+                HandleType::BottomRight => AnnotationGeometry::Arrow {
+                    start: *start,
+                    end: PageCoordinate::new(end.x + delta_x, end.y + delta_y),
+                },
+                _ => self.original_geometry.clone(),
+            },
 
-            AnnotationGeometry::Rectangle { top_left, bottom_right } => {
-                match self.handle_type {
-                    HandleType::TopLeft => {
-                        AnnotationGeometry::Rectangle {
-                            top_left: PageCoordinate::new(
-                                top_left.x + delta_x,
-                                top_left.y + delta_y,
-                            ),
-                            bottom_right: *bottom_right,
-                        }
-                    }
-                    HandleType::BottomRight => {
-                        AnnotationGeometry::Rectangle {
-                            top_left: *top_left,
-                            bottom_right: PageCoordinate::new(
-                                bottom_right.x + delta_x,
-                                bottom_right.y + delta_y,
-                            ),
-                        }
-                    }
-                    HandleType::TopRight => {
-                        AnnotationGeometry::Rectangle {
-                            top_left: PageCoordinate::new(top_left.x, top_left.y + delta_y),
-                            bottom_right: PageCoordinate::new(bottom_right.x + delta_x, bottom_right.y),
-                        }
-                    }
-                    HandleType::BottomLeft => {
-                        AnnotationGeometry::Rectangle {
-                            top_left: PageCoordinate::new(top_left.x + delta_x, top_left.y),
-                            bottom_right: PageCoordinate::new(bottom_right.x, bottom_right.y + delta_y),
-                        }
-                    }
-                    HandleType::Top => {
-                        AnnotationGeometry::Rectangle {
-                            top_left: PageCoordinate::new(top_left.x, top_left.y + delta_y),
-                            bottom_right: *bottom_right,
-                        }
-                    }
-                    HandleType::Bottom => {
-                        AnnotationGeometry::Rectangle {
-                            top_left: *top_left,
-                            bottom_right: PageCoordinate::new(bottom_right.x, bottom_right.y + delta_y),
-                        }
-                    }
-                    HandleType::Left => {
-                        AnnotationGeometry::Rectangle {
-                            top_left: PageCoordinate::new(top_left.x + delta_x, top_left.y),
-                            bottom_right: *bottom_right,
-                        }
-                    }
-                    HandleType::Right => {
-                        AnnotationGeometry::Rectangle {
-                            top_left: *top_left,
-                            bottom_right: PageCoordinate::new(bottom_right.x + delta_x, bottom_right.y),
-                        }
-                    }
-                    _ => self.original_geometry.clone(),
-                }
-            }
+            AnnotationGeometry::Rectangle {
+                top_left,
+                bottom_right,
+            } => match self.handle_type {
+                HandleType::TopLeft => AnnotationGeometry::Rectangle {
+                    top_left: PageCoordinate::new(top_left.x + delta_x, top_left.y + delta_y),
+                    bottom_right: *bottom_right,
+                },
+                HandleType::BottomRight => AnnotationGeometry::Rectangle {
+                    top_left: *top_left,
+                    bottom_right: PageCoordinate::new(
+                        bottom_right.x + delta_x,
+                        bottom_right.y + delta_y,
+                    ),
+                },
+                HandleType::TopRight => AnnotationGeometry::Rectangle {
+                    top_left: PageCoordinate::new(top_left.x, top_left.y + delta_y),
+                    bottom_right: PageCoordinate::new(bottom_right.x + delta_x, bottom_right.y),
+                },
+                HandleType::BottomLeft => AnnotationGeometry::Rectangle {
+                    top_left: PageCoordinate::new(top_left.x + delta_x, top_left.y),
+                    bottom_right: PageCoordinate::new(bottom_right.x, bottom_right.y + delta_y),
+                },
+                HandleType::Top => AnnotationGeometry::Rectangle {
+                    top_left: PageCoordinate::new(top_left.x, top_left.y + delta_y),
+                    bottom_right: *bottom_right,
+                },
+                HandleType::Bottom => AnnotationGeometry::Rectangle {
+                    top_left: *top_left,
+                    bottom_right: PageCoordinate::new(bottom_right.x, bottom_right.y + delta_y),
+                },
+                HandleType::Left => AnnotationGeometry::Rectangle {
+                    top_left: PageCoordinate::new(top_left.x + delta_x, top_left.y),
+                    bottom_right: *bottom_right,
+                },
+                HandleType::Right => AnnotationGeometry::Rectangle {
+                    top_left: *top_left,
+                    bottom_right: PageCoordinate::new(bottom_right.x + delta_x, bottom_right.y),
+                },
+                _ => self.original_geometry.clone(),
+            },
 
             AnnotationGeometry::Circle { center, radius: _ } => {
                 match self.handle_type {
@@ -451,7 +441,11 @@ impl ManipulationState {
                 }
             }
 
-            AnnotationGeometry::Ellipse { center, radius_x, radius_y } => {
+            AnnotationGeometry::Ellipse {
+                center,
+                radius_x,
+                radius_y,
+            } => {
                 let effective_pos = self.effective_position();
                 match self.handle_type {
                     HandleType::Left | HandleType::Right => {
@@ -486,7 +480,7 @@ impl ManipulationState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::annotation::{AnnotationStyle, Annotation};
+    use crate::annotation::{Annotation, AnnotationStyle};
 
     #[test]
     fn test_handle_hit_test() {
@@ -584,7 +578,11 @@ mod tests {
         state.update_position(PageCoordinate::new(150.0, 150.0));
 
         let new_geometry = state.calculate_new_geometry();
-        if let AnnotationGeometry::Rectangle { top_left: _, bottom_right } = new_geometry {
+        if let AnnotationGeometry::Rectangle {
+            top_left: _,
+            bottom_right,
+        } = new_geometry
+        {
             assert!((bottom_right.x - 150.0).abs() < 0.001);
             assert!((bottom_right.y - 150.0).abs() < 0.001);
         } else {

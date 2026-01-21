@@ -49,11 +49,11 @@ impl SnapTarget {
         distance: f32,
     ) -> Self {
         let priority = match snap_type {
-            SnapType::Point => 0,      // Highest priority
+            SnapType::Point => 0, // Highest priority
             SnapType::Horizontal => 1,
             SnapType::Vertical => 1,
             SnapType::Angle => 2,
-            SnapType::Grid => 3,       // Lowest priority
+            SnapType::Grid => 3, // Lowest priority
         };
 
         Self {
@@ -98,13 +98,13 @@ impl Default for SnapConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            threshold: 10.0,  // 10 points (about 3.5mm at 72 DPI)
+            threshold: 10.0, // 10 points (about 3.5mm at 72 DPI)
             snap_to_points: true,
             snap_to_alignment: true,
-            snap_to_grid: false,  // Disabled by default
+            snap_to_grid: false, // Disabled by default
             grid_spacing: 10.0,
             snap_to_angles: true,
-            angle_increment: 15.0,  // 15° increments
+            angle_increment: 15.0, // 15° increments
         }
     }
 }
@@ -165,12 +165,7 @@ impl SnapEngine {
                 exclude_annotation_id,
                 &mut candidates,
             );
-            self.collect_measurement_snaps(
-                position,
-                page_index,
-                measurements,
-                &mut candidates,
-            );
+            self.collect_measurement_snaps(position, page_index, measurements, &mut candidates);
         }
 
         // Add grid snaps
@@ -202,7 +197,8 @@ impl SnapEngine {
 
         for annotation in page_annotations {
             // Skip the annotation being manipulated
-            if exclude_annotation_id.is_some() && exclude_annotation_id.unwrap() == annotation.id() {
+            if exclude_annotation_id.is_some() && exclude_annotation_id.unwrap() == annotation.id()
+            {
                 continue;
             }
 
@@ -306,8 +302,7 @@ impl SnapEngine {
         let mut points = Vec::new();
 
         match geometry {
-            AnnotationGeometry::Line { start, end } |
-            AnnotationGeometry::Arrow { start, end } => {
+            AnnotationGeometry::Line { start, end } | AnnotationGeometry::Arrow { start, end } => {
                 points.push(*start);
                 points.push(*end);
                 // Add midpoint
@@ -317,7 +312,10 @@ impl SnapEngine {
                 ));
             }
 
-            AnnotationGeometry::Rectangle { top_left, bottom_right } => {
+            AnnotationGeometry::Rectangle {
+                top_left,
+                bottom_right,
+            } => {
                 points.push(*top_left);
                 points.push(*bottom_right);
                 points.push(PageCoordinate::new(bottom_right.x, top_left.y));
@@ -329,18 +327,28 @@ impl SnapEngine {
                 ));
             }
 
-            AnnotationGeometry::Circle { center, .. } |
-            AnnotationGeometry::Ellipse { center, .. } => {
+            AnnotationGeometry::Circle { center, .. }
+            | AnnotationGeometry::Ellipse { center, .. } => {
                 points.push(*center);
             }
 
-            AnnotationGeometry::Polyline { points: poly_points } |
-            AnnotationGeometry::Polygon { points: poly_points } |
-            AnnotationGeometry::Freehand { points: poly_points } => {
+            AnnotationGeometry::Polyline {
+                points: poly_points,
+            }
+            | AnnotationGeometry::Polygon {
+                points: poly_points,
+            }
+            | AnnotationGeometry::Freehand {
+                points: poly_points,
+            } => {
                 points.extend(poly_points.iter().copied());
             }
 
             AnnotationGeometry::Text { position, .. } => {
+                points.push(*position);
+            }
+
+            AnnotationGeometry::Note { position, .. } => {
                 points.push(*position);
             }
         }
@@ -349,11 +357,7 @@ impl SnapEngine {
     }
 
     /// Collect grid snap candidates
-    fn collect_grid_snaps(
-        &self,
-        position: &PageCoordinate,
-        candidates: &mut Vec<SnapTarget>,
-    ) {
+    fn collect_grid_snaps(&self, position: &PageCoordinate, candidates: &mut Vec<SnapTarget>) {
         let spacing = self.config.grid_spacing;
 
         // Find nearest grid intersection
@@ -424,8 +428,11 @@ impl SnapEngine {
 
         // Sort by priority first, then by distance
         candidates.sort_by(|a, b| {
-            a.priority.cmp(&b.priority)
-                .then(a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal))
+            a.priority.cmp(&b.priority).then(
+                a.distance
+                    .partial_cmp(&b.distance)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
         });
 
         // Return the best candidate
@@ -484,14 +491,7 @@ mod tests {
         // Point close to grid intersection (10, 10)
         let position = PageCoordinate::new(12.0, 11.0);
 
-        let snap = engine.calculate_snap(
-            &position,
-            0,
-            &annotations,
-            &measurements,
-            None,
-            None,
-        );
+        let snap = engine.calculate_snap(&position, 0, &annotations, &measurements, None, None);
 
         assert!(snap.is_some());
         let snap = snap.unwrap();
@@ -518,14 +518,7 @@ mod tests {
         // Point close to line endpoint
         let position = PageCoordinate::new(102.0, 101.0);
 
-        let snap = engine.calculate_snap(
-            &position,
-            0,
-            &annotations,
-            &measurements,
-            None,
-            None,
-        );
+        let snap = engine.calculate_snap(&position, 0, &annotations, &measurements, None, None);
 
         assert!(snap.is_some());
         let snap = snap.unwrap();
@@ -579,14 +572,7 @@ mod tests {
 
         let position = PageCoordinate::new(12.0, 11.0);
 
-        let snap = engine.calculate_snap(
-            &position,
-            0,
-            &annotations,
-            &measurements,
-            None,
-            None,
-        );
+        let snap = engine.calculate_snap(&position, 0, &annotations, &measurements, None, None);
 
         assert!(snap.is_none());
     }

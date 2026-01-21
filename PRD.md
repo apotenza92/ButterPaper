@@ -334,8 +334,8 @@ Wire up existing annotation system.
 
 - [x] Highlight tool (select text, press H)
 - [x] Render highlights from annotation data
-- [ ] Comment/note tool (click to place)
-- [ ] Render note icons
+- [x] Comment/note tool (click to place)
+- [x] Render note icons
 - [ ] Click note to show popup
 - [ ] Freehand drawing tool
 - [ ] Render strokes

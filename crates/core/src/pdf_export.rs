@@ -386,6 +386,23 @@ pub fn generate_appearance_stream(annotation: &SerializableAnnotation) -> PdfExp
             writeln!(&mut stream, "ET")
                 .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
         }
+
+        AnnotationGeometry::Note { position, icon_size } => {
+            // Note annotation: render as a filled rectangle (note icon)
+            let (x, y) = to_pdf_coord(position);
+            let half_size = icon_size / 2.0;
+
+            writeln!(&mut stream, "{} {} {} {} re", x - half_size, y - half_size, icon_size, icon_size)
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            if style.fill_color.is_some() {
+                writeln!(&mut stream, "B") // Fill and stroke
+                    .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            } else {
+                writeln!(&mut stream, "S") // Stroke only
+                    .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            }
+        }
     }
 
     Ok(stream)
@@ -567,13 +584,14 @@ fn add_annotation_to_page<'a>(
             drop(obj);
         }
 
-        // For now, complex geometries (polyline, polygon, arrow, text) are not supported
+        // For now, complex geometries (polyline, polygon, arrow, text, note) are not supported
         // in flattened export. These would require more complex path construction.
         AnnotationGeometry::Polyline { .. }
         | AnnotationGeometry::Freehand { .. }
         | AnnotationGeometry::Polygon { .. }
         | AnnotationGeometry::Arrow { .. }
-        | AnnotationGeometry::Text { .. } => {
+        | AnnotationGeometry::Text { .. }
+        | AnnotationGeometry::Note { .. } => {
             // Skip complex geometries for now
             return Ok(());
         }

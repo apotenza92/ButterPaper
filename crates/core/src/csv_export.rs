@@ -142,7 +142,11 @@ pub fn export_annotations_csv<W: Write>(
             metadata.modified_at.to_string(),
             metadata.tags.join(";"),
             color_to_hex(&style.stroke_color),
-            style.fill_color.as_ref().map(color_to_hex).unwrap_or_default(),
+            style
+                .fill_color
+                .as_ref()
+                .map(color_to_hex)
+                .unwrap_or_default(),
             style.stroke_width.to_string(),
             format_geometry(geometry),
             bbox_min_x.to_string(),
@@ -260,7 +264,10 @@ pub fn export_measurements_csv<W: Write>(
             measurement.id().to_string(),
             measurement.page_index().to_string(),
             measurement_type_name(measurement.measurement_type()),
-            measurement.value().map(|v| v.to_string()).unwrap_or_default(),
+            measurement
+                .value()
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             unit.to_string(),
             measurement.formatted_label().unwrap_or("").to_string(),
             measurement.scale_system_id().to_string(),
@@ -306,15 +313,7 @@ pub fn export_scales_csv<W: Write>(
 
     // Write headers
     if config.include_headers {
-        csv_writer.write_record([
-            "ID",
-            "Page",
-            "Type",
-            "Ratio",
-            "Unit",
-            "Label",
-            "Reliable",
-        ])?;
+        csv_writer.write_record(["ID", "Page", "Type", "Ratio", "Unit", "Label", "Reliable"])?;
     }
 
     // Filter scales based on page filter
@@ -359,6 +358,7 @@ fn geometry_type_name(geometry: &AnnotationGeometry) -> String {
         AnnotationGeometry::Freehand { .. } => "Freehand",
         AnnotationGeometry::Text { .. } => "Text",
         AnnotationGeometry::Arrow { .. } => "Arrow",
+        AnnotationGeometry::Note { .. } => "Note",
     }
     .to_string()
 }
@@ -383,10 +383,16 @@ fn color_to_hex(color: &Color) -> String {
 fn format_geometry(geometry: &AnnotationGeometry) -> String {
     match geometry {
         AnnotationGeometry::Line { start, end } => {
-            format!("Line[({:.2},{:.2})-({:.2},{:.2})]", start.x, start.y, end.x, end.y)
+            format!(
+                "Line[({:.2},{:.2})-({:.2},{:.2})]",
+                start.x, start.y, end.x, end.y
+            )
         }
         AnnotationGeometry::Arrow { start, end } => {
-            format!("Arrow[({:.2},{:.2})-({:.2},{:.2})]", start.x, start.y, end.x, end.y)
+            format!(
+                "Arrow[({:.2},{:.2})-({:.2},{:.2})]",
+                start.x, start.y, end.x, end.y
+            )
         }
         AnnotationGeometry::Polyline { points } => {
             let points_str = points
@@ -404,7 +410,10 @@ fn format_geometry(geometry: &AnnotationGeometry) -> String {
                 .join(",");
             format!("Polygon[{}]", points_str)
         }
-        AnnotationGeometry::Rectangle { top_left, bottom_right } => {
+        AnnotationGeometry::Rectangle {
+            top_left,
+            bottom_right,
+        } => {
             format!(
                 "Rectangle[({:.2},{:.2})-({:.2},{:.2})]",
                 top_left.x, top_left.y, bottom_right.x, bottom_right.y
@@ -413,7 +422,11 @@ fn format_geometry(geometry: &AnnotationGeometry) -> String {
         AnnotationGeometry::Circle { center, radius } => {
             format!("Circle[({:.2},{:.2}),r={:.2}]", center.x, center.y, radius)
         }
-        AnnotationGeometry::Ellipse { center, radius_x, radius_y } => {
+        AnnotationGeometry::Ellipse {
+            center,
+            radius_x,
+            radius_y,
+        } => {
             format!(
                 "Ellipse[({:.2},{:.2}),rx={:.2},ry={:.2}]",
                 center.x, center.y, radius_x, radius_y
@@ -422,11 +435,17 @@ fn format_geometry(geometry: &AnnotationGeometry) -> String {
         AnnotationGeometry::Freehand { points } => {
             format!("Freehand[{} points]", points.len())
         }
-        AnnotationGeometry::Text { position, max_width } => {
+        AnnotationGeometry::Text {
+            position,
+            max_width,
+        } => {
             let width_str = max_width
                 .map(|w| format!(",w={:.2}", w))
                 .unwrap_or_default();
             format!("Text[({:.2},{:.2}){}]", position.x, position.y, width_str)
+        }
+        AnnotationGeometry::Note { position, icon_size } => {
+            format!("Note[({:.2},{:.2}),size={:.2}]", position.x, position.y, icon_size)
         }
     }
 }

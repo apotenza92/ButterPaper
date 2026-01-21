@@ -11262,3 +11262,51 @@ SEARCH: OK total_matches=5 pages_with_matches=2 time=50ms
 - All 14 annotation tests pass (4 new tests added)
 - All 655 tests pass across the workspace
 - Clippy linting passes (no new warnings)
+
+### Task: Implement Comment/Note tool (Phase 3.3)
+
+**Status:** Complete
+
+**Changes:**
+- Added `Note` variant to `AnnotationGeometry` enum with position and icon_size fields
+- Added `comment_note()` style preset to `AnnotationStyle` with gold/yellow colors
+- Added `bounding_box()` and `contains_point()` implementations for Note geometry
+- Added `create_note_at_position()` method in main.rs to create notes at click position
+- Added keyboard shortcut 'N' to select the note tool (Bluebeam-compatible)
+- Wired up CommentTool clicks to create note annotations in document area
+- Added Note case handling to all match statements in:
+  - csv_export.rs (geometry type name and format)
+  - manipulation.rs (generate_handles for note - single move handle)
+  - measurement.rs (label_position for notes)
+  - snapping.rs (extract snap points for notes)
+  - pdf_export.rs (appearance stream and flattened export)
+  - compositor.rs (annotation_to_primitive - renders note as filled square)
+- Added comprehensive unit tests for Note annotations:
+  - test_note_bounding_box
+  - test_note_hit_testing
+  - test_comment_note_style
+  - test_note_annotation_creation
+  - test_note_annotation_in_collection
+  - test_note_serialization
+
+**Files Modified:**
+- crates/core/src/annotation.rs (Note geometry, bounding_box, contains_point, comment_note style, tests)
+- crates/core/src/csv_export.rs (Note case in geometry_type_name and format_geometry)
+- crates/core/src/manipulation.rs (Note case in generate_handles)
+- crates/core/src/measurement.rs (Note case in label_position)
+- crates/core/src/snapping.rs (Note case in extract_snap_points)
+- crates/core/src/pdf_export.rs (Note case in generate_appearance_stream and add_annotation_to_page)
+- crates/ui/src/compositor.rs (Note case in annotation_to_primitive)
+- crates/app/src/main.rs (create_note_at_position method, N keyboard shortcut, CommentTool click handling)
+- PRD.md (marked tasks complete)
+
+**Testing:**
+- All 476+ tests pass
+- Clippy linting passes (warnings are pre-existing unrelated issues)
+
+**Architecture Notes:**
+- Note annotations use a centered bounding box based on icon_size (default 24pt)
+- Notes are rendered as filled squares using the existing highlight renderer
+- Note content is stored in the annotation metadata label field
+- Notes can be moved via single handle manipulation
+- Serialization preserves Note geometry across save/load cycles

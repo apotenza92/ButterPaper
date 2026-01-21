@@ -286,10 +286,8 @@ impl ViewportCompositor {
             for highlight_box in highlights {
                 // Transform bounding box to screen coordinates
                 let bbox = &highlight_box.bbox;
-                let top_left = transform_page_to_screen(
-                    &PageCoordinate::new(bbox.x, bbox.y),
-                    viewport,
-                );
+                let top_left =
+                    transform_page_to_screen(&PageCoordinate::new(bbox.x, bbox.y), viewport);
                 let bottom_right = transform_page_to_screen(
                     &PageCoordinate::new(bbox.x + bbox.width, bbox.y + bbox.height),
                     viewport,
@@ -332,10 +330,8 @@ impl ViewportCompositor {
 
                     // Transform bounding box to screen coordinates
                     let bbox = &edit.bbox;
-                    let top_left = transform_page_to_screen(
-                        &PageCoordinate::new(bbox.x, bbox.y),
-                        viewport,
-                    );
+                    let top_left =
+                        transform_page_to_screen(&PageCoordinate::new(bbox.x, bbox.y), viewport);
                     let bottom_right = transform_page_to_screen(
                         &PageCoordinate::new(bbox.x + bbox.width, bbox.y + bbox.height),
                         viewport,
@@ -417,22 +413,18 @@ impl ViewportCompositor {
             if let Some(ref snap_target) = manipulation_state.snap_target {
                 // Determine guide color based on snap type
                 let guide_color = match snap_target.snap_type {
-                    SnapType::Point => Color::rgb(0.0, 0.78, 0.0),      // Green for point snaps
+                    SnapType::Point => Color::rgb(0.0, 0.78, 0.0), // Green for point snaps
                     SnapType::Horizontal => Color::rgb(0.0, 0.59, 1.0), // Blue for alignment
-                    SnapType::Vertical => Color::rgb(0.0, 0.59, 1.0),   // Blue for alignment
-                    SnapType::Angle => Color::rgb(1.0, 0.59, 0.0),      // Orange for angle
-                    SnapType::Grid => Color::rgb(0.5, 0.5, 0.5),        // Gray for grid
+                    SnapType::Vertical => Color::rgb(0.0, 0.59, 1.0), // Blue for alignment
+                    SnapType::Angle => Color::rgb(1.0, 0.59, 0.0), // Orange for angle
+                    SnapType::Grid => Color::rgb(0.5, 0.5, 0.5),   // Gray for grid
                 };
 
                 // Render guide line from source to target
-                let source_screen = transform_page_to_screen(
-                    &snap_target.source_position,
-                    viewport,
-                );
-                let target_screen = transform_page_to_screen(
-                    &snap_target.target_position,
-                    viewport,
-                );
+                let source_screen =
+                    transform_page_to_screen(&snap_target.source_position, viewport);
+                let target_screen =
+                    transform_page_to_screen(&snap_target.target_position, viewport);
 
                 // Render snap guide line
                 primitives.push(Primitive::Line {
@@ -494,17 +486,13 @@ impl ViewportCompositor {
                     let label_pos_page = measurement.label_position();
 
                     // Transform to screen coordinates
-                    let label_pos_screen =
-                        transform_page_to_screen(&label_pos_page, viewport);
+                    let label_pos_screen = transform_page_to_screen(&label_pos_page, viewport);
 
                     // Create label primitive
                     // For now, we use a simple colored rectangle as a placeholder
                     // Phase 8 will add proper text rasterization
-                    let label_primitive = create_label_primitive(
-                        label_pos_screen,
-                        label_text,
-                        viewport,
-                    );
+                    let label_primitive =
+                        create_label_primitive(label_pos_screen, label_text, viewport);
 
                     primitives.push(label_primitive);
                 }
@@ -613,11 +601,7 @@ impl ViewportCompositor {
     /// Render selection highlight for an annotation
     ///
     /// Adds a highlight border around the selected annotation.
-    pub fn render_selection_highlight(
-        &mut self,
-        annotation: &Annotation,
-        viewport: &Viewport,
-    ) {
+    pub fn render_selection_highlight(&mut self, annotation: &Annotation, viewport: &Viewport) {
         let (min_x, min_y, max_x, max_y) = annotation.bounding_box();
 
         // Only render if in viewport
@@ -702,8 +686,10 @@ fn calculate_visible_tiles(viewport: &Viewport) -> Vec<TileId> {
     let start_tile_x = (viewport.x / (TILE_SIZE as f32 * zoom_scale)).floor() as u32;
     let start_tile_y = (viewport.y / (TILE_SIZE as f32 * zoom_scale)).floor() as u32;
 
-    let end_tile_x = ((viewport.x + viewport.width) / (TILE_SIZE as f32 * zoom_scale)).ceil() as u32;
-    let end_tile_y = ((viewport.y + viewport.height) / (TILE_SIZE as f32 * zoom_scale)).ceil() as u32;
+    let end_tile_x =
+        ((viewport.x + viewport.width) / (TILE_SIZE as f32 * zoom_scale)).ceil() as u32;
+    let end_tile_y =
+        ((viewport.y + viewport.height) / (TILE_SIZE as f32 * zoom_scale)).ceil() as u32;
 
     // Iterate through visible tile grid
     for tile_y in start_tile_y..=end_tile_y {
@@ -715,7 +701,7 @@ fn calculate_visible_tiles(viewport: &Viewport) -> Vec<TileId> {
                     y: tile_y,
                 },
                 viewport.zoom_level,
-                0, // No rotation for now (Phase 6 will add rotation)
+                0,                  // No rotation for now (Phase 6 will add rotation)
                 TileProfile::Crisp, // Prefer crisp tiles for visible viewport
             );
 
@@ -746,13 +732,7 @@ fn transform_page_to_screen(coord: &PageCoordinate, viewport: &Viewport) -> [f32
 }
 
 /// Check if bounding box intersects with viewport (with margin)
-fn is_in_viewport(
-    min_x: f32,
-    min_y: f32,
-    max_x: f32,
-    max_y: f32,
-    viewport: &Viewport,
-) -> bool {
+fn is_in_viewport(min_x: f32, min_y: f32, max_x: f32, max_y: f32, viewport: &Viewport) -> bool {
     let zoom_scale = viewport.zoom_level as f32 / 100.0;
     let margin = 100.0; // Extra margin in page coordinates
 
@@ -904,6 +884,27 @@ fn annotation_to_primitive(
             // Text rendering will be implemented in a future phase
             // Requires text rasterization to texture and TexturedQuad primitive
             None
+        }
+        AnnotationGeometry::Note { position, icon_size } => {
+            // Render note as a filled rectangle (note icon)
+            let center_screen = transform_page_to_screen(position, viewport);
+            let zoom_scale = viewport.zoom_level as f32 / 100.0;
+            let half_size = (icon_size / 2.0) * zoom_scale;
+
+            // Create a square centered at the note position
+            let points = vec![
+                [center_screen[0] - half_size, center_screen[1] - half_size],
+                [center_screen[0] + half_size, center_screen[1] - half_size],
+                [center_screen[0] + half_size, center_screen[1] + half_size],
+                [center_screen[0] - half_size, center_screen[1] + half_size],
+            ];
+
+            Some(Primitive::Polygon {
+                points,
+                fill_color: style.fill_color.as_ref().map(convert_color),
+                stroke_color,
+                stroke_width,
+            })
         }
     }
 }
@@ -1063,9 +1064,7 @@ mod tests {
 
     #[test]
     fn test_render_selection_highlight() {
-        use pdf_editor_core::annotation::{
-            Annotation, AnnotationGeometry, AnnotationStyle,
-        };
+        use pdf_editor_core::annotation::{Annotation, AnnotationGeometry, AnnotationStyle};
 
         let config = CacheConfig::default();
         let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
@@ -1089,9 +1088,7 @@ mod tests {
 
     #[test]
     fn test_render_manipulation_handles() {
-        use pdf_editor_core::annotation::{
-            Annotation, AnnotationGeometry, AnnotationStyle,
-        };
+        use pdf_editor_core::annotation::{Annotation, AnnotationGeometry, AnnotationStyle};
         use pdf_editor_core::manipulation::generate_handles;
 
         let config = CacheConfig::default();
