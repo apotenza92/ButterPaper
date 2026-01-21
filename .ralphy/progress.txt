@@ -6111,3 +6111,268 @@ The text layer system provides the foundation by:
 - Tracking coverage and quality metrics
 
 The invisible text layer is now ready for UI integration to enable search and selection features on scanned PDFs.
+
+---
+
+## Task 112: Make OCR output searchable and selectable
+
+**Date**: 2026-01-21
+**Status**: ✅ Complete
+
+### Summary
+
+Implemented comprehensive text search and selection capabilities for OCR-enabled documents. The system now provides visual highlighting for search results and user text selections, integrated seamlessly with the existing text layer infrastructure.
+
+### Implementation
+
+Created new text selection module (`crates/ui/src/text_selection.rs`) with the following components:
+
+1. **TextSearchManager**: Central manager for text search and selection operations
+   - Document-wide text search with case-insensitive matching
+   - Navigation between search results (next/previous)
+   - Visual highlighting of search matches
+   - Active result tracking with distinct colors
+
+2. **TextSelection**: Mouse-based text selection state
+   - Click-and-drag selection in page coordinates
+   - Real-time text extraction from selection rectangle
+   - Integration with TextLayerManager for text queries
+
+3. **SearchResult**: Search match representation with highlighting
+   - Page-local search results
+   - Active/inactive state for current result
+   - Bounding box information for rendering
+
+4. **HighlightType**: Visual highlight styling
+   - Search result highlights (yellow, 30% opacity)
+   - Active search highlights (orange, 50% opacity)  
+   - Text selection highlights (blue, 30% opacity)
+
+### Compositor Integration
+
+Extended ViewportCompositor to support text highlighting:
+
+1. **New Text Highlight Layer**: Added fifth rendering layer between tiles and annotations
+   - Layer order: Tiles → Text Highlights → Annotations → Guides → Labels
+   - Semi-transparent rectangle rendering for highlights
+   - Coordinate transformation from page space to screen space
+
+2. **TextSearchManager Integration**:
+   - Added `set_text_search_manager()` method for compositor
+   - Automatic highlight rendering on viewport updates
+   - Per-page highlight filtering for efficiency
+
+3. **Layer Management Updates**:
+   - Updated all layer indices (annotations: 2, guides: 3, labels: 4, highlights: 1)
+   - Fixed all related methods and tests
+   - Maintained backward compatibility with existing rendering pipeline
+
+### API Design
+
+**TextSearchManager Public API:**
+
+```rust
+// Search operations
+pub fn search(&mut self, query: &str) -> usize
+pub fn clear_search(&mut self)
+pub fn next_result(&mut self) -> Option<(u16, TextBoundingBox)>
+pub fn previous_result(&mut self) -> Option<(u16, TextBoundingBox)>
+
+// Selection operations  
+pub fn start_selection(&mut self, page_index: u16, point: PageCoordinate)
+pub fn update_selection(&mut self, end_point: PageCoordinate)
+pub fn end_selection(&mut self) -> Option<String>
+pub fn clear_selection(&mut self)
+
+// Query operations
+pub fn get_results_for_page(&self, page_index: u16) -> Vec<&SearchResult>
+pub fn get_highlights_for_page(&self, page_index: u16) -> Vec<HighlightBox>
+pub fn get_selected_text(&self) -> Option<&str>
+pub fn result_count(&self) -> usize
+```
+
+**ViewportCompositor Integration:**
+
+```rust
+pub fn set_text_search_manager(&mut self, manager: Arc<TextSearchManager>)
+```
+
+### Features
+
+**Text Search:**
+- Case-insensitive full-text search across all pages
+- Multiple result support with visual highlighting
+- Navigation between results with wraparound
+- Active result distinction (different highlight color)
+- Document-wide search result aggregation
+
+**Text Selection:**
+- Click-and-drag selection in page coordinates
+- Real-time text extraction during selection
+- Visual feedback with semi-transparent blue highlight
+- Empty selection detection and cleanup
+- Integration with TextLayerManager for accurate text queries
+
+**Visual Highlighting:**
+- Three distinct highlight types with different colors
+- Semi-transparent rendering (no occlusion of content)
+- Page coordinate to screen coordinate transformation
+- Viewport-aware rendering (only current page)
+- Z-order correct (above tiles, below annotations)
+
+### Testing
+
+Implemented comprehensive test suite (9 tests):
+
+1. **Search Tests:**
+   - Basic search functionality
+   - Case-insensitive matching
+   - Multiple result handling
+   - Search navigation (next/previous)
+   - Clear search operation
+
+2. **Selection Tests:**
+   - Basic text selection workflow
+   - Empty selection detection
+   - Text extraction accuracy
+
+3. **Highlight Tests:**
+   - Per-page highlight filtering
+   - Highlight type color differentiation
+   - Active result highlighting
+
+All tests pass successfully ✅
+
+### Code Quality
+
+- ✅ Passes `cargo clippy -D warnings`
+- ✅ All 9 new tests pass
+- ✅ All existing compositor tests pass (8 tests)
+- ✅ Comprehensive documentation with examples
+- ✅ Thread-safe design (Arc-wrapped managers)
+- ✅ Type-safe API with clear ownership semantics
+
+### Files Modified
+
+**New Files:**
+- `crates/ui/src/text_selection.rs` (455 lines) - Text search and selection module
+
+**Modified Files:**
+- `crates/ui/src/lib.rs` - Exported text_selection module
+- `crates/ui/src/compositor.rs` - Added text highlight layer and rendering
+  - New layer: text_highlight_layer_id (index 1)
+  - Method: `rebuild_text_highlight_layer()`
+  - Method: `set_text_search_manager()`
+  - Updated layer indices for all methods
+  - Fixed all tests to reflect new layer structure
+
+**Updated Files:**
+- `PRD.md` - Marked task 112 as complete
+
+### Integration Points
+
+The implementation provides clean integration points for UI applications:
+
+```rust
+// Initialize text search manager
+let text_layers = Arc::new(TextLayerManager::new(page_count));
+let search_manager = Arc::new(TextSearchManager::new(text_layers));
+
+// Attach to compositor
+compositor.set_text_search_manager(Arc::clone(&search_manager));
+
+// Perform search
+let match_count = search_manager.search("drawing");
+println!("Found {} matches", match_count);
+
+// Navigate results
+if let Some((page, bbox)) = search_manager.next_result() {
+    // Navigate viewport to page and bbox
+}
+
+// Handle text selection
+// On mouse down:
+search_manager.start_selection(page_index, page_coord);
+
+// On mouse drag:
+search_manager.update_selection(page_coord);
+
+// On mouse up:
+if let Some(selected_text) = search_manager.end_selection() {
+    // Copy to clipboard or display
+    println!("Selected: {}", selected_text);
+}
+```
+
+### Architecture Alignment
+
+The implementation maintains consistency with existing architecture:
+
+1. **Coordinate Systems**: Uses PageCoordinate for all text operations, consistent with annotations
+2. **Rendering Pipeline**: Integrates with existing compositor layer system
+3. **Thread Safety**: Arc-wrapped managers for concurrent access
+4. **Scene Graph**: Leverages existing Primitive::Rectangle for highlights
+5. **GPU Rendering**: Automatic GPU primitive conversion via compositor
+
+### Performance Considerations
+
+- Per-page highlight filtering (only renders current page)
+- Lazy highlight generation (only on viewport updates)
+- Efficient text layer queries via TextLayerManager
+- No blocking operations on search or selection
+- Minimal memory overhead (highlights are transient primitives)
+
+### Visual Design
+
+**Highlight Colors:**
+- Search matches: Yellow (rgba: 1.0, 1.0, 0.0, 0.3)
+- Active search: Orange (rgba: 1.0, 0.65, 0.0, 0.5)
+- Text selection: Blue (rgba: 0.2, 0.6, 1.0, 0.3)
+
+**Rendering Order (bottom to top):**
+1. PDF page tiles
+2. Text highlights ← New layer
+3. Annotations
+4. Snap guides
+5. Measurement labels
+
+### Next Steps
+
+This implementation completes Phase 9 (OCR Subsystem). The remaining tasks are:
+
+- **Phase 10**: Text Editing (tasks 115-119)
+- **Phase 11**: Persistence and Export (tasks 122-126)
+- **Phase 12**: Polish and Performance (tasks 129-133)
+
+### Future Enhancements
+
+Potential future improvements (not in current scope):
+
+1. **Clipboard Integration**: Copy selected text to system clipboard
+2. **Find & Replace**: Extend search to support text replacement
+3. **Regex Search**: Support pattern-based searching
+4. **Search History**: Track recent searches
+5. **Highlight Persistence**: Save search highlights with document
+6. **Multi-selection**: Support multiple non-contiguous text selections
+7. **Text Styling**: Preserve font/style information in selection
+
+### Technical Notes
+
+**Text Coordinate System:**
+- Origin: Bottom-left corner (PDF standard)
+- Units: Points (1/72 inch)
+- Transformation: `screen = (page * zoom) - viewport_offset`
+
+**Search Algorithm:**
+- Case-insensitive substring matching
+- Linear scan through text layers
+- Results cached until query changes
+- No indexing overhead (acceptable for typical PDF sizes)
+
+**Selection Algorithm:**
+- Rectangle-based spatial query
+- Text extraction via TextLayerManager
+- Real-time text assembly from overlapping spans
+- Empty selection detection (< 1 point area)
+
+The text search and selection system is now fully functional and ready for UI integration.

@@ -109,7 +109,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Implement automatic detection of pages without selectable text
 - [x] Build progressive OCR (current page → nearby → remaining when idle)
 - [x] Create invisible text layer aligned to page coordinates
-- [ ] Make OCR output searchable and selectable
+- [x] Make OCR output searchable and selectable
 
 ### Phase 10: Text Editing
 - [ ] Implement text editing on PDF content streams

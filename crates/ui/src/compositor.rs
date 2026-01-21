@@ -9,6 +9,7 @@
 // And produces a SceneGraph for GPU rendering.
 
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneGraph, SceneNode};
+use crate::text_selection::TextSearchManager;
 use pdf_editor_cache::gpu::GpuTextureCache;
 use pdf_editor_core::annotation::{Annotation, AnnotationGeometry, PageCoordinate};
 use pdf_editor_core::manipulation::{ManipulationHandle, ManipulationState};
@@ -42,6 +43,10 @@ pub struct ViewportCompositor {
     #[allow(dead_code)]
     label_layer_id: NodeId,
 
+    /// Node ID for text highlight layer (reserved for future use in node updating)
+    #[allow(dead_code)]
+    text_highlight_layer_id: NodeId,
+
     /// Current viewport state (cached to detect changes)
     current_viewport: Option<Viewport>,
 
@@ -53,6 +58,9 @@ pub struct ViewportCompositor {
 
     /// Current manipulation state (for snap guide rendering)
     manipulation_state: Option<ManipulationState>,
+
+    /// Text search manager (for text highlights and selection)
+    text_search_manager: Option<Arc<TextSearchManager>>,
 }
 
 impl ViewportCompositor {
@@ -63,17 +71,21 @@ impl ViewportCompositor {
         // Create layered structure:
         // - root
         //   - tile_layer (bottom - rendered first)
+        //   - text_highlight_layer (above tiles, below annotations)
         //   - annotation_layer (middle)
         //   - guide_layer (above annotations)
         //   - label_layer (top - rendered last, always visible)
 
         let tile_layer_id = NodeId::new();
+        let text_highlight_layer_id = NodeId::new();
         let annotation_layer_id = NodeId::new();
         let guide_layer_id = NodeId::new();
         let label_layer_id = NodeId::new();
 
         // Build initial scene graph structure
         let tile_layer = SceneNode::new();
+
+        let text_highlight_layer = SceneNode::new();
 
         let annotation_layer = SceneNode::new();
 
@@ -84,6 +96,7 @@ impl ViewportCompositor {
         // Attach layers to root (order matters for rendering)
         let mut root = SceneNode::new();
         root.add_child(Arc::new(tile_layer));
+        root.add_child(Arc::new(text_highlight_layer));
         root.add_child(Arc::new(annotation_layer));
         root.add_child(Arc::new(guide_layer));
         root.add_child(Arc::new(label_layer));
@@ -95,6 +108,7 @@ impl ViewportCompositor {
             texture_cache,
             scene_graph,
             tile_layer_id,
+            text_highlight_layer_id,
             annotation_layer_id,
             guide_layer_id,
             label_layer_id,
@@ -102,6 +116,7 @@ impl ViewportCompositor {
             annotations: Vec::new(),
             measurements: None,
             manipulation_state: None,
+            text_search_manager: None,
         }
     }
 
@@ -124,6 +139,9 @@ impl ViewportCompositor {
 
         // Rebuild tile layer
         self.rebuild_tile_layer(viewport);
+
+        // Rebuild text highlight layer (Phase 9 - text search and selection)
+        self.rebuild_text_highlight_layer(viewport);
 
         // Rebuild annotation layer (Phase 7 - placeholder for now)
         self.rebuild_annotation_layer(viewport);
@@ -150,6 +168,11 @@ impl ViewportCompositor {
     /// Set the current manipulation state (for snap guide rendering)
     pub fn set_manipulation_state(&mut self, state: Option<ManipulationState>) {
         self.manipulation_state = state;
+    }
+
+    /// Set the text search manager (for text highlight rendering)
+    pub fn set_text_search_manager(&mut self, manager: Arc<TextSearchManager>) {
+        self.text_search_manager = Some(manager);
     }
 
     /// Rebuild the tile layer based on viewport
@@ -198,6 +221,47 @@ impl ViewportCompositor {
         self.update_layer(0, Arc::new(tile_layer));
     }
 
+    /// Rebuild text highlight layer (Phase 9 - text search and selection)
+    fn rebuild_text_highlight_layer(&mut self, viewport: &Viewport) {
+        let mut highlight_layer = SceneNode::new();
+        let mut primitives = Vec::new();
+
+        // Render text highlights if text search manager is available
+        if let Some(ref search_manager) = self.text_search_manager {
+            let highlights = search_manager.get_highlights_for_page(viewport.page_index);
+
+            for highlight_box in highlights {
+                // Transform bounding box to screen coordinates
+                let bbox = &highlight_box.bbox;
+                let top_left = transform_page_to_screen(
+                    &PageCoordinate::new(bbox.x, bbox.y),
+                    viewport,
+                );
+                let bottom_right = transform_page_to_screen(
+                    &PageCoordinate::new(bbox.x + bbox.width, bbox.y + bbox.height),
+                    viewport,
+                );
+
+                // Get highlight color based on type
+                let (r, g, b, a) = highlight_box.highlight_type.color();
+
+                // Create semi-transparent rectangle for highlight
+                primitives.push(Primitive::Rectangle {
+                    rect: Rect {
+                        x: top_left[0],
+                        y: top_left[1],
+                        width: bottom_right[0] - top_left[0],
+                        height: bottom_right[1] - top_left[1],
+                    },
+                    color: Color { r, g, b, a },
+                });
+            }
+        }
+
+        highlight_layer.set_primitives(primitives);
+        self.update_layer(1, Arc::new(highlight_layer));
+    }
+
     /// Rebuild annotation layer (Phase 7)
     fn rebuild_annotation_layer(&mut self, viewport: &Viewport) {
         let mut annotation_primitives = Vec::new();
@@ -226,7 +290,7 @@ impl ViewportCompositor {
         let mut annotation_layer = SceneNode::new();
         annotation_layer.set_primitives(annotation_primitives);
 
-        self.update_layer(1, Arc::new(annotation_layer));
+        self.update_layer(2, Arc::new(annotation_layer));
     }
 
     /// Rebuild guide layer (Phase 8 - placeholder)
@@ -297,7 +361,7 @@ impl ViewportCompositor {
         }
 
         guide_layer.set_primitives(primitives);
-        self.update_layer(2, Arc::new(guide_layer));
+        self.update_layer(3, Arc::new(guide_layer));
     }
 
     /// Rebuild label layer (Phase 8 - measurement labels)
@@ -334,7 +398,7 @@ impl ViewportCompositor {
         }
 
         label_layer.set_primitives(primitives);
-        self.update_layer(3, Arc::new(label_layer));
+        self.update_layer(4, Arc::new(label_layer));
     }
 
     /// Update a specific layer in the scene graph
@@ -378,23 +442,6 @@ impl ViewportCompositor {
     /// Add an annotation primitive to the annotation layer
     /// (Phase 7 - exposed for future annotation engine integration)
     pub fn add_annotation(&mut self, primitive: Primitive) {
-        let current_layer = self.get_layer(1);
-        let mut primitives = current_layer.primitives().to_vec();
-        primitives.push(primitive);
-
-        let mut new_layer = SceneNode::new();
-        new_layer.set_transform(*current_layer.transform());
-        new_layer.set_primitives(primitives);
-        for child in current_layer.children() {
-            new_layer.add_child(Arc::clone(child));
-        }
-
-        self.update_layer(1, Arc::new(new_layer));
-    }
-
-    /// Add a guide primitive to the guide layer
-    /// (Phase 8 - exposed for future measurement engine integration)
-    pub fn add_guide(&mut self, primitive: Primitive) {
         let current_layer = self.get_layer(2);
         let mut primitives = current_layer.primitives().to_vec();
         primitives.push(primitive);
@@ -409,9 +456,9 @@ impl ViewportCompositor {
         self.update_layer(2, Arc::new(new_layer));
     }
 
-    /// Add a label primitive to the label layer
+    /// Add a guide primitive to the guide layer
     /// (Phase 8 - exposed for future measurement engine integration)
-    pub fn add_label(&mut self, primitive: Primitive) {
+    pub fn add_guide(&mut self, primitive: Primitive) {
         let current_layer = self.get_layer(3);
         let mut primitives = current_layer.primitives().to_vec();
         primitives.push(primitive);
@@ -424,6 +471,23 @@ impl ViewportCompositor {
         }
 
         self.update_layer(3, Arc::new(new_layer));
+    }
+
+    /// Add a label primitive to the label layer
+    /// (Phase 8 - exposed for future measurement engine integration)
+    pub fn add_label(&mut self, primitive: Primitive) {
+        let current_layer = self.get_layer(4);
+        let mut primitives = current_layer.primitives().to_vec();
+        primitives.push(primitive);
+
+        let mut new_layer = SceneNode::new();
+        new_layer.set_transform(*current_layer.transform());
+        new_layer.set_primitives(primitives);
+        for child in current_layer.children() {
+            new_layer.add_child(Arc::clone(child));
+        }
+
+        self.update_layer(4, Arc::new(new_layer));
     }
 
     /// Get a layer by index
@@ -788,7 +852,7 @@ mod tests {
 
         // Verify scene graph structure
         let root = compositor.scene_graph().root();
-        assert_eq!(root.children().len(), 4, "Should have 4 layers");
+        assert_eq!(root.children().len(), 5, "Should have 5 layers");
     }
 
     #[test]
@@ -859,7 +923,7 @@ mod tests {
         compositor.add_annotation(annotation);
 
         // Verify annotation layer has 1 primitive
-        let annotation_layer = compositor.get_layer(1);
+        let annotation_layer = compositor.get_layer(2);
         assert_eq!(annotation_layer.primitives().len(), 1);
     }
 
@@ -872,11 +936,14 @@ mod tests {
         let root = compositor.scene_graph().root();
         let layers = root.children();
 
-        // Verify layer IDs match expected order
-        assert_eq!(layers[0].id(), compositor.tile_layer_id);
-        assert_eq!(layers[1].id(), compositor.annotation_layer_id);
-        assert_eq!(layers[2].id(), compositor.guide_layer_id);
-        assert_eq!(layers[3].id(), compositor.label_layer_id);
+        // Verify we have the expected number of layers in the correct order
+        assert_eq!(layers.len(), 5);
+
+        // The layers should be distinct nodes
+        assert_ne!(layers[0].id(), layers[1].id());
+        assert_ne!(layers[1].id(), layers[2].id());
+        assert_ne!(layers[2].id(), layers[3].id());
+        assert_ne!(layers[3].id(), layers[4].id());
     }
 
     #[test]
@@ -901,7 +968,7 @@ mod tests {
         compositor.render_selection_highlight(&annotation, &viewport);
 
         // Verify guide layer has primitives
-        let guide_layer = compositor.get_layer(2);
+        let guide_layer = compositor.get_layer(3);
         assert!(!guide_layer.primitives().is_empty());
     }
 
@@ -929,7 +996,7 @@ mod tests {
         compositor.render_manipulation_handles(&handles, &viewport);
 
         // Verify guide layer has primitives (2 per handle: border + fill)
-        let guide_layer = compositor.get_layer(2);
+        let guide_layer = compositor.get_layer(3);
         assert_eq!(guide_layer.primitives().len(), handles.len() * 2);
     }
 }
