@@ -1336,6 +1336,70 @@ fn calculate_blit_clip(
     }
 }
 
+/// Information about a visible page in continuous scroll mode
+#[derive(Debug, Clone)]
+struct VisiblePageInfo {
+    /// Page index (0-based)
+    page_index: u16,
+    /// Y position on screen where this page's top edge should be rendered
+    screen_y: f32,
+    /// Page height in points (at 100% zoom)
+    page_height: f32,
+    /// Page width in points (at 100% zoom)
+    page_width: f32,
+}
+
+/// Calculate which pages are visible at a given document scroll offset
+///
+/// Returns a list of visible pages with their screen positions.
+///
+/// # Arguments
+/// * `doc_scroll_offset` - Current document-level Y scroll offset
+/// * `viewport_height` - Height of the viewport in screen pixels
+/// * `page_dimensions` - (width, height) for each page in points
+/// * `page_y_offsets` - Cumulative Y offset where each page starts
+/// * `zoom_scale` - Current zoom factor (e.g., 1.0 = 100%, 2.0 = 200%)
+fn calculate_visible_pages(
+    doc_scroll_offset: f32,
+    viewport_height: f32,
+    page_dimensions: &[(f32, f32)],
+    page_y_offsets: &[f32],
+    zoom_scale: f32,
+) -> Vec<VisiblePageInfo> {
+    let mut visible = Vec::new();
+
+    // Viewport spans from doc_scroll_offset to doc_scroll_offset + viewport_height/zoom_scale
+    let viewport_top = doc_scroll_offset;
+    let viewport_bottom = doc_scroll_offset + viewport_height / zoom_scale;
+
+    for (idx, (&(page_width, page_height), &page_y)) in
+        page_dimensions.iter().zip(page_y_offsets.iter()).enumerate()
+    {
+        let page_top = page_y;
+        let page_bottom = page_y + page_height;
+
+        // Check if page overlaps with viewport
+        if page_bottom > viewport_top && page_top < viewport_bottom {
+            // Calculate screen Y position (where top of page appears on screen)
+            let screen_y = (page_top - doc_scroll_offset) * zoom_scale;
+
+            visible.push(VisiblePageInfo {
+                page_index: idx as u16,
+                screen_y,
+                page_height,
+                page_width,
+            });
+        }
+
+        // Early exit if we've passed the viewport
+        if page_top >= viewport_bottom {
+            break;
+        }
+    }
+
+    visible
+}
+
 #[cfg(test)]
 mod blit_tests {
     use super::*;
@@ -1943,6 +2007,9 @@ struct ErrorDialogTexture {
 /// Width of the thumbnail strip sidebar
 const THUMBNAIL_STRIP_WIDTH: f32 = 136.0; // 120px thumbnail + 8px spacing * 2
 
+/// Gap between pages in continuous scroll mode (in screen pixels)
+const CONTINUOUS_SCROLL_PAGE_GAP: f32 = 20.0;
+
 struct LoadedDocument {
     pdf: PdfDocument,
     path: PathBuf,
@@ -1955,6 +2022,12 @@ struct LoadedDocument {
     page_info_overlay: Option<PageInfoOverlay>,
     #[cfg(target_os = "macos")]
     debug_texture_overlay: Option<DebugTextureOverlay>,
+    /// Page dimensions for continuous scrolling (width, height) in points
+    page_dimensions: Vec<(f32, f32)>,
+    /// Cumulative Y offset where each page starts (for continuous scroll mode)
+    page_y_offsets: Vec<f32>,
+    /// Total document height including gaps between pages
+    total_document_height: f32,
 }
 
 struct App {
@@ -2083,6 +2156,10 @@ struct App {
     /// Error dialog texture for rendering
     #[cfg(target_os = "macos")]
     error_dialog_texture: Option<ErrorDialogTexture>,
+    /// Whether continuous scroll mode is enabled (multiple pages visible while scrolling)
+    continuous_scroll_enabled: bool,
+    /// Document-level Y offset for continuous scrolling (0 = top of first page)
+    document_scroll_offset: f32,
 }
 
 impl App {
@@ -2189,6 +2266,8 @@ impl App {
             error_dialog,
             #[cfg(target_os = "macos")]
             error_dialog_texture: None,
+            continuous_scroll_enabled: true, // Enable continuous scroll by default
+            document_scroll_offset: 0.0,
         }
     }
 
@@ -2251,6 +2330,27 @@ impl App {
                 // Refresh the Open Recent menu
                 menu::refresh_open_recent_menu();
 
+                // Calculate page dimensions for continuous scroll mode
+                let mut page_dimensions = Vec::with_capacity(page_count as usize);
+                let mut page_y_offsets = Vec::with_capacity(page_count as usize);
+                let mut current_y_offset = 0.0_f32;
+
+                for page_idx in 0..page_count {
+                    if let Ok(page) = pdf.get_page(page_idx) {
+                        let width = page.width().value;
+                        let height = page.height().value;
+                        page_dimensions.push((width, height));
+                        page_y_offsets.push(current_y_offset);
+                        current_y_offset += height + CONTINUOUS_SCROLL_PAGE_GAP;
+                    } else {
+                        // Fallback for pages that fail to load
+                        page_dimensions.push((612.0, 792.0)); // US Letter size
+                        page_y_offsets.push(current_y_offset);
+                        current_y_offset += 792.0 + CONTINUOUS_SCROLL_PAGE_GAP;
+                    }
+                }
+                let total_document_height = current_y_offset - CONTINUOUS_SCROLL_PAGE_GAP; // Remove last gap
+
                 self.document = Some(LoadedDocument {
                     pdf,
                     path: path.clone(),
@@ -2262,7 +2362,13 @@ impl App {
                     page_info_overlay: None,
                     #[cfg(target_os = "macos")]
                     debug_texture_overlay: None,
+                    page_dimensions,
+                    page_y_offsets,
+                    total_document_height,
                 });
+
+                // Reset document scroll offset when loading new document
+                self.document_scroll_offset = 0.0;
 
                 // Reinitialize thumbnail strip with new page count
                 let viewport_size = self.window.as_ref()
@@ -3765,15 +3871,161 @@ impl App {
 
     /// Go to a specific page by index
     fn goto_page(&mut self, page_index: u16) {
-        if let Some(doc) = &mut self.document {
+        // Extract info we need before borrowing
+        let (should_update, scroll_offset) = if let Some(doc) = &self.document {
             if page_index < doc.page_count && page_index != doc.current_page {
+                let offset = if self.continuous_scroll_enabled {
+                    doc.page_y_offsets.get(page_index as usize).copied()
+                } else {
+                    None
+                };
+                (true, offset)
+            } else {
+                (false, None)
+            }
+        } else {
+            (false, None)
+        };
+
+        if should_update {
+            if let Some(doc) = &mut self.document {
                 doc.current_page = page_index;
                 println!("Page {}/{}", doc.current_page + 1, doc.page_count);
-                self.thumbnail_strip.set_current_page(doc.current_page);
-                self.update_thumbnail_texture();
-                self.ensure_current_page_text_extracted(); // Lazy text extraction
-                self.render_current_page();
-                self.update_page_info_overlay();
+            }
+            self.thumbnail_strip.set_current_page(page_index);
+            self.update_thumbnail_texture();
+            self.ensure_current_page_text_extracted();
+            self.render_current_page();
+            self.update_page_info_overlay();
+
+            // Update scroll offset in continuous mode
+            if let Some(offset) = scroll_offset {
+                self.document_scroll_offset = offset;
+            }
+        }
+    }
+
+    /// Update the document scroll offset for continuous scroll mode
+    fn update_continuous_scroll(&mut self, delta: f32) {
+        // Extract what we need from document first
+        let (total_height, page_info, current_page) = if let Some(doc) = &self.document {
+            let info: Vec<_> = doc.page_y_offsets.iter()
+                .zip(doc.page_dimensions.iter())
+                .map(|(&y, &(_w, h))| (y, h))
+                .collect();
+            (doc.total_document_height, info, doc.current_page)
+        } else {
+            return;
+        };
+
+        // Convert screen delta to document coordinates (account for zoom)
+        let zoom_scale = self.input_handler.viewport().zoom_level as f32 / 100.0;
+        let doc_delta = delta / zoom_scale;
+
+        // Update scroll offset with clamping
+        self.document_scroll_offset = (self.document_scroll_offset + doc_delta)
+            .max(0.0)
+            .min(total_height);
+
+        // Determine which page is now primarily visible (for thumbnail sync)
+        let viewport_center = self.document_scroll_offset + 400.0 / zoom_scale;
+        let mut new_page_to_set: Option<u16> = None;
+
+        for (idx, (y_offset, h)) in page_info.iter().enumerate() {
+            if viewport_center >= *y_offset && viewport_center < *y_offset + *h {
+                let new_page = idx as u16;
+                if new_page != current_page {
+                    new_page_to_set = Some(new_page);
+                }
+                break;
+            }
+        }
+
+        // Now do the mutable updates
+        if let Some(new_page) = new_page_to_set {
+            if let Some(doc) = &mut self.document {
+                doc.current_page = new_page;
+            }
+            self.thumbnail_strip.set_current_page(new_page);
+            self.update_thumbnail_texture();
+            self.ensure_current_page_text_extracted();
+            self.ensure_visible_pages_rendered();
+        }
+
+        // Request redraw
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+
+    /// Ensure all currently visible pages have their textures rendered
+    fn ensure_visible_pages_rendered(&mut self) {
+        // First collect info about which pages need rendering
+        let pages_to_render: Vec<u16> = if let Some(doc) = &self.document {
+            let zoom_scale = self.input_handler.viewport().zoom_level as f32 / 100.0;
+            let viewport_height = self.window.as_ref()
+                .map(|w| w.inner_size().height as f32)
+                .unwrap_or(800.0);
+
+            let visible = calculate_visible_pages(
+                self.document_scroll_offset,
+                viewport_height,
+                &doc.page_dimensions,
+                &doc.page_y_offsets,
+                zoom_scale,
+            );
+
+            visible.iter()
+                .filter(|vp| !doc.page_textures.contains_key(&vp.page_index))
+                .map(|vp| vp.page_index)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Now render them
+        for page_index in pages_to_render {
+            self.render_page(page_index);
+        }
+    }
+
+    /// Render a specific page (for continuous scroll pre-rendering)
+    fn render_page(&mut self, page_index: u16) {
+        #[cfg(target_os = "macos")]
+        if let (Some(device), Some(doc)) = (&self.device, &mut self.document) {
+            if page_index >= doc.page_count {
+                return;
+            }
+            if let Ok(page) = doc.pdf.get_page(page_index) {
+                let zoom_level = self.input_handler.viewport().zoom_level;
+                let zoom_factor = zoom_level as f32 / 100.0;
+                let page_width = page.width().value;
+                let page_height = page.height().value;
+                let render_width = (page_width * zoom_factor) as u32;
+                let render_height = (page_height * zoom_factor) as u32;
+
+                if let Ok(pixels) = doc.pdf.render_page_rgba(page_index, render_width, render_height) {
+                    let texture_desc = metal::TextureDescriptor::new();
+                    texture_desc.set_pixel_format(metal::MTLPixelFormat::RGBA8Unorm);
+                    texture_desc.set_width(render_width as u64);
+                    texture_desc.set_height(render_height as u64);
+                    texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+
+                    let texture = device.new_texture(&texture_desc);
+                    let region = metal::MTLRegion::new_2d(0, 0, render_width as u64, render_height as u64);
+                    texture.replace_region(
+                        region,
+                        0,
+                        pixels.as_ptr() as *const _,
+                        (render_width * 4) as u64,
+                    );
+
+                    doc.page_textures.insert(page_index, PageTexture {
+                        texture,
+                        width: render_width,
+                        height: render_height,
+                    });
+                }
             }
         }
     }
@@ -5939,13 +6191,77 @@ impl App {
                     let drawable_width = drawable.texture().width();
                     let drawable_height = drawable.texture().height();
 
-                    // Blit the PDF page texture to the drawable (centered with pan offset)
+                    // Blit the PDF page texture(s) to the drawable
                     // Get viewport pan offset before borrowing document
                     let viewport_x = self.input_handler.viewport().x;
                     let viewport_y = self.input_handler.viewport().y;
+                    let zoom_scale = self.input_handler.viewport().zoom_level as f32 / 100.0;
 
                     if let Some(doc) = &self.document {
-                        if let Some(page_tex) = doc.page_textures.get(&doc.current_page) {
+                        if self.continuous_scroll_enabled && doc.page_count > 1 {
+                            // CONTINUOUS SCROLL MODE: Render multiple visible pages
+                            let visible_pages = calculate_visible_pages(
+                                self.document_scroll_offset,
+                                drawable_height as f32,
+                                &doc.page_dimensions,
+                                &doc.page_y_offsets,
+                                zoom_scale,
+                            );
+
+                            for visible_page in &visible_pages {
+                                if let Some(page_tex) = doc.page_textures.get(&visible_page.page_index) {
+                                    // Center horizontally, position vertically based on scroll
+                                    let center_x = (drawable_width as i64 - page_tex.width as i64) / 2;
+                                    let pan_x = center_x - viewport_x as i64;
+                                    let pan_y = visible_page.screen_y as i64;
+
+                                    // Calculate clipping and blit if visible
+                                    if let Some((src_x, src_y, dest_x, dest_y, copy_width, copy_height)) =
+                                        calculate_blit_clip(
+                                            page_tex.width as i64,
+                                            page_tex.height as i64,
+                                            drawable_width as i64,
+                                            drawable_height as i64,
+                                            pan_x,
+                                            pan_y,
+                                        )
+                                    {
+                                        let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                                        let src_origin = metal::MTLOrigin {
+                                            x: src_x,
+                                            y: src_y,
+                                            z: 0,
+                                        };
+                                        let src_size = metal::MTLSize {
+                                            width: copy_width,
+                                            height: copy_height,
+                                            depth: 1,
+                                        };
+                                        let dest_origin = metal::MTLOrigin {
+                                            x: dest_x,
+                                            y: dest_y,
+                                            z: 0,
+                                        };
+
+                                        blit_encoder.copy_from_texture(
+                                            &page_tex.texture,
+                                            0,
+                                            0,
+                                            src_origin,
+                                            src_size,
+                                            drawable.texture(),
+                                            0,
+                                            0,
+                                            dest_origin,
+                                        );
+
+                                        blit_encoder.end_encoding();
+                                    }
+                                }
+                            }
+                        } else if let Some(page_tex) = doc.page_textures.get(&doc.current_page) {
+                            // SINGLE PAGE MODE: Original behavior
                             // Calculate center position, then apply pan offset
                             let center_x = (drawable_width as i64 - page_tex.width as i64) / 2;
                             let center_y = (drawable_height as i64 - page_tex.height as i64) / 2;
@@ -6803,6 +7119,12 @@ impl ApplicationHandler for App {
 
             self.window = Some(window);
 
+            // Set up native macOS menu bar AFTER window creation
+            // This must be done inside resumed() because winit's EventLoop::new()
+            // resets the menu bar, so setting it up in main() before run_app() doesn't work
+            #[cfg(target_os = "macos")]
+            menu::setup_menu_bar();
+
             // Load initial file if provided
             if let Some(path) = self.initial_file.take() {
                 println!("Loading initial file: {}", path.display());
@@ -7237,6 +7559,11 @@ impl ApplicationHandler for App {
                         if is_zoom_modifier {
                             // Zoom with Cmd/Ctrl + scroll wheel
                             self.input_handler.on_mouse_wheel(y);
+                        } else if self.continuous_scroll_enabled && self.document.as_ref().map_or(false, |d| d.page_count > 1) {
+                            // CONTINUOUS SCROLL MODE: Update document scroll offset
+                            let scroll_speed = 40.0; // pixels per line
+                            let scroll_delta = -y * scroll_speed;
+                            self.update_continuous_scroll(scroll_delta);
                         } else {
                             // Smooth scroll (natural scrolling direction)
                             self.input_handler.on_scroll(-x, -y, true);
@@ -7246,6 +7573,9 @@ impl ApplicationHandler for App {
                         if is_zoom_modifier {
                             // Zoom with Cmd/Ctrl + scroll wheel
                             self.input_handler.on_mouse_wheel((pos.y / 100.0) as f32);
+                        } else if self.continuous_scroll_enabled && self.document.as_ref().map_or(false, |d| d.page_count > 1) {
+                            // CONTINUOUS SCROLL MODE: Update document scroll offset
+                            self.update_continuous_scroll(-pos.y as f32);
                         } else {
                             // Smooth scroll (pixel-based, e.g., trackpad)
                             self.input_handler.on_scroll(-pos.x as f32, -pos.y as f32, false);
@@ -8061,15 +8391,9 @@ fn main() {
         );
     }
 
-    // Set up native macOS menu bar
-    menu::setup_menu_bar();
-
-    if profile_startup {
-        println!(
-            "STARTUP_PROFILE: Menu bar setup completed at {:.2}ms",
-            app_start.elapsed().as_secs_f64() * 1000.0
-        );
-    }
+    // NOTE: Menu bar setup is now done inside App::resumed() because winit's
+    // EventLoop::new() can reset the menu bar on macOS. Setting it up here
+    // before run_app() doesn't persist.
 
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
