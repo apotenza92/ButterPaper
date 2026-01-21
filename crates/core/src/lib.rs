@@ -38,10 +38,9 @@ pub use document::{
     Document, DocumentError, DocumentId, DocumentManager, DocumentMetadata, DocumentResult,
     DocumentState,
 };
+pub use font_bridge::{extract_font_for_region, font_info_to_text_edit_font};
 pub use loader::{DocumentLoader, LoaderConfig};
-pub use manipulation::{
-    generate_handles, HandleType, ManipulationHandle, ManipulationState,
-};
+pub use manipulation::{generate_handles, HandleType, ManipulationHandle, ManipulationState};
 pub use measurement::{
     Measurement, MeasurementCollection, MeasurementId, MeasurementMetadata, MeasurementType,
     ScaleSystem, ScaleSystemId, ScaleType,
@@ -49,25 +48,20 @@ pub use measurement::{
 pub use ocr::{OcrConfig, OcrEngine, OcrError, OcrResult, TextBlock};
 pub use page_switch::{PageSwitchResult, PageSwitcher};
 pub use pdf_export::{
-    generate_appearance_stream, save_pdf_with_annotations, ExportOptions, PdfExportError,
-    PdfExportResult,
+    export_flattened_pdf, generate_appearance_stream, save_pdf_with_annotations, ExportOptions,
+    PdfExportError, PdfExportResult,
 };
-pub use progressive_ocr::{ProgressiveOcr, ProgressiveOcrStats};
 pub use persistence::{
     delete_metadata, load_metadata, metadata_exists, metadata_path, save_metadata,
     PersistenceError, PersistenceResult,
 };
-pub use preview::{AsyncPreviewRenderer, PreviewRenderer, PreviewHandle, PreviewResult};
+pub use preview::{AsyncPreviewRenderer, PreviewHandle, PreviewRenderer, PreviewResult};
+pub use progressive_ocr::{ProgressiveOcr, ProgressiveOcrStats};
 pub use scale_detection::{detect_scales, get_best_scale, DetectedScale};
 pub use snapping::{SnapConfig, SnapEngine, SnapTarget, SnapType};
-pub use font_bridge::{extract_font_for_region, font_info_to_text_edit_font};
-pub use text_edit::{
-    PageTextEdits, TextEdit, TextEditFont, TextEditId, TextEditManager,
-};
+pub use text_edit::{PageTextEdits, TextEdit, TextEditFont, TextEditId, TextEditManager};
 pub use text_layer::{
     PageTextLayer, SearchMatch, TextBoundingBox, TextLayerManager, TextLayerStats, TextSpan,
 };
-pub use text_layout::{
-    LayoutAdjustment, LayoutConfig, LayoutStrategy, TextLayoutAdjuster,
-};
+pub use text_layout::{LayoutAdjustment, LayoutConfig, LayoutStrategy, TextLayoutAdjuster};
 pub use write_coordinator::{WriteCoordinator, WriteCoordinatorConfig};

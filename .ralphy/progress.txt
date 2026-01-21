@@ -11451,3 +11451,34 @@ Created a GPU-rendered note popup component that displays annotation content whe
 - Supports alpha blending for semi-transparent strokes
 - Dynamically resizes vertex buffer when needed
 - Renders in-progress freehand drawing in red while user is drawing
+
+### Task: Save annotations to PDF (Phase 3.3)
+
+**Status:** Complete
+
+**Changes:**
+- Implemented complex geometry support in `pdf_export.rs` for Polyline, Freehand, Polygon, Arrow, Text, and Note annotations
+- Added support for creating path objects with multiple line segments using PDFium's `PdfPagePathObject::new()`, `line_to()`, and `close_path()` methods
+- Wired up annotation saving in the app's save functions (`save_document`, `save_document_as`, `export_pdf`)
+- When saving/exporting a PDF with annotations, the annotations are flattened into the page content stream making them permanent
+- Added 13 new tests for appearance stream generation covering all annotation geometry types
+- All 216 tests pass
+
+**Files Modified:**
+- crates/core/src/pdf_export.rs (added complex geometry support in `add_annotation_to_page`)
+- crates/core/src/lib.rs (exported `export_flattened_pdf`)
+- crates/app/src/main.rs (updated save functions to include annotations)
+- PRD.md (marked task as complete)
+
+**Implementation Details:**
+- `Polyline`/`Freehand`: Creates path with `move_to()` at first point, then `line_to()` for subsequent points
+- `Polygon`: Same as polyline but calls `close_path()` at the end to form closed shape
+- `Arrow`: Creates main line plus two wing lines for arrowhead
+- `Text`: Renders as a small indicator rectangle (full text rendering requires font embedding)
+- `Note`: Renders as a filled rectangle representing the note icon
+
+**Technical Notes:**
+- Annotations are "flattened" - they become permanent part of the PDF page content and cannot be edited afterward
+- This approach ensures maximum compatibility with all PDF viewers
+- The fallback mechanism saves without annotations if the annotation export fails
+

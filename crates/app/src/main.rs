@@ -5,7 +5,10 @@
 use pdf_editor_cache::GpuTextureCache;
 use pdf_editor_core::annotation::{
     Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle, PageCoordinate,
+    SerializableAnnotation,
 };
+use pdf_editor_core::document::DocumentMetadata;
+use pdf_editor_core::pdf_export::export_flattened_pdf;
 use pdf_editor_core::text_layer::{PageTextLayer, TextBoundingBox, TextLayerManager, TextSpan};
 use pdf_editor_render::PdfDocument;
 use pdf_editor_ui::gpu;
@@ -3827,12 +3830,86 @@ impl App {
         let path = doc.path.clone();
         println!("Saving document to: {}", path.display());
 
-        match doc.pdf.save(&path) {
-            Ok(()) => {
-                println!("Document saved successfully: {}", path.display());
+        // Check if there are annotations to save
+        if self.annotations.is_empty() {
+            // No annotations, just save the original PDF
+            match doc.pdf.save(&path) {
+                Ok(()) => {
+                    println!("Document saved successfully: {}", path.display());
+                }
+                Err(e) => {
+                    eprintln!("Failed to save document: {}", e);
+                }
             }
-            Err(e) => {
-                eprintln!("Failed to save document: {}", e);
+        } else {
+            // Convert annotations to serializable format
+            let serializable_annotations: Vec<SerializableAnnotation> = self
+                .annotations
+                .all()
+                .iter()
+                .map(|a| SerializableAnnotation::from(*a))
+                .collect();
+
+            println!(
+                "Saving document with {} annotations",
+                serializable_annotations.len()
+            );
+
+            // Create a temporary path for the new version with annotations
+            let temp_path = path.with_extension("pdf.tmp");
+
+            // Create metadata with annotations
+            let metadata = DocumentMetadata {
+                title: None,
+                author: None,
+                subject: None,
+                creator: None,
+                producer: None,
+                page_count: doc.page_count,
+                file_path: path.clone(),
+                file_size: 0,
+                page_dimensions: std::collections::HashMap::new(),
+                scale_systems: Vec::new(),
+                default_scales: std::collections::HashMap::new(),
+                text_edits: Vec::new(),
+                annotations: serializable_annotations,
+            };
+
+            match export_flattened_pdf(&path, &temp_path, &metadata) {
+                Ok(()) => {
+                    // Replace original with the new version
+                    match std::fs::rename(&temp_path, &path) {
+                        Ok(()) => {
+                            println!(
+                                "Document saved successfully with annotations: {}",
+                                path.display()
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to replace original file: {}", e);
+                            // Try to clean up temp file
+                            let _ = std::fs::remove_file(&temp_path);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to save document with annotations: {}", e);
+                    // Clean up temp file if it exists
+                    let _ = std::fs::remove_file(&temp_path);
+                    // Fallback to saving without annotations
+                    println!("Attempting to save without annotations...");
+                    match doc.pdf.save(&path) {
+                        Ok(()) => {
+                            println!(
+                                "Document saved successfully (without annotations): {}",
+                                path.display()
+                            );
+                        }
+                        Err(e2) => {
+                            eprintln!("Fallback save also failed: {}", e2);
+                        }
+                    }
+                }
             }
         }
     }
@@ -3859,7 +3936,47 @@ impl App {
         if let Some(new_path) = file {
             println!("Saving document as: {}", new_path.display());
 
-            match doc.pdf.save(&new_path) {
+            // Check if there are annotations to save
+            let save_result = if self.annotations.is_empty() {
+                // No annotations, just save the original PDF
+                doc.pdf.save(&new_path).map_err(|e| e.to_string())
+            } else {
+                // Convert annotations to serializable format
+                let serializable_annotations: Vec<SerializableAnnotation> = self
+                    .annotations
+                    .all()
+                    .iter()
+                    .map(|a| SerializableAnnotation::from(*a))
+                    .collect();
+
+                println!(
+                    "Saving document as {} with {} annotations",
+                    new_path.display(),
+                    serializable_annotations.len()
+                );
+
+                // Create metadata with annotations
+                let metadata = DocumentMetadata {
+                    title: None,
+                    author: None,
+                    subject: None,
+                    creator: None,
+                    producer: None,
+                    page_count: doc.page_count,
+                    file_path: doc.path.clone(),
+                    file_size: 0,
+                    page_dimensions: std::collections::HashMap::new(),
+                    scale_systems: Vec::new(),
+                    default_scales: std::collections::HashMap::new(),
+                    text_edits: Vec::new(),
+                    annotations: serializable_annotations,
+                };
+
+                export_flattened_pdf(&doc.path, &new_path, &metadata)
+                    .map_err(|e| e.to_string())
+            };
+
+            match save_result {
                 Ok(()) => {
                     println!("Document saved successfully: {}", new_path.display());
 
@@ -3891,10 +4008,11 @@ impl App {
         }
     }
 
-    /// Export the current document to a new PDF file
+    /// Export the current document to a new PDF file with annotations
     ///
     /// Unlike "Save As...", this does not update the current document path.
     /// This is useful for creating a copy of the PDF for sharing or archiving.
+    /// Annotations are flattened into the page content, making them permanent.
     fn export_pdf(&mut self) {
         let Some(doc) = &self.document else {
             println!("No document to export");
@@ -3917,14 +4035,71 @@ impl App {
         if let Some(export_path) = file {
             println!("Exporting PDF to: {}", export_path.display());
 
-            match doc.pdf.save(&export_path) {
-                Ok(()) => {
-                    println!("PDF exported successfully: {}", export_path.display());
-                    // Note: We don't update the document path since this is an export,
-                    // not a "Save As" operation. The user continues editing the original.
+            // Check if there are annotations to export
+            if self.annotations.is_empty() {
+                // No annotations, just save the original PDF
+                match doc.pdf.save(&export_path) {
+                    Ok(()) => {
+                        println!("PDF exported successfully (no annotations): {}", export_path.display());
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to export PDF: {}", e);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("Failed to export PDF: {}", e);
+            } else {
+                // Convert annotations to serializable format and export with flattening
+                let serializable_annotations: Vec<SerializableAnnotation> = self
+                    .annotations
+                    .all()
+                    .iter()
+                    .map(|a| SerializableAnnotation::from(*a))
+                    .collect();
+
+                println!(
+                    "Exporting PDF with {} annotations",
+                    serializable_annotations.len()
+                );
+
+                // Create metadata with annotations
+                let metadata = DocumentMetadata {
+                    title: None,
+                    author: None,
+                    subject: None,
+                    creator: None,
+                    producer: None,
+                    page_count: doc.page_count,
+                    file_path: doc.path.clone(),
+                    file_size: 0,
+                    page_dimensions: std::collections::HashMap::new(),
+                    scale_systems: Vec::new(),
+                    default_scales: std::collections::HashMap::new(),
+                    text_edits: Vec::new(),
+                    annotations: serializable_annotations,
+                };
+
+                match export_flattened_pdf(&doc.path, &export_path, &metadata) {
+                    Ok(()) => {
+                        println!(
+                            "PDF exported successfully with annotations: {}",
+                            export_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to export PDF with annotations: {}", e);
+                        // Fallback to saving without annotations
+                        println!("Attempting to save without annotations...");
+                        match doc.pdf.save(&export_path) {
+                            Ok(()) => {
+                                println!(
+                                    "PDF exported successfully (without annotations): {}",
+                                    export_path.display()
+                                );
+                            }
+                            Err(e2) => {
+                                eprintln!("Fallback save also failed: {}", e2);
+                            }
+                        }
+                    }
                 }
             }
         }

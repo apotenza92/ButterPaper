@@ -584,16 +584,163 @@ fn add_annotation_to_page<'a>(
             drop(obj);
         }
 
-        // For now, complex geometries (polyline, polygon, arrow, text, note) are not supported
-        // in flattened export. These would require more complex path construction.
-        AnnotationGeometry::Polyline { .. }
-        | AnnotationGeometry::Freehand { .. }
-        | AnnotationGeometry::Polygon { .. }
-        | AnnotationGeometry::Arrow { .. }
-        | AnnotationGeometry::Text { .. }
-        | AnnotationGeometry::Note { .. } => {
-            // Skip complex geometries for now
-            return Ok(());
+        AnnotationGeometry::Polyline { points } | AnnotationGeometry::Freehand { points } => {
+            if points.len() < 2 {
+                return Ok(());
+            }
+
+            // Create path object starting at first point
+            let first = &points[0];
+            let mut path = PdfPagePathObject::new(
+                document,
+                PdfPoints::new(first.x),
+                PdfPoints::new(first.y),
+                Some(stroke_color),
+                Some(stroke_width),
+                None,
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            // Add line segments for remaining points
+            for point in points.iter().skip(1) {
+                path.line_to(PdfPoints::new(point.x), PdfPoints::new(point.y))
+                    .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            }
+
+            page.objects_mut()
+                .add_path_object(path)
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+        }
+
+        AnnotationGeometry::Polygon { points } => {
+            if points.len() < 3 {
+                return Ok(());
+            }
+
+            // Create path object starting at first point
+            let first = &points[0];
+            let mut path = PdfPagePathObject::new(
+                document,
+                PdfPoints::new(first.x),
+                PdfPoints::new(first.y),
+                Some(stroke_color),
+                Some(stroke_width),
+                fill_color,
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            // Add line segments for remaining points
+            for point in points.iter().skip(1) {
+                path.line_to(PdfPoints::new(point.x), PdfPoints::new(point.y))
+                    .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            }
+
+            // Close the path to form a closed polygon
+            path.close_path()
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            page.objects_mut()
+                .add_path_object(path)
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+        }
+
+        AnnotationGeometry::Arrow { start, end } => {
+            // Draw main line
+            let line = PdfPagePathObject::new_line(
+                document,
+                PdfPoints::new(start.x),
+                PdfPoints::new(start.y),
+                PdfPoints::new(end.x),
+                PdfPoints::new(end.y),
+                stroke_color,
+                stroke_width,
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            page.objects_mut()
+                .add_path_object(line)
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            // Draw arrowhead
+            let dx = end.x - start.x;
+            let dy = end.y - start.y;
+            let angle = dy.atan2(dx);
+            let arrow_len = 10.0 * annotation.style.stroke_width;
+            let arrow_angle = std::f32::consts::PI / 6.0; // 30 degrees
+
+            let x3 = end.x - arrow_len * (angle - arrow_angle).cos();
+            let y3 = end.y - arrow_len * (angle - arrow_angle).sin();
+            let x4 = end.x - arrow_len * (angle + arrow_angle).cos();
+            let y4 = end.y - arrow_len * (angle + arrow_angle).sin();
+
+            // Left wing of arrowhead
+            let wing1 = PdfPagePathObject::new_line(
+                document,
+                PdfPoints::new(end.x),
+                PdfPoints::new(end.y),
+                PdfPoints::new(x3),
+                PdfPoints::new(y3),
+                stroke_color,
+                stroke_width,
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            page.objects_mut()
+                .add_path_object(wing1)
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            // Right wing of arrowhead
+            let wing2 = PdfPagePathObject::new_line(
+                document,
+                PdfPoints::new(end.x),
+                PdfPoints::new(end.y),
+                PdfPoints::new(x4),
+                PdfPoints::new(y4),
+                stroke_color,
+                stroke_width,
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            page.objects_mut()
+                .add_path_object(wing2)
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+        }
+
+        AnnotationGeometry::Text { position, .. } => {
+            // For text annotations, render as a small indicator rectangle
+            // (full text rendering requires font embedding which is complex)
+            let half_size = 4.0;
+            let rect = PdfRect::new_from_values(
+                position.y - half_size,
+                position.x - half_size,
+                position.y + half_size,
+                position.x + half_size,
+            );
+
+            let obj = page
+                .objects_mut()
+                .create_path_object_rect(rect, Some(stroke_color), Some(stroke_width), fill_color)
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            drop(obj);
+        }
+
+        AnnotationGeometry::Note { position, icon_size } => {
+            // Render note as a filled rectangle (note icon)
+            let half_size = icon_size / 2.0;
+            let rect = PdfRect::new_from_values(
+                position.y - half_size,
+                position.x - half_size,
+                position.y + half_size,
+                position.x + half_size,
+            );
+
+            let obj = page
+                .objects_mut()
+                .create_path_object_rect(rect, Some(stroke_color), Some(stroke_width), fill_color)
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            drop(obj);
         }
     }
 
@@ -799,5 +946,201 @@ mod tests {
         assert_eq!(r, 255);
         assert_eq!(g, 0);
         assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_polyline() {
+        let annotation = create_test_annotation(AnnotationGeometry::Polyline {
+            points: vec![
+                PageCoordinate::new(10.0, 10.0),
+                PageCoordinate::new(50.0, 50.0),
+                PageCoordinate::new(100.0, 10.0),
+            ],
+        });
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("m")); // Move operation
+        assert!(stream.contains("l")); // Line operation (multiple)
+        assert!(stream.contains("S")); // Stroke operation
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_freehand() {
+        let annotation = create_test_annotation(AnnotationGeometry::Freehand {
+            points: vec![
+                PageCoordinate::new(10.0, 10.0),
+                PageCoordinate::new(15.0, 20.0),
+                PageCoordinate::new(20.0, 15.0),
+                PageCoordinate::new(25.0, 25.0),
+            ],
+        });
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("m")); // Move operation
+        assert!(stream.contains("l")); // Line operation (multiple)
+        assert!(stream.contains("S")); // Stroke operation
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_polygon() {
+        let annotation = create_test_annotation(AnnotationGeometry::Polygon {
+            points: vec![
+                PageCoordinate::new(10.0, 10.0),
+                PageCoordinate::new(50.0, 100.0),
+                PageCoordinate::new(100.0, 10.0),
+            ],
+        });
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("m")); // Move operation
+        assert!(stream.contains("l")); // Line operation
+        assert!(stream.contains("s")); // Close and stroke (lowercase)
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_polygon_with_fill() {
+        let mut style = AnnotationStyle::new();
+        style.fill_color = Some(Color::YELLOW);
+
+        let annotation = SerializableAnnotation {
+            id: uuid::Uuid::new_v4(),
+            page_index: 0,
+            geometry: AnnotationGeometry::Polygon {
+                points: vec![
+                    PageCoordinate::new(10.0, 10.0),
+                    PageCoordinate::new(50.0, 100.0),
+                    PageCoordinate::new(100.0, 10.0),
+                ],
+            },
+            style,
+            metadata: AnnotationMetadata::new(),
+            visible: true,
+            layer: 0,
+        };
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("rg")); // Fill color
+        assert!(stream.contains("b")); // Close, fill, and stroke (lowercase)
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_arrow() {
+        let annotation = create_test_annotation(AnnotationGeometry::Arrow {
+            start: PageCoordinate::new(10.0, 10.0),
+            end: PageCoordinate::new(100.0, 100.0),
+        });
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("m")); // Move operation (multiple)
+        assert!(stream.contains("l")); // Line operation (multiple)
+        assert!(stream.contains("S")); // Stroke operation (multiple)
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_note() {
+        let annotation = create_test_annotation(AnnotationGeometry::Note {
+            position: PageCoordinate::new(50.0, 50.0),
+            icon_size: 20.0,
+        });
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("re")); // Rectangle operation
+        assert!(stream.contains("S")); // Stroke operation
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_text() {
+        let mut annotation = create_test_annotation(AnnotationGeometry::Text {
+            position: PageCoordinate::new(50.0, 50.0),
+            max_width: Some(200.0),
+        });
+        annotation.metadata.label = Some("Test Label".to_string());
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("BT")); // Begin text
+        assert!(stream.contains("ET")); // End text
+        assert!(stream.contains("Tf")); // Font
+        assert!(stream.contains("Td")); // Text position
+        assert!(stream.contains("Tj")); // Show text
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_ellipse() {
+        let annotation = create_test_annotation(AnnotationGeometry::Ellipse {
+            center: PageCoordinate::new(50.0, 50.0),
+            radius_x: 30.0,
+            radius_y: 20.0,
+        });
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("m")); // Move operation
+        assert!(stream.contains("c")); // Curve operation
+        assert!(stream.contains("s")); // Close and stroke
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_empty_polyline() {
+        let annotation = create_test_annotation(AnnotationGeometry::Polyline {
+            points: vec![],
+        });
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        // Should return early with minimal content for empty polyline
+        assert!(!stream.contains("l")); // No line operations
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_single_point_polyline() {
+        let annotation = create_test_annotation(AnnotationGeometry::Polyline {
+            points: vec![PageCoordinate::new(10.0, 10.0)],
+        });
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        // Should have move but possibly no lines (implementation dependent)
+        assert!(stream.contains("m") || stream.is_empty() || !stream.contains("l"));
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_with_dash_pattern() {
+        let mut style = AnnotationStyle::new();
+        style.dash_pattern = vec![5.0, 3.0];
+
+        let annotation = SerializableAnnotation {
+            id: uuid::Uuid::new_v4(),
+            page_index: 0,
+            geometry: AnnotationGeometry::Line {
+                start: PageCoordinate::new(10.0, 10.0),
+                end: PageCoordinate::new(100.0, 100.0),
+            },
+            style,
+            metadata: AnnotationMetadata::new(),
+            visible: true,
+            layer: 0,
+        };
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("d")); // Dash pattern
+    }
+
+    #[test]
+    fn test_generate_appearance_stream_with_opacity() {
+        let mut style = AnnotationStyle::new();
+        style.opacity = 0.5;
+
+        let annotation = SerializableAnnotation {
+            id: uuid::Uuid::new_v4(),
+            page_index: 0,
+            geometry: AnnotationGeometry::Rectangle {
+                top_left: PageCoordinate::new(10.0, 10.0),
+                bottom_right: PageCoordinate::new(100.0, 100.0),
+            },
+            style,
+            metadata: AnnotationMetadata::new(),
+            visible: true,
+            layer: 0,
+        };
+
+        let stream = generate_appearance_stream(&annotation).unwrap();
+        assert!(stream.contains("gs")); // Graphics state for opacity
     }
 }

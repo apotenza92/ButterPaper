@@ -339,7 +339,7 @@ Wire up existing annotation system.
 - [x] Click note to show popup
 - [x] Freehand drawing tool
 - [x] Render strokes
-- [ ] Save annotations to PDF
+- [x] Save annotations to PDF
 - [ ] Load annotations from PDF
 - [ ] **Terminal test:** `--list-annotations file.pdf` outputs JSON
 
