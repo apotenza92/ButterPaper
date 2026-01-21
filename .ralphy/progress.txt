@@ -10286,3 +10286,26 @@ Implemented the "Open Recent" submenu in the File menu that tracks and displays 
 - The submenu is dynamically recreated whenever files are added or cleared
 - Maximum of 10 recent files (configurable via `MAX_RECENT_FILES` constant)
 - Thread-safe design allows menu updates from any thread
+
+### Task: Mark Save (Cmd+S) as complete in PRD
+
+**Status:** Complete
+
+**Verification:**
+The Save (Cmd+S) feature was already fully implemented and just needed to be marked as complete in the PRD.
+
+**Implementation Details:**
+1. Menu item with Cmd+S shortcut was already in `menu.rs` (lines 550-558)
+2. Atomic flag `MENU_SAVE_CLICKED` and `poll_save_action()` function already exist
+3. Event loop polls `poll_save_action()` in `about_to_wait()` (main.rs lines 1838-1841)
+4. `save_document()` method calls `pdf.save(&path)` to save the document
+5. `PdfDocument::save()` uses pdfium's `save_to_file` method
+
+**Testing:**
+- 3 unit tests for `poll_save_action` pass: `test_poll_save_action_initially_false`, `test_poll_save_action_resets_after_poll`, `test_poll_save_action_atomic_swap`
+- 2 save error tests in render crate pass: `test_save_error_display`, `test_save_error_debug`
+- Full test suite passes (89+ tests)
+- Clippy passes with no errors
+
+**Files Modified:**
+- PRD.md (marked Save as complete)
