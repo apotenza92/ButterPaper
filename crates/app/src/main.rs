@@ -493,6 +493,160 @@ mod text_overlay {
     }
 }
 
+/// Calculate clipping region for blitting a texture with pan offset.
+///
+/// Returns (src_x, src_y, dest_x, dest_y, copy_width, copy_height) or None if fully clipped.
+///
+/// # Arguments
+/// * `tex_width` - Width of source texture
+/// * `tex_height` - Height of source texture
+/// * `drawable_width` - Width of destination drawable
+/// * `drawable_height` - Height of destination drawable
+/// * `pan_x` - X position to blit to (can be negative when panned off-screen)
+/// * `pan_y` - Y position to blit to (can be negative when panned off-screen)
+fn calculate_blit_clip(
+    tex_width: i64,
+    tex_height: i64,
+    drawable_width: i64,
+    drawable_height: i64,
+    pan_x: i64,
+    pan_y: i64,
+) -> Option<(u64, u64, u64, u64, u64, u64)> {
+    let mut src_x = 0i64;
+    let mut src_y = 0i64;
+    let mut dest_x = pan_x;
+    let mut dest_y = pan_y;
+    let mut copy_width = tex_width;
+    let mut copy_height = tex_height;
+
+    // Clip left edge
+    if dest_x < 0 {
+        src_x = -dest_x;
+        copy_width += dest_x;
+        dest_x = 0;
+    }
+
+    // Clip top edge
+    if dest_y < 0 {
+        src_y = -dest_y;
+        copy_height += dest_y;
+        dest_y = 0;
+    }
+
+    // Clip right edge
+    let right_edge = dest_x + copy_width;
+    if right_edge > drawable_width {
+        copy_width = drawable_width - dest_x;
+    }
+
+    // Clip bottom edge
+    let bottom_edge = dest_y + copy_height;
+    if bottom_edge > drawable_height {
+        copy_height = drawable_height - dest_y;
+    }
+
+    // Only return if there's something visible
+    if copy_width > 0 && copy_height > 0 {
+        Some((
+            src_x as u64,
+            src_y as u64,
+            dest_x as u64,
+            dest_y as u64,
+            copy_width as u64,
+            copy_height as u64,
+        ))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod blit_tests {
+    use super::*;
+
+    #[test]
+    fn test_no_clipping_centered() {
+        // Texture fits perfectly in center
+        let result = calculate_blit_clip(100, 100, 200, 200, 50, 50);
+        assert_eq!(result, Some((0, 0, 50, 50, 100, 100)));
+    }
+
+    #[test]
+    fn test_clip_left_edge() {
+        // Texture panned off left edge
+        let result = calculate_blit_clip(100, 100, 200, 200, -30, 50);
+        assert_eq!(result, Some((30, 0, 0, 50, 70, 100)));
+    }
+
+    #[test]
+    fn test_clip_top_edge() {
+        // Texture panned off top edge
+        let result = calculate_blit_clip(100, 100, 200, 200, 50, -20);
+        assert_eq!(result, Some((0, 20, 50, 0, 100, 80)));
+    }
+
+    #[test]
+    fn test_clip_right_edge() {
+        // Texture extends past right edge
+        let result = calculate_blit_clip(100, 100, 200, 200, 150, 50);
+        assert_eq!(result, Some((0, 0, 150, 50, 50, 100)));
+    }
+
+    #[test]
+    fn test_clip_bottom_edge() {
+        // Texture extends past bottom edge
+        let result = calculate_blit_clip(100, 100, 200, 200, 50, 170);
+        assert_eq!(result, Some((0, 0, 50, 170, 100, 30)));
+    }
+
+    #[test]
+    fn test_clip_multiple_edges() {
+        // Texture clipped on both left and bottom
+        let result = calculate_blit_clip(100, 100, 200, 200, -25, 160);
+        assert_eq!(result, Some((25, 0, 0, 160, 75, 40)));
+    }
+
+    #[test]
+    fn test_fully_clipped_left() {
+        // Texture completely off left edge
+        let result = calculate_blit_clip(100, 100, 200, 200, -150, 50);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_fully_clipped_right() {
+        // Texture completely off right edge
+        let result = calculate_blit_clip(100, 100, 200, 200, 250, 50);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_fully_clipped_top() {
+        // Texture completely off top edge
+        let result = calculate_blit_clip(100, 100, 200, 200, 50, -150);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_fully_clipped_bottom() {
+        // Texture completely off bottom edge
+        let result = calculate_blit_clip(100, 100, 200, 200, 50, 250);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_pan_with_zoom_simulation() {
+        // Simulates a zoomed page (larger than viewport) panned to show center
+        // Page is 400x400 in a 200x200 viewport
+        // User pans 100 pixels right (viewport.x = 100), so pan_x = center - viewport.x
+        // center_x = (200 - 400) / 2 = -100
+        // pan_x = -100 - 100 = -200 (but let's use -50 for a smaller pan)
+        let result = calculate_blit_clip(400, 400, 200, 200, -50, -50);
+        // Should show middle portion of texture
+        assert_eq!(result, Some((50, 50, 0, 0, 200, 200)));
+    }
+}
+
 const TARGET_FPS: u64 = 120;
 const TARGET_FRAME_TIME: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
 
@@ -1010,40 +1164,64 @@ impl App {
                     let drawable_width = drawable.texture().width();
                     let drawable_height = drawable.texture().height();
 
-                    // Blit the PDF page texture to the drawable (centered)
+                    // Blit the PDF page texture to the drawable (centered with pan offset)
+                    // Get viewport pan offset before borrowing document
+                    let viewport_x = self.input_handler.viewport().x;
+                    let viewport_y = self.input_handler.viewport().y;
+
                     if let Some(doc) = &self.document {
                         if let Some(page_tex) = doc.page_textures.get(&doc.current_page) {
-                            // Center the page
-                            let dest_x = (drawable_width.saturating_sub(page_tex.width as u64)) / 2;
-                            let dest_y = (drawable_height.saturating_sub(page_tex.height as u64)) / 2;
+                            // Calculate center position, then apply pan offset
+                            let center_x = (drawable_width as i64 - page_tex.width as i64) / 2;
+                            let center_y = (drawable_height as i64 - page_tex.height as i64) / 2;
 
-                            let blit_encoder = command_buffer.new_blit_command_encoder();
+                            // Apply pan offset (negative viewport moves image in that direction)
+                            let pan_x = center_x - viewport_x as i64;
+                            let pan_y = center_y - viewport_y as i64;
 
-                            let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
-                            let src_size = metal::MTLSize {
-                                width: page_tex.width as u64,
-                                height: page_tex.height as u64,
-                                depth: 1,
-                            };
-                            let dest_origin = metal::MTLOrigin {
-                                x: dest_x,
-                                y: dest_y,
-                                z: 0,
-                            };
+                            // Calculate clipping and blit if visible
+                            if let Some((src_x, src_y, dest_x, dest_y, copy_width, copy_height)) =
+                                calculate_blit_clip(
+                                    page_tex.width as i64,
+                                    page_tex.height as i64,
+                                    drawable_width as i64,
+                                    drawable_height as i64,
+                                    pan_x,
+                                    pan_y,
+                                )
+                            {
+                                let blit_encoder = command_buffer.new_blit_command_encoder();
 
-                            blit_encoder.copy_from_texture(
-                                &page_tex.texture,
-                                0,
-                                0,
-                                src_origin,
-                                src_size,
-                                drawable.texture(),
-                                0,
-                                0,
-                                dest_origin,
-                            );
+                                let src_origin = metal::MTLOrigin {
+                                    x: src_x,
+                                    y: src_y,
+                                    z: 0,
+                                };
+                                let src_size = metal::MTLSize {
+                                    width: copy_width,
+                                    height: copy_height,
+                                    depth: 1,
+                                };
+                                let dest_origin = metal::MTLOrigin {
+                                    x: dest_x,
+                                    y: dest_y,
+                                    z: 0,
+                                };
 
-                            blit_encoder.end_encoding();
+                                blit_encoder.copy_from_texture(
+                                    &page_tex.texture,
+                                    0,
+                                    0,
+                                    src_origin,
+                                    src_size,
+                                    drawable.texture(),
+                                    0,
+                                    0,
+                                    dest_origin,
+                                );
+
+                                blit_encoder.end_encoding();
+                            }
                         }
 
                         // Blit the page info overlay to the bottom-right corner

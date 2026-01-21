@@ -9658,3 +9658,53 @@ Users can now:
 - The zoom scale factor (zoom_level / 100.0) is applied to the max render dimensions
 - Page info overlay is updated on every viewport change to show current zoom percentage
 - Texture cache is cleared when zoom changes to ensure crisp rendering at new zoom level
+
+
+### Task: Make mouse drag pan the page
+
+**Status:** Complete
+
+**Changes:**
+- Modified render function in `crates/app/src/main.rs` to apply viewport pan offset when blitting PDF pages
+- The pan offset from `input_handler.viewport().x` and `input_handler.viewport().y` is now used to position the page texture
+- Implemented proper clipping when the page is panned partially or fully off-screen:
+  - Clips left, right, top, and bottom edges appropriately
+  - Adjusts source region when destination would be off-screen
+  - Skips blit entirely when page is fully off-screen
+- Extracted clipping logic into reusable `calculate_blit_clip()` helper function
+- The InputHandler already had full pan support with mouse drag handling and momentum physics
+
+**Files Modified:**
+- crates/app/src/main.rs:
+  - Added `calculate_blit_clip()` helper function for computing source/dest regions with clipping
+  - Updated render function to get viewport pan offset and apply it to page positioning
+  - Refactored page blit to use the new helper function
+  - Added comprehensive test module `blit_tests` with 11 tests
+- PRD.md (marked task as complete)
+
+**Tests Added:**
+- `test_no_clipping_centered`: Verifies centered texture without clipping
+- `test_clip_left_edge`: Verifies clipping when panned off left edge
+- `test_clip_top_edge`: Verifies clipping when panned off top edge
+- `test_clip_right_edge`: Verifies clipping when extending past right edge
+- `test_clip_bottom_edge`: Verifies clipping when extending past bottom edge
+- `test_clip_multiple_edges`: Verifies clipping on multiple edges simultaneously
+- `test_fully_clipped_left`: Verifies None returned when fully off left
+- `test_fully_clipped_right`: Verifies None returned when fully off right
+- `test_fully_clipped_top`: Verifies None returned when fully off top
+- `test_fully_clipped_bottom`: Verifies None returned when fully off bottom
+- `test_pan_with_zoom_simulation`: Verifies clipping with zoomed/larger-than-viewport page
+
+**Testing:**
+- All 487 tests pass (11 new tests)
+- Clippy linting passes with no warnings
+
+**Architecture Notes:**
+- Panning is implemented using the existing InputHandler infrastructure:
+  - `on_mouse_down()` starts drag tracking and stops momentum
+  - `on_mouse_move()` updates viewport.x/y when dragging
+  - `on_mouse_up()` ends drag and enables momentum scrolling
+  - `update()` applies momentum decay and velocity-based scrolling
+- The viewport offset is applied at render time to translate the page texture
+- Clipping handles edge cases where the page extends beyond the drawable bounds
+- Metal blit operations require unsigned coordinates, so signed math is used for clip calculation, then converted to unsigned for the actual blit
