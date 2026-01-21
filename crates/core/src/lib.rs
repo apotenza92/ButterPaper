@@ -8,6 +8,7 @@ pub mod document;
 pub mod loader;
 pub mod manipulation;
 pub mod measurement;
+pub mod ocr;
 pub mod page_switch;
 pub mod persistence;
 pub mod preview;
@@ -31,6 +32,7 @@ pub use measurement::{
     Measurement, MeasurementCollection, MeasurementId, MeasurementMetadata, MeasurementType,
     ScaleSystem, ScaleSystemId, ScaleType,
 };
+pub use ocr::{OcrConfig, OcrEngine, OcrError, OcrResult, TextBlock};
 pub use page_switch::{PageSwitchResult, PageSwitcher};
 pub use persistence::{
     delete_metadata, load_metadata, metadata_exists, metadata_path, save_metadata,
