@@ -10126,3 +10126,57 @@ This pattern of using atomic flags for menu-to-event-loop communication is a com
 - Multiple rapid clicks don't queue up multiple dialogs
 - The flag is properly reset after being handled
 - Thread safety is maintained between the main thread (ObjC callbacks) and any other threads
+
+---
+
+## Task: Implement Close (Cmd+W) menu item
+
+**Date:** 2026-01-21
+
+### Summary
+
+Implemented the "Close" menu item (Cmd+W) in the File menu to properly close the application window when clicked. Previously, the menu item used the standard `performClose:` selector which doesn't work in winit-based apps because they don't use the NSDocument architecture.
+
+### Technical Approach
+
+1. Added a new `MENU_CLOSE_CLICKED` atomic flag in menu.rs
+2. Added `poll_close_action()` function to check and reset the flag atomically
+3. Added a `closeWindow:` method to the MenuHandler Objective-C class
+4. Updated the "Close" menu item to use our custom MenuHandler with the `closeWindow:` selector
+5. Added polling for the close action in the event loop's `about_to_wait()` method
+6. When triggered, the event loop exits, closing the application
+
+### Files Modified
+
+1. `crates/app/src/menu.rs`:
+   - Added `MENU_CLOSE_CLICKED` atomic flag
+   - Added `poll_close_action()` public function
+   - Added `close_window` extern "C" function for ObjC callback
+   - Registered `closeWindow:` method on MenuHandler class
+   - Updated `add_file_menu()` to use custom handler for Close item
+   - Added 3 unit tests for `poll_close_action()` behavior
+
+2. `crates/app/src/main.rs`:
+   - Added polling for `menu::poll_close_action()` in `about_to_wait()`
+   - Calls `event_loop.exit()` when close is triggered
+
+3. `PRD.md`:
+   - Marked "Close (Cmd+W)" as complete
+
+### Test Results
+
+- 39 tests pass (3 new tests added for close action handling)
+- Clippy passes with only pre-existing deprecation warnings from cocoa/objc crates
+
+### How It Works
+
+When user presses Cmd+W or clicks File > Close in the menu bar:
+1. macOS sends `closeWindow:` message to our MenuHandler instance
+2. The `close_window` extern "C" function sets `MENU_CLOSE_CLICKED` to true
+3. On next event loop iteration, `about_to_wait()` polls `poll_close_action()`
+4. The poll function atomically swaps the flag to false and returns true
+5. `event_loop.exit()` is called which closes the application
+
+### Architecture Notes
+
+This follows the same pattern established for the Open menu action, using atomic flags for menu-to-event-loop communication. This is a common approach when bridging Objective-C callbacks to Rust application logic in winit-based apps that don't use the standard NSDocument architecture.

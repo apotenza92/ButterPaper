@@ -1798,6 +1798,13 @@ impl ApplicationHandler for App {
             self.open_file_dialog();
         }
 
+        // Check for menu-triggered close
+        if menu::poll_close_action() {
+            println!("Close requested via menu, exiting");
+            event_loop.exit();
+            return;
+        }
+
         self.process_file_open();
 
         if self.window.is_some() {

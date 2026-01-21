@@ -31,9 +31,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Global flag indicating "Open..." menu item was clicked
 static MENU_OPEN_CLICKED: AtomicBool = AtomicBool::new(false);
 
+/// Global flag indicating "Close" menu item was clicked
+static MENU_CLOSE_CLICKED: AtomicBool = AtomicBool::new(false);
+
 /// Check if the "Open..." menu action was triggered and reset the flag
 pub fn poll_open_action() -> bool {
     MENU_OPEN_CLICKED.swap(false, Ordering::SeqCst)
+}
+
+/// Check if the "Close" menu action was triggered and reset the flag
+pub fn poll_close_action() -> bool {
+    MENU_CLOSE_CLICKED.swap(false, Ordering::SeqCst)
 }
 
 /// Menu action identifiers for routing menu selections to app handlers.
@@ -110,6 +118,15 @@ unsafe fn register_menu_handler_class() -> *const Class {
     decl.add_method(
         sel!(openFile:),
         open_file as extern "C" fn(&Object, Sel, id),
+    );
+
+    // Add the closeWindow: method
+    extern "C" fn close_window(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_CLOSE_CLICKED.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(closeWindow:),
+        close_window as extern "C" fn(&Object, Sel, id),
     );
 
     // Add validateMenuItem: to enable our custom menu items
@@ -323,11 +340,13 @@ unsafe fn add_file_menu(main_menu: id) {
     file_menu.addItem_(separator_item());
 
     // Close (Cmd+W)
-    file_menu.addItem_(menu_item(
+    // Uses our custom MenuHandler to set a flag that the event loop polls
+    file_menu.addItem_(menu_item_with_target(
         "Close",
-        selector("performClose:"),
+        sel!(closeWindow:),
         "w",
         NSEventModifierFlags::NSCommandKeyMask,
+        handler,
     ));
 
     // Save (Cmd+S) - disabled until we have save functionality
@@ -653,5 +672,35 @@ mod tests {
         assert!(result);
         // After swap, subsequent reads see false
         assert!(!poll_open_action());
+    }
+
+    #[test]
+    fn test_poll_close_action_initially_false() {
+        // Ensure the flag starts as false (it may have been set by a previous test)
+        // Poll it to reset, then check again
+        let _ = poll_close_action();
+        assert!(!poll_close_action(), "poll_close_action should return false when no action triggered");
+    }
+
+    #[test]
+    fn test_poll_close_action_resets_after_poll() {
+        // Manually set the flag and verify polling resets it
+        MENU_CLOSE_CLICKED.store(true, Ordering::SeqCst);
+        assert!(poll_close_action(), "First poll should return true");
+        assert!(!poll_close_action(), "Second poll should return false (flag was reset)");
+    }
+
+    #[test]
+    fn test_poll_close_action_atomic_swap() {
+        // Verify the atomic swap behavior
+        MENU_CLOSE_CLICKED.store(false, Ordering::SeqCst);
+        assert!(!poll_close_action());
+
+        MENU_CLOSE_CLICKED.store(true, Ordering::SeqCst);
+        // Multiple concurrent reads would all see true until first swap
+        let result = poll_close_action();
+        assert!(result);
+        // After swap, subsequent reads see false
+        assert!(!poll_close_action());
     }
 }

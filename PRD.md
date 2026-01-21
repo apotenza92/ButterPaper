@@ -231,7 +231,7 @@ The app needs a proper macOS menu bar. Use `cocoa` crate for native menus.
 - [ ] **File menu:**
   - [x] Open... (Cmd+O) - working
   - [ ] Open Recent → submenu
-  - [ ] Close (Cmd+W)
+  - [x] Close (Cmd+W)
   - [ ] Save (Cmd+S)
   - [ ] Save As... (Cmd+Shift+S)
   - [ ] Export as PDF...
