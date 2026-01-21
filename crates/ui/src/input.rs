@@ -14,9 +14,7 @@
 //! between discrete levels.
 
 use pdf_editor_core::annotation::{AnnotationCollection, AnnotationId};
-use pdf_editor_core::manipulation::{
-    generate_handles, ManipulationHandle, ManipulationState,
-};
+use pdf_editor_core::manipulation::{generate_handles, ManipulationHandle, ManipulationState};
 use pdf_editor_core::measurement::MeasurementCollection;
 use pdf_editor_core::snapping::{SnapConfig, SnapEngine};
 use pdf_editor_core::PageCoordinate;
@@ -109,8 +107,12 @@ impl Default for PanState {
 /// Zoom state with smooth interpolation
 #[derive(Debug, Clone)]
 struct ZoomState {
-    /// Target zoom level (percentage)
+    /// Target zoom level (percentage) - the discrete level we're animating toward
     target_zoom: u32,
+
+    /// Visual zoom level (percentage) - smooth interpolated value for animation
+    /// This changes every frame during animation for smooth visual feedback
+    visual_zoom: f32,
 
     /// Zoom center point (screen coordinates)
     zoom_center: Option<(f32, f32)>,
@@ -123,6 +125,7 @@ impl Default for ZoomState {
     fn default() -> Self {
         Self {
             target_zoom: 100,
+            visual_zoom: 100.0,
             zoom_center: None,
             interpolation_speed: 0.15, // 15% of remaining distance per frame
         }
@@ -161,6 +164,30 @@ impl InputHandler {
     /// Get the current viewport state
     pub fn viewport(&self) -> &Viewport {
         &self.viewport
+    }
+
+    /// Get the visual zoom level for smooth animation rendering
+    ///
+    /// This returns the interpolated zoom level used for smooth visual transitions.
+    /// During zoom animation, this value changes every frame while viewport.zoom_level
+    /// stays at discrete levels. Use this for visual scaling of rendered content.
+    pub fn visual_zoom(&self) -> f32 {
+        self.zoom_state.visual_zoom
+    }
+
+    /// Get the visual zoom scale factor (visual_zoom / 100.0)
+    ///
+    /// This is the multiplier to apply to rendered content for smooth zoom animation.
+    /// A value of 1.0 means 100% zoom, 2.0 means 200% zoom, etc.
+    pub fn visual_zoom_scale(&self) -> f32 {
+        self.zoom_state.visual_zoom / 100.0
+    }
+
+    /// Check if a zoom animation is currently in progress
+    ///
+    /// Returns true if the visual zoom level hasn't yet reached the target zoom level.
+    pub fn is_zoom_animating(&self) -> bool {
+        (self.zoom_state.visual_zoom - self.zoom_state.target_zoom as f32).abs() > 0.1
     }
 
     /// Get the current mouse position
@@ -319,36 +346,44 @@ impl InputHandler {
             changed = true;
         }
 
-        // Update smooth zooming
-        if self.viewport.zoom_level != self.zoom_state.target_zoom {
-            let current_zoom = self.viewport.zoom_level as f32;
-            let target_zoom = self.zoom_state.target_zoom as f32;
+        // Update smooth visual zoom animation
+        // visual_zoom provides smooth animation, while viewport.zoom_level stays at discrete levels
+        let target_zoom = self.zoom_state.target_zoom as f32;
+        let visual_zoom = self.zoom_state.visual_zoom;
 
-            // Interpolate zoom level
-            let new_zoom = current_zoom
-                + (target_zoom - current_zoom) * self.zoom_state.interpolation_speed;
+        if (visual_zoom - target_zoom).abs() > 0.1 {
+            // Interpolate visual zoom toward target
+            let new_visual_zoom =
+                visual_zoom + (target_zoom - visual_zoom) * self.zoom_state.interpolation_speed;
 
-            // If very close to target, snap to it
-            if (new_zoom - target_zoom).abs() < 0.5 {
-                self.viewport.zoom_level = self.zoom_state.target_zoom;
-            } else {
-                // Adjust viewport position to zoom toward center point
-                if let Some((center_x, center_y)) = self.zoom_state.zoom_center {
-                    let old_zoom = self.viewport.zoom_level as f32 / 100.0;
-                    let new_zoom_normalized = new_zoom / 100.0;
+            // Adjust viewport position to zoom toward center point
+            if let Some((center_x, center_y)) = self.zoom_state.zoom_center {
+                let old_zoom_normalized = visual_zoom / 100.0;
+                let new_zoom_normalized = new_visual_zoom / 100.0;
 
-                    // Calculate point in page coordinates under cursor
-                    let page_x = self.viewport.x + center_x / old_zoom;
-                    let page_y = self.viewport.y + center_y / old_zoom;
+                // Calculate point in page coordinates under cursor
+                let page_x = self.viewport.x + center_x / old_zoom_normalized;
+                let page_y = self.viewport.y + center_y / old_zoom_normalized;
 
-                    // Update viewport to keep that point under cursor at new zoom
-                    self.viewport.x = page_x - center_x / new_zoom_normalized;
-                    self.viewport.y = page_y - center_y / new_zoom_normalized;
-                }
-
-                self.viewport.zoom_level = new_zoom.round() as u32;
+                // Update viewport to keep that point under cursor at new zoom
+                self.viewport.x = page_x - center_x / new_zoom_normalized;
+                self.viewport.y = page_y - center_y / new_zoom_normalized;
             }
 
+            self.zoom_state.visual_zoom = new_visual_zoom;
+            changed = true;
+        } else if (visual_zoom - target_zoom).abs() > 0.001 {
+            // Snap to target when very close
+            self.zoom_state.visual_zoom = target_zoom;
+            changed = true;
+        }
+
+        // Update the discrete zoom level only when visual zoom reaches the target
+        // This prevents constant re-rendering during animation
+        if self.viewport.zoom_level != self.zoom_state.target_zoom
+            && (self.zoom_state.visual_zoom - target_zoom).abs() < 1.0
+        {
+            self.viewport.zoom_level = self.zoom_state.target_zoom;
             changed = true;
         }
 
@@ -426,10 +461,7 @@ impl InputHandler {
     ///
     /// Returns the topmost annotation at the mouse position, or None if no hit.
     /// This should be called with an AnnotationCollection to test against.
-    pub fn hit_test_at_mouse(
-        &self,
-        annotations: &AnnotationCollection,
-    ) -> Option<AnnotationId> {
+    pub fn hit_test_at_mouse(&self, annotations: &AnnotationCollection) -> Option<AnnotationId> {
         let page_coord = self.screen_to_page(self.mouse_position.0, self.mouse_position.1);
         let hits = annotations.hit_test(
             self.viewport.page_index,
@@ -445,10 +477,7 @@ impl InputHandler {
     ///
     /// Call this on mouse down when not panning (e.g., when Ctrl/Cmd is not pressed).
     /// Returns true if an annotation was selected, false otherwise.
-    pub fn handle_annotation_selection(
-        &mut self,
-        annotations: &AnnotationCollection,
-    ) -> bool {
+    pub fn handle_annotation_selection(&mut self, annotations: &AnnotationCollection) -> bool {
         if let Some(hit_id) = self.hit_test_at_mouse(annotations) {
             self.selected_annotation = Some(hit_id);
             true
@@ -476,16 +505,12 @@ impl InputHandler {
     /// Start handle manipulation (call on mouse down over a handle)
     ///
     /// Returns true if manipulation started, false otherwise.
-    pub fn start_handle_manipulation(
-        &mut self,
-        annotations: &AnnotationCollection,
-    ) -> bool {
+    pub fn start_handle_manipulation(&mut self, annotations: &AnnotationCollection) -> bool {
         // Only allow handle manipulation if an annotation is selected
         if let Some(annotation_id) = self.selected_annotation {
             if let Some(annotation) = annotations.get(annotation_id) {
                 let handles = generate_handles(annotation, self.handle_size);
-                let page_coord =
-                    self.screen_to_page(self.mouse_position.0, self.mouse_position.1);
+                let page_coord = self.screen_to_page(self.mouse_position.0, self.mouse_position.1);
 
                 // Check if mouse is over any handle
                 for handle in handles {
@@ -520,8 +545,8 @@ impl InputHandler {
             // Calculate snap target
             // For line/arrow endpoints, use the other endpoint as reference for angle snapping
             let reference_point = match &state.original_geometry {
-                pdf_editor_core::AnnotationGeometry::Line { start, end } |
-                pdf_editor_core::AnnotationGeometry::Arrow { start, end } => {
+                pdf_editor_core::AnnotationGeometry::Line { start, end }
+                | pdf_editor_core::AnnotationGeometry::Arrow { start, end } => {
                     match state.handle_type {
                         pdf_editor_core::HandleType::TopLeft => Some(*end),
                         pdf_editor_core::HandleType::BottomRight => Some(*start),
@@ -752,14 +777,57 @@ mod tests {
         // Current zoom is 100, target is 200
         assert_eq!(handler.viewport().zoom_level, 100);
         assert_eq!(handler.zoom_state.target_zoom, 200);
+        assert_eq!(handler.visual_zoom(), 100.0);
 
-        // Update once - zoom should interpolate toward target
+        // Update once - visual zoom should interpolate toward target
         let delta = Duration::from_millis(16);
         let changed = handler.update(delta);
 
         assert!(changed);
-        assert!(handler.viewport().zoom_level > 100);
-        assert!(handler.viewport().zoom_level < 200);
+        // Visual zoom should be animating (between 100 and 200)
+        assert!(handler.visual_zoom() > 100.0, "visual_zoom should have increased from 100");
+        assert!(handler.visual_zoom() < 200.0, "visual_zoom should be less than target");
+        // viewport.zoom_level stays at discrete level until animation completes
+        assert_eq!(handler.viewport().zoom_level, 100);
+        // Animation should still be in progress
+        assert!(handler.is_zoom_animating());
+    }
+
+    #[test]
+    fn test_zoom_animation_completes() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Set target zoom to 125% (next discrete level)
+        handler.set_zoom_level(125);
+
+        // Run animation to completion (many frames)
+        let delta = Duration::from_millis(16);
+        for _ in 0..100 {
+            handler.update(delta);
+        }
+
+        // Animation should be complete
+        assert!(!handler.is_zoom_animating());
+        assert_eq!(handler.visual_zoom(), 125.0);
+        assert_eq!(handler.viewport().zoom_level, 125);
+    }
+
+    #[test]
+    fn test_visual_zoom_scale() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // At 100% zoom
+        assert_eq!(handler.visual_zoom_scale(), 1.0);
+
+        // Set target to 200% and animate
+        handler.set_zoom_level(200);
+        let delta = Duration::from_millis(16);
+        handler.update(delta);
+
+        // Scale should be between 1.0 and 2.0
+        let scale = handler.visual_zoom_scale();
+        assert!(scale > 1.0);
+        assert!(scale < 2.0);
     }
 
     #[test]

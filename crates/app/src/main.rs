@@ -993,7 +993,8 @@ impl App {
         let Some(device) = &self.device else { return; };
         let Some(doc) = &mut self.document else { return; };
 
-        let zoom_percent = self.input_handler.viewport().zoom_level;
+        // Use visual_zoom for smooth animation display, rounded to nearest integer
+        let zoom_percent = self.input_handler.visual_zoom().round() as u32;
         let text = format!(
             "Page {} of {} | {}%",
             doc.current_page + 1,

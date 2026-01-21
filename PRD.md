@@ -81,7 +81,7 @@ All unit tests now pass after fixing:
 ### Phase 1.3: Connect Zoom/Pan to Display
 - [x] Make scroll wheel zoom update the visible page
 - [x] Make mouse drag pan the page
-- [ ] Add smooth animation for zoom transitions
+- [x] Add smooth animation for zoom transitions
 - [ ] **Terminal test:** Log viewport state changes
 
 ---

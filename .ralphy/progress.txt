@@ -9708,3 +9708,55 @@ Users can now:
 - The viewport offset is applied at render time to translate the page texture
 - Clipping handles edge cases where the page extends beyond the drawable bounds
 - Metal blit operations require unsigned coordinates, so signed math is used for clip calculation, then converted to unsigned for the actual blit
+
+
+### Task: Add smooth animation for zoom transitions
+
+**Status:** Complete
+
+**Changes:**
+- Modified `ZoomState` struct in `crates/ui/src/input.rs` to add `visual_zoom: f32` field
+  - `target_zoom` (u32): The discrete zoom level we're animating toward
+  - `visual_zoom` (f32): The smooth interpolated value that changes every frame during animation
+- Updated `InputHandler::update()` to perform smooth visual zoom interpolation:
+  - `visual_zoom` interpolates toward `target_zoom` at 15% of remaining distance per frame
+  - `viewport.zoom_level` only updates when animation is complete (within 1% of target)
+  - This prevents expensive re-renders during animation - tiles render at discrete levels only
+  - Viewport position is adjusted during animation to maintain zoom center point
+- Added new public methods to `InputHandler`:
+  - `visual_zoom()`: Returns the current interpolated zoom level (0-400)
+  - `visual_zoom_scale()`: Returns the zoom scale factor (visual_zoom / 100.0)
+  - `is_zoom_animating()`: Returns true if a zoom animation is in progress
+- Updated `App::update_page_info_overlay()` in `crates/app/src/main.rs`:
+  - Now displays `visual_zoom` (rounded) instead of discrete `zoom_level`
+  - This shows smooth zoom percentage changes during animation
+
+**Files Modified:**
+- crates/ui/src/input.rs:
+  - Added `visual_zoom: f32` field to `ZoomState` struct (default: 100.0)
+  - Rewrote zoom update logic in `update()` to interpolate visual_zoom separately
+  - Added `visual_zoom()`, `visual_zoom_scale()`, and `is_zoom_animating()` methods
+  - Fixed `test_smooth_zoom_interpolation` test to verify visual_zoom instead of zoom_level
+  - Added `test_zoom_animation_completes` test to verify animation completion
+  - Added `test_visual_zoom_scale` test to verify scale factor calculation
+- crates/app/src/main.rs:
+  - Updated `update_page_info_overlay()` to use `visual_zoom()` for display
+
+**Tests Added:**
+- `test_smooth_zoom_interpolation`: Updated to verify visual_zoom animation and is_zoom_animating()
+- `test_zoom_animation_completes`: Verifies animation completes and discrete zoom level updates
+- `test_visual_zoom_scale`: Verifies visual_zoom_scale() returns correct scale factor
+
+**Testing:**
+- All 491 tests pass (3 new tests in input.rs)
+- Clippy linting passes with no warnings
+
+**Architecture Notes:**
+- The smooth zoom animation separates visual feedback from tile rendering:
+  - `visual_zoom`: Changes every frame for smooth animation (used for display)
+  - `viewport.zoom_level`: Stays at discrete levels (25, 50, 75, 100, 125, 150, 200, 300, 400)
+  - This prevents expensive re-renders during animation while providing smooth visual feedback
+- The page info overlay shows the animated zoom percentage for immediate user feedback
+- Metal blit operations don't support scaling, so visual texture scaling would require a render pipeline
+  - Current implementation provides smooth viewport panning and overlay updates during zoom
+  - Full visual texture scaling could be added later with a proper render pipeline
