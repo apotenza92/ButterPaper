@@ -411,6 +411,37 @@ impl InputHandler {
         self.pan_state.velocity_y = 0.0;
     }
 
+    /// Scroll the viewport to center on a specific page coordinate
+    ///
+    /// # Arguments
+    /// * `page_x` - X coordinate in page space (points)
+    /// * `page_y` - Y coordinate in page space (points)
+    ///
+    /// This adjusts the viewport so that the given page coordinate is centered on screen.
+    pub fn scroll_to_page_coordinate(&mut self, page_x: f32, page_y: f32) {
+        let zoom_scale = self.viewport.zoom_level as f32 / 100.0;
+
+        // Calculate the screen position where the page coordinate would appear if viewport.x/y were 0
+        let screen_x = page_x * zoom_scale;
+        let screen_y = page_y * zoom_scale;
+
+        // Set viewport offset so that this point is at the center of the screen
+        self.viewport.x = screen_x - self.viewport_width / 2.0;
+        self.viewport.y = screen_y - self.viewport_height / 2.0;
+
+        // Clamp to prevent negative offsets
+        if self.viewport.x < 0.0 {
+            self.viewport.x = 0.0;
+        }
+        if self.viewport.y < 0.0 {
+            self.viewport.y = 0.0;
+        }
+
+        // Stop any momentum
+        self.pan_state.velocity_x = 0.0;
+        self.pan_state.velocity_y = 0.0;
+    }
+
     /// Navigate to next page
     pub fn next_page(&mut self) {
         self.go_to_page(self.viewport.page_index.saturating_add(1));
@@ -1265,5 +1296,65 @@ mod tests {
 
         handler.set_handle_size(8.0);
         assert_eq!(handler.handle_size(), 8.0);
+    }
+
+    #[test]
+    fn test_scroll_to_page_coordinate() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Scroll to center of a point at (500, 400) in page coordinates at 100% zoom
+        handler.scroll_to_page_coordinate(500.0, 400.0);
+
+        // The viewport should be offset so that (500, 400) is at screen center
+        // screen_x = page_x * zoom_scale = 500 * 1.0 = 500
+        // viewport.x = screen_x - viewport_width/2 = 500 - 512 = -12 (clamped to 0)
+        // viewport.y = screen_y - viewport_height/2 = 400 - 384 = 16
+        assert!((handler.viewport().x - 0.0).abs() < 0.001); // Clamped to 0
+        assert!((handler.viewport().y - 16.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_scroll_to_page_coordinate_with_zoom() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        handler.viewport.zoom_level = 200; // 2x zoom
+
+        // Scroll to point at (300, 300) in page coordinates at 200% zoom
+        handler.scroll_to_page_coordinate(300.0, 300.0);
+
+        // The viewport should be offset for centered view
+        // screen_x = page_x * zoom_scale = 300 * 2.0 = 600
+        // viewport.x = screen_x - viewport_width/2 = 600 - 512 = 88
+        // viewport.y = screen_y - viewport_height/2 = 600 - 384 = 216
+        assert!((handler.viewport().x - 88.0).abs() < 0.001);
+        assert!((handler.viewport().y - 216.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_scroll_to_page_coordinate_clamps_negative() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Scroll to a point near origin - should clamp to prevent negative viewport
+        handler.scroll_to_page_coordinate(100.0, 100.0);
+
+        // screen_x = 100, viewport.x = 100 - 512 = -412 (clamped to 0)
+        // screen_y = 100, viewport.y = 100 - 384 = -284 (clamped to 0)
+        assert_eq!(handler.viewport().x, 0.0);
+        assert_eq!(handler.viewport().y, 0.0);
+    }
+
+    #[test]
+    fn test_scroll_to_page_coordinate_stops_momentum() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Set some initial momentum
+        handler.pan_state.velocity_x = 100.0;
+        handler.pan_state.velocity_y = 50.0;
+
+        // Scroll to a coordinate
+        handler.scroll_to_page_coordinate(600.0, 500.0);
+
+        // Momentum should be stopped
+        assert_eq!(handler.pan_state.velocity_x, 0.0);
+        assert_eq!(handler.pan_state.velocity_y, 0.0);
     }
 }

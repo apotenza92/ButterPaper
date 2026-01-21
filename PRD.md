@@ -320,12 +320,12 @@ Wire up existing TextSearchManager.
 
 - [x] Add search bar UI at top of window
 - [x] Search input field
-- [ ] Match count display
-- [ ] Previous/Next buttons
-- [ ] Close button (Esc)
-- [ ] Highlight all matches in yellow
-- [ ] Highlight current match in orange
-- [ ] Scroll to match location
+- [x] Match count display
+- [x] Previous/Next buttons
+- [x] Close button (Esc)
+- [x] Highlight all matches in yellow
+- [x] Highlight current match in orange
+- [x] Scroll to match location
 - [ ] Case sensitive toggle
 - [ ] **Terminal test:** `--search "term" file.pdf` outputs matches
 

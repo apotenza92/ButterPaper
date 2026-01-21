@@ -2913,7 +2913,7 @@ impl App {
 
             // Scroll to first result if found
             if total_matches > 0 {
-                if let Some((page_index, _bbox)) = search_manager.get_current_result() {
+                if let Some((page_index, bbox)) = search_manager.get_current_result() {
                     // Navigate to the page containing the first match
                     if let Some(doc) = &mut self.document {
                         if page_index != doc.current_page {
@@ -2924,6 +2924,10 @@ impl App {
                             self.update_thumbnail_texture();
                         }
                     }
+                    // Scroll to center on the match
+                    let center_x = bbox.x + bbox.width / 2.0;
+                    let center_y = bbox.y + bbox.height / 2.0;
+                    self.input_handler.scroll_to_page_coordinate(center_x, center_y);
                 }
             }
 
@@ -2934,7 +2938,7 @@ impl App {
     /// Navigate to the next search result
     fn search_next_result(&mut self) {
         if let Some(ref mut search_manager) = self.text_search_manager {
-            if let Some((page_index, _bbox)) = search_manager.next_result() {
+            if let Some((page_index, bbox)) = search_manager.next_result() {
                 // Update match info in search bar
                 let current = search_manager.selected_result_index().map(|i| i + 1).unwrap_or(0);
                 let total = search_manager.result_count();
@@ -2951,6 +2955,11 @@ impl App {
                         self.update_thumbnail_texture();
                     }
                 }
+
+                // Scroll to center on the match
+                let center_x = bbox.x + bbox.width / 2.0;
+                let center_y = bbox.y + bbox.height / 2.0;
+                self.input_handler.scroll_to_page_coordinate(center_x, center_y);
             }
         }
     }
@@ -2958,7 +2967,7 @@ impl App {
     /// Navigate to the previous search result
     fn search_previous_result(&mut self) {
         if let Some(ref mut search_manager) = self.text_search_manager {
-            if let Some((page_index, _bbox)) = search_manager.previous_result() {
+            if let Some((page_index, bbox)) = search_manager.previous_result() {
                 // Update match info in search bar
                 let current = search_manager.selected_result_index().map(|i| i + 1).unwrap_or(0);
                 let total = search_manager.result_count();
@@ -2975,6 +2984,11 @@ impl App {
                         self.update_thumbnail_texture();
                     }
                 }
+
+                // Scroll to center on the match
+                let center_x = bbox.x + bbox.width / 2.0;
+                let center_y = bbox.y + bbox.height / 2.0;
+                self.input_handler.scroll_to_page_coordinate(center_x, center_y);
             }
         }
     }

@@ -11085,3 +11085,43 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 - All 188 tests pass
 - Clippy linting passes (only pre-existing warnings from objc crate macros)
 
+
+
+### Task: Implement scroll to match location (Phase 3.2)
+
+**Status:** Complete
+
+**Changes:**
+- Added `scroll_to_page_coordinate(page_x, page_y)` method to `InputHandler` in `crates/ui/src/input.rs`
+  - Centers viewport on specified page coordinate
+  - Accounts for zoom level
+  - Clamps negative offsets to prevent invalid viewport positions
+  - Stops any momentum when scrolling
+- Updated search result navigation to use new scroll method:
+  - `perform_search()` - scrolls to first match when found
+  - `search_next_result()` - scrolls to center of next match
+  - `search_previous_result()` - scrolls to center of previous match
+- Changed `_bbox` variable to `bbox` in all three functions to use the bounding box data
+- Scrolls to center of match bounding box (center_x = bbox.x + bbox.width/2, center_y = bbox.y + bbox.height/2)
+
+**Also verified already-complete features:**
+- Match count display (was already implemented)
+- Previous/Next buttons (were already implemented)
+- Close button (Esc) (was already implemented)
+- Highlight all matches in yellow (was already implemented via SelectionHighlightRenderer)
+- Highlight current match in orange (was already implemented via HighlightType::ActiveSearch)
+
+**Files Modified:**
+- crates/ui/src/input.rs - Added scroll_to_page_coordinate() method with 4 unit tests
+- crates/app/src/main.rs - Updated perform_search(), search_next_result(), search_previous_result() to scroll to match
+- PRD.md - Marked multiple completed tasks in Phase 3.2: Match count display, Previous/Next buttons, Close button (Esc), Highlight all matches in yellow, Highlight current match in orange, Scroll to match location
+
+**Tests Added:**
+- test_scroll_to_page_coordinate - basic scrolling at 100% zoom
+- test_scroll_to_page_coordinate_with_zoom - scrolling at 200% zoom
+- test_scroll_to_page_coordinate_clamps_negative - verifies negative clamping
+- test_scroll_to_page_coordinate_stops_momentum - verifies momentum stop
+
+**Test Results:**
+- All 192 tests pass (4 new tests added)
+- Clippy linting passes on pdf-editor-ui crate
