@@ -577,6 +577,8 @@ struct LoadedDocument {
     page_count: u16,
     current_page: u16,
     page_textures: HashMap<u16, PageTexture>,
+    /// The zoom level at which cached textures were rendered
+    cached_zoom_level: u32,
     #[cfg(target_os = "macos")]
     page_info_overlay: Option<PageInfoOverlay>,
 }
@@ -680,6 +682,7 @@ impl App {
                     page_count,
                     current_page: 0,
                     page_textures: HashMap::new(),
+                    cached_zoom_level: self.input_handler.viewport().zoom_level,
                     #[cfg(target_os = "macos")]
                     page_info_overlay: None,
                 });
@@ -747,13 +750,17 @@ impl App {
 
         // Start spinner to indicate loading
         self.start_loading_spinner();
-        println!("=== Rendering page {} to texture... ===", page_index + 1);
+        let zoom_level = self.input_handler.viewport().zoom_level;
+        println!("=== Rendering page {} to texture at {}% zoom... ===", page_index + 1, zoom_level);
 
         let window_size = self.window.as_ref().map(|w| w.inner_size()).unwrap_or_default();
-        let max_width = window_size.width.saturating_sub(40);
-        let max_height = window_size.height.saturating_sub(40);
+        // Apply zoom scaling: at 100% zoom, use window size; at 200%, render 2x larger
+        let zoom_scale = zoom_level as f32 / 100.0;
+        let max_width = ((window_size.width.saturating_sub(40) as f32) * zoom_scale) as u32;
+        let max_height = ((window_size.height.saturating_sub(40) as f32) * zoom_scale) as u32;
 
-        println!("Window size: {}x{}, max render: {}x{}", window_size.width, window_size.height, max_width, max_height);
+        println!("Window size: {}x{}, zoom: {}%, max render: {}x{}",
+                 window_size.width, window_size.height, zoom_level, max_width, max_height);
 
         // Render the page (requires mutable borrow of document)
         let render_result = {
@@ -805,15 +812,16 @@ impl App {
             (render_width * 4) as u64,
         );
 
-        // Insert the texture into the cache
+        // Insert the texture into the cache and update cached zoom level
         if let Some(doc) = &mut self.document {
             doc.page_textures.insert(page_index, PageTexture {
                 texture,
                 width: render_width,
                 height: render_height,
             });
+            doc.cached_zoom_level = zoom_level;
         }
-        println!("SUCCESS: Page {} texture created ({}x{})", page_index + 1, render_width, render_height);
+        println!("SUCCESS: Page {} texture created ({}x{}) at {}% zoom", page_index + 1, render_width, render_height, zoom_level);
 
         // Stop the spinner now that rendering is complete
         self.stop_loading_spinner();
@@ -888,7 +896,26 @@ impl App {
             self.fps_update_time = now;
         }
 
-        let _viewport_changed = self.input_handler.update(self.delta_time);
+        let viewport_changed = self.input_handler.update(self.delta_time);
+
+        // Check if zoom level changed and re-render if needed
+        if viewport_changed {
+            let current_zoom = self.input_handler.viewport().zoom_level;
+            let need_rerender = self.document.as_ref().is_some_and(|doc| {
+                doc.cached_zoom_level != current_zoom
+            });
+
+            if need_rerender {
+                // Clear cached textures since they're at the wrong zoom level
+                if let Some(doc) = &mut self.document {
+                    doc.page_textures.clear();
+                }
+                self.render_current_page();
+            }
+
+            // Always update the overlay when viewport changes (to show new zoom %)
+            self.update_page_info_overlay();
+        }
 
         // Update the loading spinner animation
         #[cfg(target_os = "macos")]

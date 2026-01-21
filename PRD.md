@@ -79,7 +79,7 @@ All unit tests now pass after fixing:
 - [x] Use scene graph primitives (Rect + text texture)
 
 ### Phase 1.3: Connect Zoom/Pan to Display
-- [ ] Make scroll wheel zoom update the visible page
+- [x] Make scroll wheel zoom update the visible page
 - [ ] Make mouse drag pan the page
 - [ ] Add smooth animation for zoom transitions
 - [ ] **Terminal test:** Log viewport state changes

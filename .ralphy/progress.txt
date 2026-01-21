@@ -9624,3 +9624,37 @@ Users can now:
 - Animation speed: 100ms per frame
 - Dot appearance: White dots with alpha gradient (255 at brightest, fading to 32)
 - Uses Metal blit operations for efficient compositing
+
+### Task: Make scroll wheel zoom update the visible page
+
+**Status:** Complete
+
+**Changes:**
+- Modified `LoadedDocument` struct in `crates/app/src/main.rs` to track `cached_zoom_level`
+- Updated `render_current_page()` to apply zoom scaling to the rendered page size:
+  - At 100% zoom, renders at window size
+  - At 200% zoom, renders at 2x window size for crisp display
+- Modified `update()` function to detect zoom level changes and trigger re-rendering:
+  - Compares current viewport zoom level with cached zoom level
+  - Clears texture cache when zoom changes
+  - Re-renders current page at new zoom level
+  - Updates page info overlay to show new zoom percentage
+- Fixed clippy warning by using `is_some_and()` instead of `map_or(false, ...)`
+
+**Files Modified:**
+- crates/app/src/main.rs:
+  - Added `cached_zoom_level: u32` field to `LoadedDocument` struct
+  - Initialize `cached_zoom_level` when document is loaded
+  - Update `cached_zoom_level` when rendering page
+  - Apply zoom scale factor in `render_current_page()` for larger textures at higher zoom
+  - Detect zoom changes in `update()` and trigger re-render when zoom level differs
+
+**Testing:**
+- All 476 existing tests pass
+- Clippy linting passes with no warnings
+
+**Architecture Notes:**
+- Zoom level is tracked separately for the cached textures to avoid re-rendering when zoom hasn't changed
+- The zoom scale factor (zoom_level / 100.0) is applied to the max render dimensions
+- Page info overlay is updated on every viewport change to show current zoom percentage
+- Texture cache is cleared when zoom changes to ensure crisp rendering at new zoom level
