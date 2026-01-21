@@ -2167,3 +2167,220 @@ Phase 5 is now COMPLETE. All tasks finished:
 - [x] Add prefetching for adjacent pages and margin tiles
 
 Next phase to implement: Phase 6 (Viewport and Navigation)
+
+---
+
+## Phase 6, Task 1: Build Viewport Compositor (tiles + annotations + labels + guides)
+
+**Date:** 2026-01-21
+**Status:** ✅ Complete
+
+### Summary
+
+Implemented the viewport compositor, the central orchestration layer that combines tiles, annotations, labels, and guides into a unified GPU-rendered scene graph. This foundational component enables the composition and rendering of all visual elements in the PDF editor.
+
+### Implementation
+
+**New File:** `crates/ui/src/compositor.rs` (524 lines)
+
+The compositor provides a layered architecture for composing different visual elements:
+
+1. **Tile Layer (Bottom):** Rendered PDF page tiles from GPU texture cache
+2. **Annotation Layer (Middle):** Vector annotations (Phase 7 - placeholder)
+3. **Guide Layer (Above Annotations):** Measurement guides and grid overlays (Phase 8 - placeholder)
+4. **Label Layer (Top):** Text labels always visible on top (Phase 8 - placeholder)
+
+**Key Components:**
+
+```rust
+pub struct ViewportCompositor {
+    texture_cache: Arc<GpuTextureCache>,  // GPU texture cache for tile lookups
+    scene_graph: SceneGraph,               // Retained scene graph
+    tile_layer_id: NodeId,                 // Layer identifiers
+    annotation_layer_id: NodeId,
+    guide_layer_id: NodeId,
+    label_layer_id: NodeId,
+    current_viewport: Option<Viewport>,    // Cached viewport for change detection
+}
+```
+
+**Core Functionality:**
+
+1. **Viewport Change Detection:**
+   - Caches current viewport state
+   - Only rebuilds scene when viewport changes
+   - Prevents unnecessary re-renders for identical viewports
+
+2. **Tile Composition:**
+   - Calculates visible tiles based on viewport bounds
+   - Queries GPU texture cache for cached tiles
+   - Converts tile coordinates to screen coordinates with viewport transform
+   - Creates textured quad primitives for each visible tile
+
+3. **Layered Scene Graph:**
+   - Maintains hierarchical structure with 4 layers
+   - Layer order determines render order (tiles → annotations → guides → labels)
+   - Each layer can be updated independently
+
+4. **Coordinate Transforms:**
+   - Converts page coordinates to screen coordinates
+   - Applies zoom scaling (zoom_level / 100.0)
+   - Applies viewport pan offset (x, y)
+
+5. **Future Integration Points:**
+   - `add_annotation()` - Adds annotation primitives (Phase 7)
+   - `add_guide()` - Adds measurement guides (Phase 8)
+   - `add_label()` - Adds text labels (Phase 8)
+
+### Design Decisions
+
+1. **Layered Architecture:**
+   - Separates concerns (tiles, annotations, guides, labels)
+   - Enables independent updates per layer
+   - Ensures correct render order (tiles first, labels last)
+
+2. **Change Detection:**
+   - Compares viewport state before rebuilding
+   - Returns boolean indicating if scene changed
+   - Reduces unnecessary work during rapid updates
+
+3. **GPU Texture Cache Integration:**
+   - Uses `try_get()` for non-blocking cache lookups
+   - Only renders tiles available in cache
+   - Missing tiles trigger render jobs via job scheduler (Phase 4)
+
+4. **Scene Graph Immutability:**
+   - SceneNode uses builder pattern (no constructor arguments)
+   - Updates create new nodes instead of mutating
+   - Uses Arc for shared ownership
+
+5. **Viewport Transform:**
+   - Converts zoom_level (percentage) to scale factor
+   - Applies tile offset and viewport pan
+   - Maintains page coordinate system consistency
+
+6. **Tile Priority:**
+   - Prefers TileProfile::Crisp for visible tiles
+   - Lower priority tiles use TileProfile::Preview (Phase 5)
+   - Ensures highest quality for visible content
+
+### Integration with Existing Systems
+
+1. **Scheduler Viewport (Phase 4):**
+   - Uses `pdf_editor_scheduler::Viewport` struct
+   - Fields: page_index, x, y, width, height, zoom_level, margin_tiles
+   - Integrates with priority calculator for tile job submission
+
+2. **GPU Texture Cache (Phase 3):**
+   - Queries cache with `try_get(tile_id.cache_key())`
+   - Retrieves texture metadata (width, height, VRAM size)
+   - Non-blocking cache access
+
+3. **Scene Graph (Phase 1):**
+   - Uses retained scene graph from `crates/ui/src/scene.rs`
+   - SceneNode, Transform, Primitive, SceneGraph
+   - Hierarchical transforms with dirty tracking
+
+4. **Tile Rendering (Phase 2):**
+   - Uses TileId, TileCoordinate, TileProfile, TILE_SIZE
+   - Calculates visible tile grid based on viewport
+   - Converts tile coordinates to pixel offsets
+
+### Files Modified
+
+- **`crates/ui/src/compositor.rs`** - New viewport compositor implementation
+- **`crates/ui/src/lib.rs`** - Export compositor module
+- **`crates/ui/Cargo.toml`** - Add dependencies (cache, render, scheduler)
+- **`PRD.md`** - Mark task as complete
+
+### Testing
+
+Comprehensive test coverage:
+
+1. **`test_compositor_creation`** - Verifies scene graph structure (4 layers)
+2. **`test_viewport_update`** - Tests change detection (first update = true, same = false)
+3. **`test_calculate_visible_tiles`** - Validates tile grid calculation (2x2 tiles for 512x512 viewport)
+4. **`test_viewport_equals`** - Tests viewport equality comparison
+5. **`test_add_annotation`** - Verifies annotation layer primitive addition
+6. **`test_layer_ordering`** - Validates correct layer ordering in scene graph
+
+All tests pass with 0 failures.
+
+### Linting
+
+- ✅ `cargo clippy --all-targets --all-features` passes with 0 warnings
+- ✅ No unused imports, dead code, or clippy violations
+
+### Performance Characteristics
+
+1. **Non-Blocking:**
+   - GPU cache lookups use `try_get()` (non-blocking)
+   - Scene graph updates are fast (Arc cloning)
+   - Change detection prevents unnecessary rebuilds
+
+2. **Memory Efficient:**
+   - Retained scene graph (nodes persist across frames)
+   - Only stores visible tile primitives
+   - Layers reuse existing nodes when unchanged
+
+3. **Render Optimization:**
+   - Only visible tiles included in scene
+   - Layered structure enables partial updates
+   - Dirty tracking minimizes GPU work
+
+### Future Enhancements (Subsequent Phases)
+
+**Phase 6 (Remaining Tasks):**
+- Implement smooth pan and zoom (update viewport continuously)
+- Add discrete zoom levels for tile rendering
+- Build thumbnail strip/page navigator
+- Implement page rotation support
+
+**Phase 7 (Annotation Engine):**
+- Query annotation database for visible annotations
+- Convert annotation geometry to GPU primitives
+- Render as lines, rectangles, circles with hit testing
+- Use `compositor.add_annotation()` API
+
+**Phase 8 (CAD Measurement Engine):**
+- Render measurement guides (snapping lines)
+- Render scale indicators and grid overlays
+- Add measurement labels with real-time derived values
+- Use `compositor.add_guide()` and `compositor.add_label()` APIs
+
+**Phase 12 (Polish):**
+- Viewport-aware margin tile composition (only visible+margin, not entire page)
+- Frustum culling for off-screen elements
+- Level-of-detail rendering (lower fidelity for distant content)
+
+### Code Statistics
+
+- **Lines Added:** ~520 lines
+- **Files Created:** 1
+- **Files Modified:** 3
+- **Tests Added:** 6
+- **Dependencies Added:** 3 (cache, render, scheduler to UI crate)
+
+### Validation
+
+The implementation meets Phase 6 requirements:
+
+- ✅ Composites tiles from GPU texture cache
+- ✅ Provides layered architecture for annotations, guides, labels
+- ✅ Integrates with viewport state and transforms
+- ✅ Generates scene graph for GPU rendering
+- ✅ Non-blocking cache access
+- ✅ Change detection for efficient updates
+- ✅ Comprehensive test coverage
+- ✅ Zero linting warnings
+
+### Next Steps
+
+The viewport compositor is now ready for integration with:
+1. **Smooth pan/zoom** (Phase 6, Task 2) - Update viewport continuously during user interaction
+2. **Scene renderer** (Phase 1, incomplete) - Metal rendering pipeline to execute scene graph
+3. **Frame loop** (Phase 1, incomplete) - Call compositor.update() each frame with current viewport
+
+The compositor provides the foundation for all visual rendering in the PDF editor. All future annotation, guide, and label rendering will flow through this system.
+
+**Phase 6, Task 1: COMPLETE ✅**

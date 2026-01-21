@@ -1108,6 +1108,9 @@ dependencies = [
  "core-graphics-types 0.2.0",
  "metal",
  "objc",
+ "pdf-editor-cache",
+ "pdf-editor-render",
+ "pdf-editor-scheduler",
 ]
 
 [[package]]

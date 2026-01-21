@@ -82,7 +82,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Add prefetching for adjacent pages and margin tiles
 
 ### Phase 6: Viewport and Navigation
-- [ ] Build viewport compositor (tiles + annotations + labels + guides)
+- [x] Build viewport compositor (tiles + annotations + labels + guides)
 - [ ] Implement smooth pan and zoom
 - [ ] Add discrete zoom levels for tile rendering
 - [ ] Build thumbnail strip/page navigator

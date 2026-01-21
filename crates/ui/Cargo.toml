@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+pdf-editor-cache = { path = "../cache" }
+pdf-editor-render = { path = "../render" }
+pdf-editor-scheduler = { path = "../scheduler" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.29"
