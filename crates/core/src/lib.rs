@@ -7,6 +7,7 @@ pub mod deferred;
 pub mod document;
 pub mod loader;
 pub mod manipulation;
+pub mod measurement;
 pub mod page_switch;
 pub mod preview;
 
@@ -22,6 +23,10 @@ pub use document::{
 pub use loader::{DocumentLoader, LoaderConfig};
 pub use manipulation::{
     generate_handles, HandleType, ManipulationHandle, ManipulationState,
+};
+pub use measurement::{
+    Measurement, MeasurementCollection, MeasurementId, MeasurementMetadata, MeasurementType,
+    ScaleSystem, ScaleSystemId, ScaleType,
 };
 pub use page_switch::{PageSwitchResult, PageSwitcher};
 pub use preview::{AsyncPreviewRenderer, PreviewRenderer, PreviewHandle, PreviewResult};

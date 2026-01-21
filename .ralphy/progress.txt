@@ -4147,3 +4147,327 @@ fn render(&mut self) {
 
 ---
 
+
+---
+
+## Phase 8: CAD Measurement Engine - Task 1 COMPLETE
+
+**Date:** 2026-01-21
+**Task:** Build measurement geometry storage (page coordinates)
+**Status:** ✅ COMPLETE
+
+### Implementation Summary
+
+Created a comprehensive measurement geometry storage system in `crates/core/src/measurement.rs` that provides CAD-style measurements with scale-aware calculations. All geometry is stored in page coordinates following the PDF coordinate system.
+
+### Core Components Implemented
+
+#### 1. Scale System (`ScaleSystem`)
+
+Three types of scale calibration:
+- **Manual Scale:** User-specified ratio (e.g., 1:100)
+- **Two-Point Calibration:** User marks two known points and provides the real-world distance
+- **OCR-Detected Scale:** Suggested scale from OCR (confidence-scored)
+
+**Key Methods:**
+- `ratio()`: Calculate conversion ratio from page coordinates to real-world units
+- `to_real_world()`: Convert page distance to real-world distance
+- `to_page_coords()`: Convert real-world distance to page distance
+- `is_reliable()`: Check if scale is trustworthy (not OCR or high confidence)
+
+**Example:**
+```rust
+let scale = ScaleSystem::manual(0, 72.0, "inches");
+assert_eq!(scale.to_real_world(144.0), 2.0); // 144 points = 2 inches
+
+let scale = ScaleSystem::two_point(
+    0,
+    PageCoordinate::new(0.0, 0.0),
+    PageCoordinate::new(100.0, 0.0),
+    10.0,
+    "m"
+); // 100 page units = 10 meters
+```
+
+#### 2. Measurement Types (`MeasurementType`)
+
+Four measurement categories:
+- **Distance:** Linear distance between points or along paths
+- **Area:** Surface area of closed shapes
+- **Radius:** Circle/ellipse radii
+- **Angle:** Angles between vectors (in degrees)
+
+#### 3. Measurement Storage (`Measurement`)
+
+Immutable geometry pattern following existing annotation architecture:
+- Geometry stored in `Arc<AnnotationGeometry>` (reuses annotation geometry types)
+- Page-local coordinates (PDF coordinate system)
+- Cached computed values with automatic recomputation on geometry change
+- Formatted labels with units (e.g., "2.50m", "90.00°", "150.00ft²")
+
+**Computation Methods:**
+- `compute_distance()`: Line, arrow, polyline (sum of segments), circle (circumference)
+- `compute_area()`: Rectangle, circle, ellipse, polygon (shoelace formula)
+- `compute_radius()`: Circle, ellipse (average for ellipses)
+- `compute_angle()`: Polyline (angle between first two segments)
+
+#### 4. Measurement Collection (`MeasurementCollection`)
+
+Efficient storage and retrieval:
+- HashMap indexed by `MeasurementId` for O(1) lookup
+- Separate HashMap for page indexing
+- Scale system management (per-page defaults)
+- Batch recomputation after scale changes
+
+**Key Methods:**
+- `add_scale()`: Register a scale system
+- `get_default_scale()`: Get default scale for a page
+- `add()`: Add a measurement (auto-computes value)
+- `get_for_page()`: Get all measurements on a page
+- `get_visible_for_page()`: Get visible measurements sorted by layer
+- `recompute_page()`: Recalculate all measurements after scale change
+
+### Design Decisions
+
+#### 1. Coordinate System Alignment
+- All measurements stored in **page coordinates** (PDF units: points)
+- Origin at bottom-left, X right, Y up
+- Scale conversion happens only at display/export time
+- Consistent with existing annotation system
+
+#### 2. Geometry Reuse
+- Measurements use `AnnotationGeometry` enum instead of separate types
+- Leverages existing Line, Circle, Rectangle, Polyline, Polygon
+- Simplifies rendering pipeline integration
+- Allows measurements to be manipulated with existing handle system
+
+#### 3. Immutability Pattern
+- Geometry is immutable (`Arc<AnnotationGeometry>`)
+- Metadata is mutable
+- Geometry updates create new measurements while preserving IDs
+- Follows existing annotation architecture
+
+#### 4. Scale System Architecture
+- Multiple scale systems per document (one per page)
+- Default scale per page for new measurements
+- Scale references by ID (allows scale updates without updating all measurements)
+- OCR-detected scales marked with confidence for user review
+
+#### 5. Value Caching
+- Computed values cached to avoid redundant calculations
+- Invalidated automatically on geometry change
+- Recomputation triggered by `compute_value()` or `recompute_page()`
+- Formatted labels stored alongside raw values
+
+### File Structure
+
+**New File:**
+- `crates/core/src/measurement.rs` (754 lines)
+
+**Modified Files:**
+- `crates/core/src/lib.rs` (added measurement module and exports)
+
+**Exports Added:**
+- `Measurement`
+- `MeasurementCollection`
+- `MeasurementId`
+- `MeasurementMetadata`
+- `MeasurementType`
+- `ScaleSystem`
+- `ScaleSystemId`
+- `ScaleType`
+
+### Test Coverage
+
+**10 comprehensive tests covering:**
+1. Manual scale creation and conversion
+2. Two-point calibration scale
+3. Distance measurement (line geometry)
+4. Area measurement (rectangle geometry)
+5. Radius measurement (circle geometry)
+6. Angle measurement (polyline geometry)
+7. Measurement collection operations
+8. Batch recomputation after scale changes
+9. Polygon area calculation (shoelace formula)
+10. Unit formatting for different measurement types
+
+### Integration Points
+
+#### With Existing Systems:
+- **Annotation System:** Reuses `AnnotationGeometry` and `PageCoordinate`
+- **Manipulation System:** Measurements can be edited using existing handles
+- **Viewport/Compositor:** Ready for rendering to guide and label layers
+- **Document System:** Scale systems will be stored in document metadata
+
+#### Future Integration (Phase 8 Remaining Tasks):
+- **Task 2:** Scale system already implemented, needs UI integration
+- **Task 3:** Formatted labels already generated, needs rendering
+- **Task 4:** Snapping guides (separate implementation)
+- **Task 5:** Store scales in `DocumentMetadata`
+- **Task 6:** OCR scale detection (separate implementation)
+
+### Performance Characteristics
+
+- **Scale Lookup:** O(1) via HashMap
+- **Measurement Lookup:** O(1) via HashMap
+- **Page Query:** O(n) where n = measurements on page
+- **Distance Calculation:** O(1) for lines/circles, O(n) for polylines
+- **Area Calculation:** O(1) for rectangles/circles, O(n) for polygons
+- **Angle Calculation:** O(1) for first two segments
+- **Recomputation:** O(m * s) where m = measurements, s = scale lookup (effectively O(m))
+
+### Coordinate System Examples
+
+**PDF Page Coordinates:**
+- Letter-size page: 612 x 792 points
+- 1 point = 1/72 inch = 0.3527mm
+- Origin at bottom-left
+
+**Example Scale Conversions:**
+```rust
+// 1:100 architectural drawing
+let scale = ScaleSystem::manual(0, 0.72, "feet");
+// 72 points (1 inch) = 100 feet on drawing
+
+// Two-point calibration
+let p1 = PageCoordinate::new(100.0, 100.0);
+let p2 = PageCoordinate::new(300.0, 100.0);
+let scale = ScaleSystem::two_point(0, p1, p2, 50.0, "m");
+// 200 page units = 50 meters, ratio = 4.0
+```
+
+### Mathematical Formulas Implemented
+
+**Shoelace Formula (Polygon Area):**
+```
+Area = 0.5 * |Σ(x_i * y_{i+1} - x_{i+1} * y_i)|
+```
+
+**Angle Between Vectors:**
+```
+cos(θ) = (v1 · v2) / (|v1| * |v2|)
+θ = arccos(cos(θ))
+```
+
+**Distance Calculation:**
+```
+d = √((x2 - x1)² + (y2 - y1)²)
+```
+
+### Example Usage
+
+```rust
+use pdf_editor_core::{
+    MeasurementCollection, Measurement, MeasurementType,
+    ScaleSystem, AnnotationGeometry, PageCoordinate
+};
+
+// Create collection
+let mut collection = MeasurementCollection::new();
+
+// Add scale system
+let scale = ScaleSystem::manual(0, 72.0, "inches");
+let scale_id = collection.add_scale(scale);
+
+// Create distance measurement
+let geometry = AnnotationGeometry::Line {
+    start: PageCoordinate::new(0.0, 0.0),
+    end: PageCoordinate::new(144.0, 0.0),
+};
+
+let measurement = Measurement::new(
+    0,                           // page index
+    geometry,
+    MeasurementType::Distance,
+    scale_id
+);
+
+collection.add(measurement);
+
+// Query measurements
+let measurements = collection.get_visible_for_page(0);
+for m in measurements {
+    println!("{}", m.formatted_label().unwrap());
+    // Output: "2.00inches"
+}
+
+// Change scale
+let new_scale = ScaleSystem::manual(0, 36.0, "inches");
+let new_scale_id = collection.add_scale(new_scale);
+collection.set_default_scale(0, new_scale_id);
+
+// Update and recompute
+collection.recompute_page(0);
+// Now measurements show: "4.00inches"
+```
+
+### Validation
+
+✅ **Linting:** `cargo clippy --all-targets --all-features -- -D warnings` passes
+✅ **Compilation:** All crates compile successfully
+✅ **Test Coverage:** 10 tests covering all measurement types and operations
+✅ **Integration:** Compatible with existing annotation and coordinate systems
+✅ **Documentation:** Comprehensive inline documentation and examples
+✅ **Coordinate Consistency:** All geometry uses page-local PDF coordinates
+
+### Future Enhancements (Phase 8 Remaining Tasks)
+
+**Task 2: Implement scale system UI**
+- Interactive two-point calibration tool
+- Scale management UI (add/edit/delete scales)
+- Visual scale indicator on viewport
+
+**Task 3: Add measurement labels**
+- Render formatted labels to label layer
+- Position labels near measurement geometry
+- Auto-adjust label positions to avoid overlaps
+
+**Task 4: Implement snapping guides**
+- Snap to annotation endpoints
+- Snap to grid (if enabled)
+- Snap to measurement geometry
+- Visual feedback during snapping
+
+**Task 5: Store scale in document metadata**
+- Extend `DocumentMetadata` to include scales
+- Serialize/deserialize scale systems
+- Load scales on document open
+
+**Task 6: Build scale detection from OCR**
+- Parse OCR text for scale indicators ("1:100", "1/4\" = 1'")
+- Create suggested scale systems
+- User confirmation workflow
+
+### Notes
+
+- Measurement geometry follows immutable pattern of annotation system
+- Scale systems are independent objects referenced by ID
+- Multiple scales per page supported (useful for multi-scale drawings)
+- Angle measurements always in degrees (no scale conversion)
+- Area measurements use squared units (e.g., "m²", "ft²")
+- Computation is lazy: values computed on-demand and cached
+- Collection provides batch recomputation for performance
+- All tests pass with expected precision (float comparisons use 0.01 epsilon)
+
+**Phase 8, Task 1: COMPLETE ✅**
+
+### Dependencies Met
+
+- Phase 7: Annotation system with geometry types and coordinate system
+- Phase 6: Viewport and coordinate transformation infrastructure
+- Phase 4: Job scheduler (architectural foundation)
+- Phase 3: Caching system (for future rendering optimizations)
+
+### Deliverables
+
+1. ✅ `ScaleSystem` with manual, two-point, and OCR-detected modes
+2. ✅ `Measurement` data model with cached values and formatted labels
+3. ✅ `MeasurementCollection` for efficient storage and retrieval
+4. ✅ Computation methods for distance, area, radius, angle
+5. ✅ Scale conversion between page and real-world coordinates
+6. ✅ Per-page scale management with defaults
+7. ✅ Batch recomputation after scale changes
+8. ✅ Integration with existing annotation geometry
+9. ✅ Comprehensive test coverage (10 tests)
+10. ✅ Full documentation and usage examples
+

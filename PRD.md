@@ -97,7 +97,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Add annotation selection and manipulation handles
 
 ### Phase 8: CAD Measurement Engine
-- [ ] Build measurement geometry storage (page coordinates)
+- [x] Build measurement geometry storage (page coordinates)
 - [ ] Implement scale system (manual ratio, two-point calibration, per-page)
 - [ ] Add measurement labels with real-time value derivation
 - [ ] Implement snapping guides for precision
