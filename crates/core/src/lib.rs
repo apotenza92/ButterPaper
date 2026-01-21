@@ -4,6 +4,7 @@
 
 pub mod annotation;
 pub mod checkpoint;
+pub mod csv_export;
 pub mod deferred;
 pub mod document;
 pub mod font_bridge;
@@ -28,6 +29,10 @@ pub use annotation::{
     AnnotationStyle, Color, PageCoordinate, SerializableAnnotation,
 };
 pub use checkpoint::{CheckpointManager, CheckpointMetadata};
+pub use csv_export::{
+    export_annotations_csv, export_measurements_csv, export_scales_csv, CsvExportConfig,
+    CsvExportError, CsvExportResult,
+};
 pub use deferred::{DeferredJob, DeferredJobConfig, DeferredJobScheduler, DeferredJobType};
 pub use document::{
     Document, DocumentError, DocumentId, DocumentManager, DocumentMetadata, DocumentResult,

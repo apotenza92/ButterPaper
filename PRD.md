@@ -123,7 +123,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Add crash-safe checkpoints
 - [x] Build PDF save with standard annotations and appearance streams
 - [x] Add flattened PDF export option
-- [ ] Implement CSV export for markups and measurements
+- [x] Implement CSV export for markups and measurements
 
 ### Phase 12: Polish and Performance
 - [ ] Profile and optimize startup time
