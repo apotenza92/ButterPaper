@@ -120,7 +120,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 
 ### Phase 11: Persistence and Export
 - [x] Implement working state in memory with batched atomic writes
-- [ ] Add crash-safe checkpoints
+- [x] Add crash-safe checkpoints
 - [ ] Build PDF save with standard annotations and appearance streams
 - [ ] Add flattened PDF export option
 - [ ] Implement CSV export for markups and measurements

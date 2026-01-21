@@ -3,6 +3,7 @@
 //! Document core and state model for the PDF editor.
 
 pub mod annotation;
+pub mod checkpoint;
 pub mod deferred;
 pub mod document;
 pub mod font_bridge;
@@ -25,6 +26,7 @@ pub use annotation::{
     Annotation, AnnotationCollection, AnnotationGeometry, AnnotationId, AnnotationMetadata,
     AnnotationStyle, Color, PageCoordinate,
 };
+pub use checkpoint::{CheckpointManager, CheckpointMetadata};
 pub use deferred::{DeferredJob, DeferredJobConfig, DeferredJobScheduler, DeferredJobType};
 pub use document::{
     Document, DocumentError, DocumentId, DocumentManager, DocumentMetadata, DocumentResult,

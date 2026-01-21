@@ -4,6 +4,7 @@
 //! Provides debouncing to avoid frequent I/O operations while ensuring
 //! eventual persistence of all changes.
 
+use crate::checkpoint::CheckpointManager;
 use crate::document::DocumentMetadata;
 use crate::persistence::{save_metadata, PersistenceResult};
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,9 @@ pub struct WriteCoordinatorConfig {
 
     /// Whether to enable automatic batched writes (if false, only manual saves)
     pub enable_auto_save: bool,
+
+    /// Whether to use crash-safe checkpoints (WAL pattern)
+    pub enable_checkpoints: bool,
 }
 
 impl Default for WriteCoordinatorConfig {
@@ -29,6 +33,7 @@ impl Default for WriteCoordinatorConfig {
             debounce_duration: Duration::from_secs(2),
             max_debounce_duration: Duration::from_secs(10),
             enable_auto_save: true,
+            enable_checkpoints: true,
         }
     }
 }
@@ -163,7 +168,14 @@ impl WriteCoordinator {
 
         let metadata = self.metadata.lock().unwrap();
         if let Some(ref meta) = *metadata {
-            save_metadata(meta)?;
+            if self.config.enable_checkpoints {
+                // Use checkpoint manager for crash-safe writes
+                let checkpoint_mgr = CheckpointManager::new(&meta.file_path);
+                checkpoint_mgr.write_with_checkpoint(meta)?;
+            } else {
+                // Use standard save
+                save_metadata(meta)?;
+            }
             drop(metadata); // Release lock before clearing dirty flag
             pending.clear();
             Ok(true)
@@ -172,6 +184,15 @@ impl WriteCoordinator {
             pending.clear();
             Ok(false)
         }
+    }
+
+    /// Recover from a crash by replaying any pending WAL
+    ///
+    /// Should be called on startup before loading metadata normally.
+    /// Returns Ok(Some(metadata)) if recovery was needed and successful.
+    pub fn recover(pdf_path: impl AsRef<std::path::Path>) -> PersistenceResult<Option<DocumentMetadata>> {
+        let checkpoint_mgr = CheckpointManager::new(pdf_path);
+        checkpoint_mgr.recover()
     }
 
     /// Get the current configuration
@@ -209,7 +230,12 @@ impl WriteCoordinator {
                         let metadata = metadata.lock().unwrap();
                         if let Some(ref meta) = *metadata {
                             // Attempt to save (ignore errors in background thread)
-                            let _ = save_metadata(meta);
+                            if config.enable_checkpoints {
+                                let checkpoint_mgr = CheckpointManager::new(&meta.file_path);
+                                let _ = checkpoint_mgr.write_with_checkpoint(meta);
+                            } else {
+                                let _ = save_metadata(meta);
+                            }
                         }
                         drop(metadata);
                         pending.clear();
@@ -341,6 +367,7 @@ mod tests {
     fn test_auto_save_disabled() {
         let coordinator = WriteCoordinator::with_config(WriteCoordinatorConfig {
             enable_auto_save: false,
+            enable_checkpoints: false,
             debounce_duration: Duration::from_millis(100),
             max_debounce_duration: Duration::from_millis(200),
         });
@@ -363,6 +390,7 @@ mod tests {
     fn test_auto_save_with_debounce() {
         let coordinator = WriteCoordinator::with_config(WriteCoordinatorConfig {
             enable_auto_save: true,
+            enable_checkpoints: false,
             debounce_duration: Duration::from_millis(500),
             max_debounce_duration: Duration::from_millis(1000),
         });
@@ -386,6 +414,7 @@ mod tests {
     fn test_multiple_changes_batched() {
         let coordinator = WriteCoordinator::with_config(WriteCoordinatorConfig {
             enable_auto_save: true,
+            enable_checkpoints: false,
             debounce_duration: Duration::from_millis(500),
             max_debounce_duration: Duration::from_millis(1000),
         });
@@ -420,6 +449,7 @@ mod tests {
     fn test_max_debounce_forces_write() {
         let coordinator = WriteCoordinator::with_config(WriteCoordinatorConfig {
             enable_auto_save: true,
+            enable_checkpoints: false,
             debounce_duration: Duration::from_secs(10), // Long debounce
             max_debounce_duration: Duration::from_millis(500), // Short max
         });
@@ -461,6 +491,7 @@ mod tests {
             debounce_duration: Duration::from_millis(100),
             max_debounce_duration: Duration::from_millis(300),
             enable_auto_save: true,
+            enable_checkpoints: false,
         };
 
         let mut pending = PendingWrite::new();
@@ -493,5 +524,110 @@ mod tests {
         // Wait for max debounce
         thread::sleep(Duration::from_millis(300));
         assert!(pending.should_write(&config));
+    }
+
+    #[test]
+    fn test_checkpoint_enabled() {
+        let coordinator = WriteCoordinator::with_config(WriteCoordinatorConfig {
+            enable_auto_save: false,
+            enable_checkpoints: true,
+            ..Default::default()
+        });
+
+        let metadata = test_metadata();
+        coordinator.mark_dirty(metadata.clone());
+
+        let result = coordinator.flush();
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+
+        // Verify file was written
+        assert!(crate::persistence::metadata_exists(&metadata.file_path));
+
+        // Verify no WAL file left behind
+        let checkpoint_mgr = CheckpointManager::new(&metadata.file_path);
+        assert!(!checkpoint_mgr.has_pending_wal());
+
+        // Cleanup
+        let _ = crate::persistence::delete_metadata(&metadata.file_path);
+    }
+
+    #[test]
+    fn test_recovery_integration() {
+        let metadata = test_metadata();
+        let pdf_path = metadata.file_path.clone();
+
+        // Simulate crash by creating WAL without completing write
+        let checkpoint_mgr = CheckpointManager::new(&pdf_path);
+        let json = serde_json::to_string_pretty(&metadata).unwrap();
+        std::fs::write(checkpoint_mgr.wal_path(), json).unwrap();
+
+        // Verify WAL exists
+        assert!(checkpoint_mgr.has_pending_wal());
+
+        // Recover using WriteCoordinator
+        let recovered = WriteCoordinator::recover(&pdf_path);
+        assert!(recovered.is_ok());
+        let recovered_metadata = recovered.unwrap();
+        assert!(recovered_metadata.is_some());
+
+        let recovered_metadata = recovered_metadata.unwrap();
+        assert_eq!(recovered_metadata.title, metadata.title);
+
+        // Verify WAL was cleaned up
+        assert!(!checkpoint_mgr.has_pending_wal());
+
+        // Cleanup
+        let _ = crate::persistence::delete_metadata(&pdf_path);
+    }
+
+    #[test]
+    fn test_checkpoint_disabled() {
+        let coordinator = WriteCoordinator::with_config(WriteCoordinatorConfig {
+            enable_auto_save: false,
+            enable_checkpoints: false,
+            ..Default::default()
+        });
+
+        let metadata = test_metadata();
+        coordinator.mark_dirty(metadata.clone());
+
+        let result = coordinator.flush();
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+
+        // Verify file was written
+        assert!(crate::persistence::metadata_exists(&metadata.file_path));
+
+        // Cleanup
+        let _ = crate::persistence::delete_metadata(&metadata.file_path);
+    }
+
+    #[test]
+    fn test_auto_save_with_checkpoints() {
+        let coordinator = WriteCoordinator::with_config(WriteCoordinatorConfig {
+            enable_auto_save: true,
+            enable_checkpoints: true,
+            debounce_duration: Duration::from_millis(500),
+            max_debounce_duration: Duration::from_millis(1000),
+        });
+
+        let metadata = test_metadata();
+        coordinator.mark_dirty(metadata.clone());
+        assert!(coordinator.is_dirty());
+
+        // Wait for auto-save
+        thread::sleep(Duration::from_millis(800));
+
+        // Should have been saved
+        assert!(!coordinator.is_dirty());
+        assert!(crate::persistence::metadata_exists(&metadata.file_path));
+
+        // No WAL should be left behind
+        let checkpoint_mgr = CheckpointManager::new(&metadata.file_path);
+        assert!(!checkpoint_mgr.has_pending_wal());
+
+        // Cleanup
+        let _ = crate::persistence::delete_metadata(&metadata.file_path);
     }
 }
