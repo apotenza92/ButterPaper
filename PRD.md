@@ -318,7 +318,7 @@ Wire up existing TextSelection component.
 ### Phase 3.2: Search (Cmd+F)
 Wire up existing TextSearchManager.
 
-- [ ] Add search bar UI at top of window
+- [x] Add search bar UI at top of window
 - [ ] Search input field
 - [ ] Match count display
 - [ ] Previous/Next buttons

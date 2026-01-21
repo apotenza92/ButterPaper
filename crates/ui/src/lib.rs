@@ -7,6 +7,7 @@ pub mod gpu;
 pub mod input;
 pub mod renderer;
 pub mod scene;
+pub mod search_bar;
 pub mod text_selection;
 pub mod thumbnail;
 pub mod toolbar;

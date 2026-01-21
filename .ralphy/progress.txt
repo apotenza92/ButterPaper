@@ -11007,3 +11007,42 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 3. Move mouse over text areas - cursor changes to I-beam
 4. Move mouse away from text - cursor returns to default arrow
 5. Deselect text tool - cursor returns to default regardless of position
+
+### Task: Add search bar UI at top of window (Phase 3.2)
+
+**Status:** Complete
+
+**Changes:**
+- Created `crates/ui/src/search_bar.rs` with full SearchBar component implementation
+- GPU-rendered search bar UI with:
+  - Search input field with text rendering
+  - Match count display (e.g., "5/10")
+  - Previous/Next navigation buttons
+  - Close button
+  - Focus state tracking
+  - Keyboard input support (append_char, backspace, clear)
+- SearchBarConfig for customizable appearance (colors, padding, etc.)
+- SearchBarButton enum for Previous/Next/Close buttons with icon primitives
+- Full hit testing support for input field and buttons
+- Button hover state management
+- 25 comprehensive unit tests covering all functionality
+
+**Files Created:**
+- crates/ui/src/search_bar.rs (654 lines)
+
+**Files Modified:**
+- crates/ui/src/lib.rs (added search_bar module export)
+- PRD.md (marked "Add search bar UI at top of window" as complete)
+
+**Architecture Notes:**
+- Search bar height: 36px
+- Search input field width: 250px
+- Uses same pixel-font text rendering as toolbar
+- Supports ASCII alphanumeric characters and common punctuation
+- Automatically clears search text and match info when hidden
+- Input field is auto-focused when search bar is shown
+- Button icons use geometric primitives (triangles, rectangles)
+
+**Tests:** 25 tests passing
+**Linting:** clippy passes with no warnings
+
