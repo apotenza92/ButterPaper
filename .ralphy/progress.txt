@@ -4578,3 +4578,156 @@ The remaining tasks in Phase 8 are:
 - [ ] Build scale detection from OCR (text parsing)
 
 **Phase 8, Task 2: COMPLETE ✅**
+
+## Task: Add measurement labels with real-time value derivation
+
+### Implementation Summary
+
+Implemented measurement label rendering with real-time value derivation as part of Phase 8 (CAD Measurement Engine). This task adds visual labels to measurements that display computed values with appropriate units.
+
+### Changes Made
+
+#### 1. Measurement Label Position Computation (`crates/core/src/measurement.rs`)
+
+Added `label_position()` method to the `Measurement` struct that computes optimal label placement for different geometry types:
+
+- **Line/Arrow**: Midpoint of the segment
+- **Polyline**: Midpoint along the total path length (properly interpolated)
+- **Rectangle**: Geometric center
+- **Circle/Ellipse**: Center point
+- **Polygon**: Centroid (average of all vertices)
+- **Freehand**: Average of all points
+
+This method returns a `PageCoordinate` representing where the label should be positioned relative to the measurement geometry.
+
+#### 2. Compositor Integration (`crates/ui/src/compositor.rs`)
+
+**Added measurements support to ViewportCompositor:**
+- Added `measurements: Option<Arc<MeasurementCollection>>` field
+- Added `set_measurements()` method to provide measurement data to the compositor
+- Imported `MeasurementCollection` from `pdf_editor_core::measurement`
+
+**Implemented `rebuild_label_layer()`:**
+- Retrieves visible measurements for the current page using `get_visible_for_page()`
+- For each measurement with a formatted label:
+  - Computes label position in page coordinates via `label_position()`
+  - Transforms to screen coordinates via `transform_page_to_screen()`
+  - Creates a label primitive using `create_label_primitive()`
+  - Adds to the label layer (layer 3, top of render stack)
+
+**Added `create_label_primitive()` helper:**
+- Creates a placeholder visual representation of measurement labels
+- Uses a semi-transparent yellow rectangle as background
+- Estimates size based on text length (8px per character width, 14px height)
+- Positions label 15px above the measurement point
+- Centers label horizontally over the measurement
+
+**Note on text rendering:**
+The current implementation uses colored rectangles as label placeholders because the GPU rendering pipeline doesn't yet have text rasterization. The infrastructure is in place to easily swap in proper text rendering when available:
+- Label text is already formatted with values and units (e.g., "42.50m", "3.14m²", "90.00°")
+- Label position and size calculations are ready
+- `TexturedQuad` primitive exists for rendering rasterized text
+- Future work will integrate a text rasterization library (fontdue, ab_glyph, or GPU-based)
+
+#### 3. Test Coverage (`crates/core/src/measurement.rs`)
+
+Added comprehensive tests for label positioning logic:
+- `test_label_position_line()`: Verifies midpoint calculation for line segments
+- `test_label_position_rectangle()`: Verifies center calculation for rectangles
+- `test_label_position_circle()`: Verifies center positioning for circles
+- `test_label_position_polyline()`: Verifies midpoint calculation along polyline paths
+- `test_label_position_polygon()`: Verifies centroid calculation for polygons
+
+All tests pass and verify correct coordinate computation for various geometry types.
+
+### Technical Design
+
+#### Label Value Derivation (Already Implemented)
+
+The real-time value derivation was already implemented in the previous scale system task:
+- `Measurement::compute_value()` calculates values in real-world units
+- Values are cached in `value: Option<f32>` field
+- Formatted labels are cached in `formatted_label: Option<String>` field
+- Format includes value and unit suffix (e.g., "1.50m", "5.25m²", "45.00°")
+- Values automatically recompute when scale systems change via `MeasurementCollection::recompute_page()`
+
+This task focused on **rendering** those pre-computed labels in the viewport.
+
+#### Coordinate System Flow
+
+```
+Measurement Geometry (Page Coordinates)
+    ↓ label_position()
+Label Position (Page Coordinates)
+    ↓ transform_page_to_screen()
+Label Position (Screen Coordinates)
+    ↓ create_label_primitive()
+Label Primitive (Rect with screen coordinates)
+    ↓ Scene Graph Layer 3
+GPU Rendering
+```
+
+#### Layer Architecture
+
+Labels are rendered on Layer 3 (top layer) of the scene graph:
+- Layer 0: Tiles (PDF pages)
+- Layer 1: Annotations (measurement geometry)
+- Layer 2: Guides (selection highlights, manipulation handles)
+- Layer 3: Labels (measurement labels, tooltips) ← New implementation
+
+This ensures labels are always visible above all other content.
+
+#### Performance Considerations
+
+- **Viewport Culling**: Only measurements on the current page are considered
+- **Visibility Filtering**: Only visible measurements (those with `visible: true`) are rendered
+- **Cached Values**: Measurement values and formatted labels are pre-computed and cached
+- **Dirty Tracking**: Scene graph uses dirty tracking to avoid unnecessary re-renders
+- **Layer Sorting**: Measurements are sorted by layer before rendering
+
+### Future Enhancements
+
+The following improvements are planned for future phases:
+
+1. **Text Rasterization**:
+   - Integrate text rendering library (fontdue, ab_glyph, or GPU-based SDF fonts)
+   - Replace placeholder rectangles with actual rendered text
+   - Cache rasterized text in GPU texture cache
+
+2. **Label Styling**:
+   - Configurable font size, family, and color
+   - Background transparency and padding options
+   - Optional drop shadows for better visibility
+
+3. **Smart Label Placement**:
+   - Collision detection to prevent overlapping labels
+   - Automatic repositioning when labels would overlap
+   - Leader lines connecting labels to measurements when offset far
+
+4. **Interactive Labels**:
+   - Click to select measurement
+   - Drag to reposition label
+   - Edit label text or display format
+
+5. **Custom Labels**:
+   - Display user-provided custom labels from `measurement.metadata().label`
+   - Option to show both value and custom label
+   - Label templates and formatting options
+
+### Testing
+
+All tests pass:
+```bash
+cargo test --package pdf-editor-core measurement::tests::test_label_position
+```
+
+Linting passes:
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+### Next Task in Phase 8
+
+The next task to implement is:
+- **Implement snapping guides for precision**: Interactive guides that help users align measurements to grid points, other measurements, or geometry features
+

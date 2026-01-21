@@ -12,6 +12,7 @@ use crate::scene::{Color, NodeId, Primitive, Rect, SceneGraph, SceneNode};
 use pdf_editor_cache::gpu::GpuTextureCache;
 use pdf_editor_core::annotation::{Annotation, AnnotationGeometry, PageCoordinate};
 use pdf_editor_core::manipulation::ManipulationHandle;
+use pdf_editor_core::measurement::MeasurementCollection;
 use pdf_editor_render::tile::{TileCoordinate, TileId, TileProfile, TILE_SIZE};
 use pdf_editor_scheduler::Viewport;
 use std::sync::Arc;
@@ -45,6 +46,9 @@ pub struct ViewportCompositor {
 
     /// Annotations to render (Phase 7 - will be replaced with AnnotationCollection reference)
     annotations: Vec<Annotation>,
+
+    /// Measurements to render (Phase 8)
+    measurements: Option<Arc<MeasurementCollection>>,
 }
 
 impl ViewportCompositor {
@@ -92,6 +96,7 @@ impl ViewportCompositor {
             label_layer_id,
             current_viewport: None,
             annotations: Vec::new(),
+            measurements: None,
         }
     }
 
@@ -130,6 +135,11 @@ impl ViewportCompositor {
     /// Get the scene graph for rendering
     pub fn scene_graph(&self) -> &SceneGraph {
         &self.scene_graph
+    }
+
+    /// Set the measurement collection for rendering labels
+    pub fn set_measurements(&mut self, measurements: Arc<MeasurementCollection>) {
+        self.measurements = Some(measurements);
     }
 
     /// Rebuild the tile layer based on viewport
@@ -222,16 +232,40 @@ impl ViewportCompositor {
         self.update_layer(2, Arc::new(guide_layer));
     }
 
-    /// Rebuild label layer (Phase 8 - placeholder)
-    fn rebuild_label_layer(&mut self, _viewport: &Viewport) {
-        // Phase 8 will add:
-        // - Render measurement labels with real-time values
-        // - Render scale text
-        // - Render annotation tooltips
+    /// Rebuild label layer (Phase 8 - measurement labels)
+    fn rebuild_label_layer(&mut self, viewport: &Viewport) {
+        let mut label_layer = SceneNode::new();
+        let mut primitives = Vec::new();
 
-        // For now, create empty layer
-        let label_layer = SceneNode::new();
+        // Render measurement labels if measurements are available
+        if let Some(measurements) = &self.measurements {
+            let visible_measurements = measurements.get_visible_for_page(viewport.page_index);
 
+            for measurement in visible_measurements {
+                // Get the label text
+                if let Some(label_text) = measurement.formatted_label() {
+                    // Get label position in page coordinates
+                    let label_pos_page = measurement.label_position();
+
+                    // Transform to screen coordinates
+                    let label_pos_screen =
+                        transform_page_to_screen(&label_pos_page, viewport);
+
+                    // Create label primitive
+                    // For now, we use a simple colored rectangle as a placeholder
+                    // Phase 8 will add proper text rasterization
+                    let label_primitive = create_label_primitive(
+                        label_pos_screen,
+                        label_text,
+                        viewport,
+                    );
+
+                    primitives.push(label_primitive);
+                }
+            }
+        }
+
+        label_layer.set_primitives(primitives);
         self.update_layer(3, Arc::new(label_layer));
     }
 
@@ -625,6 +659,50 @@ fn annotation_to_primitive(
             // Requires text rasterization to texture and TexturedQuad primitive
             None
         }
+    }
+}
+
+/// Create a label primitive for a measurement
+///
+/// For Phase 8, this creates a simple colored rectangle as a placeholder.
+/// Future phases will add proper text rasterization to texture.
+fn create_label_primitive(
+    screen_pos: [f32; 2],
+    label_text: &str,
+    _viewport: &Viewport,
+) -> Primitive {
+    // Estimate label size based on text length
+    // This is a placeholder - real implementation will measure rendered text
+    let char_width = 8.0; // Approximate character width in pixels
+    let char_height = 14.0; // Approximate character height in pixels
+    let padding = 4.0;
+
+    let text_width = label_text.len() as f32 * char_width;
+    let text_height = char_height;
+
+    let label_width = text_width + padding * 2.0;
+    let label_height = text_height + padding * 2.0;
+
+    // Offset label above the measurement point
+    let offset_y = 15.0; // Pixels above the measurement
+
+    let x = screen_pos[0] - label_width / 2.0;
+    let y = screen_pos[1] - label_height - offset_y;
+
+    // Create a semi-transparent background rectangle for the label
+    Primitive::Rectangle {
+        rect: Rect {
+            x,
+            y,
+            width: label_width,
+            height: label_height,
+        },
+        color: Color {
+            r: 1.0,
+            g: 1.0,
+            b: 0.8,
+            a: 0.9,
+        },
     }
 }
 

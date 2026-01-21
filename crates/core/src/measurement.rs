@@ -434,6 +434,91 @@ impl Measurement {
             _ => 0.0,
         }
     }
+
+    /// Compute the optimal label position in page coordinates
+    /// Returns the position where the measurement label should be placed
+    pub fn label_position(&self) -> PageCoordinate {
+        match self.geometry.as_ref() {
+            // Line and Arrow: midpoint
+            AnnotationGeometry::Line { start, end }
+            | AnnotationGeometry::Arrow { start, end } => PageCoordinate::new(
+                (start.x + end.x) / 2.0,
+                (start.y + end.y) / 2.0,
+            ),
+
+            // Polyline: midpoint of total path
+            AnnotationGeometry::Polyline { points } => {
+                if points.is_empty() {
+                    return PageCoordinate::new(0.0, 0.0);
+                }
+                if points.len() == 1 {
+                    return points[0];
+                }
+
+                // Find midpoint along the path length
+                let total_length: f32 = points
+                    .windows(2)
+                    .map(|w| w[0].distance_to(&w[1]))
+                    .sum();
+                let half_length = total_length / 2.0;
+
+                let mut accumulated = 0.0;
+                for window in points.windows(2) {
+                    let segment_length = window[0].distance_to(&window[1]);
+                    if accumulated + segment_length >= half_length {
+                        // Interpolate position along this segment
+                        let t = (half_length - accumulated) / segment_length;
+                        return PageCoordinate::new(
+                            window[0].x + t * (window[1].x - window[0].x),
+                            window[0].y + t * (window[1].y - window[0].y),
+                        );
+                    }
+                    accumulated += segment_length;
+                }
+
+                // Fallback to last point
+                *points.last().unwrap()
+            }
+
+            // Rectangle: center
+            AnnotationGeometry::Rectangle {
+                top_left,
+                bottom_right,
+            } => PageCoordinate::new(
+                (top_left.x + bottom_right.x) / 2.0,
+                (top_left.y + bottom_right.y) / 2.0,
+            ),
+
+            // Circle and Ellipse: center
+            AnnotationGeometry::Circle { center, .. }
+            | AnnotationGeometry::Ellipse { center, .. } => *center,
+
+            // Polygon: geometric center (centroid)
+            AnnotationGeometry::Polygon { points } => {
+                if points.is_empty() {
+                    return PageCoordinate::new(0.0, 0.0);
+                }
+                let sum_x: f32 = points.iter().map(|p| p.x).sum();
+                let sum_y: f32 = points.iter().map(|p| p.y).sum();
+                let n = points.len() as f32;
+                PageCoordinate::new(sum_x / n, sum_y / n)
+            }
+
+            // Freehand: center of bounding box
+            AnnotationGeometry::Freehand { points } => {
+                if points.is_empty() {
+                    return PageCoordinate::new(0.0, 0.0);
+                }
+                let sum_x: f32 = points.iter().map(|p| p.x).sum();
+                let sum_y: f32 = points.iter().map(|p| p.y).sum();
+                let n = points.len() as f32;
+                PageCoordinate::new(sum_x / n, sum_y / n)
+            }
+
+            // Text: use position directly
+            AnnotationGeometry::Text { position, .. } => *position,
+        }
+    }
 }
 
 /// Collection of measurements and scale systems
@@ -756,5 +841,85 @@ mod tests {
 
         // Triangle area = 0.5 * base * height = 0.5 * 10 * 10 = 50
         assert!((measurement.value().unwrap() - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_label_position_line() {
+        let geometry = AnnotationGeometry::Line {
+            start: PageCoordinate::new(0.0, 0.0),
+            end: PageCoordinate::new(100.0, 50.0),
+        };
+        let scale = ScaleSystem::manual(0, 1.0, "units");
+        let measurement = Measurement::new(0, geometry, MeasurementType::Distance, scale.id());
+
+        let pos = measurement.label_position();
+        assert_eq!(pos.x, 50.0);
+        assert_eq!(pos.y, 25.0);
+    }
+
+    #[test]
+    fn test_label_position_rectangle() {
+        let geometry = AnnotationGeometry::Rectangle {
+            top_left: PageCoordinate::new(10.0, 50.0),
+            bottom_right: PageCoordinate::new(30.0, 10.0),
+        };
+        let scale = ScaleSystem::manual(0, 1.0, "units");
+        let measurement = Measurement::new(0, geometry, MeasurementType::Area, scale.id());
+
+        let pos = measurement.label_position();
+        assert_eq!(pos.x, 20.0);
+        assert_eq!(pos.y, 30.0);
+    }
+
+    #[test]
+    fn test_label_position_circle() {
+        let geometry = AnnotationGeometry::Circle {
+            center: PageCoordinate::new(100.0, 200.0),
+            radius: 50.0,
+        };
+        let scale = ScaleSystem::manual(0, 1.0, "units");
+        let measurement = Measurement::new(0, geometry, MeasurementType::Radius, scale.id());
+
+        let pos = measurement.label_position();
+        assert_eq!(pos.x, 100.0);
+        assert_eq!(pos.y, 200.0);
+    }
+
+    #[test]
+    fn test_label_position_polyline() {
+        let geometry = AnnotationGeometry::Polyline {
+            points: vec![
+                PageCoordinate::new(0.0, 0.0),
+                PageCoordinate::new(100.0, 0.0),
+                PageCoordinate::new(100.0, 100.0),
+            ],
+        };
+        let scale = ScaleSystem::manual(0, 1.0, "units");
+        let measurement = Measurement::new(0, geometry, MeasurementType::Distance, scale.id());
+
+        let pos = measurement.label_position();
+        // Total length is 200 (100 + 100), midpoint is at 100
+        // First segment is 100 units, so midpoint is at the junction
+        assert_eq!(pos.x, 100.0);
+        assert_eq!(pos.y, 0.0);
+    }
+
+    #[test]
+    fn test_label_position_polygon() {
+        let geometry = AnnotationGeometry::Polygon {
+            points: vec![
+                PageCoordinate::new(0.0, 0.0),
+                PageCoordinate::new(60.0, 0.0),
+                PageCoordinate::new(60.0, 60.0),
+                PageCoordinate::new(0.0, 60.0),
+            ],
+        };
+        let scale = ScaleSystem::manual(0, 1.0, "units");
+        let measurement = Measurement::new(0, geometry, MeasurementType::Area, scale.id());
+
+        let pos = measurement.label_position();
+        // Centroid of square is at center
+        assert_eq!(pos.x, 30.0);
+        assert_eq!(pos.y, 30.0);
     }
 }
