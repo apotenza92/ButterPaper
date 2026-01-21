@@ -1817,34 +1817,11 @@ impl App {
                 // Initialize text layer manager for text selection
                 let text_layer_manager = Arc::new(TextLayerManager::new(page_count));
 
-                // Extract text spans from each page for text selection
+                // LAZY LOADING: Extract text only for the current page (page 0) during startup
+                // Other pages will be extracted on-demand when navigated to
                 if let Some(ref doc) = self.document {
-                    for page_index in 0..page_count {
-                        match doc.pdf.extract_text_spans(page_index) {
-                            Ok(span_infos) => {
-                                let spans: Vec<TextSpan> = span_infos
-                                    .into_iter()
-                                    .map(|info| {
-                                        TextSpan::new(
-                                            info.text,
-                                            TextBoundingBox::new(info.x, info.y, info.width, info.height),
-                                            1.0, // Native PDF text has 100% confidence
-                                            12.0, // Default font size estimate
-                                        )
-                                    })
-                                    .collect();
-
-                                if !spans.is_empty() {
-                                    let layer = PageTextLayer::from_spans(page_index, spans);
-                                    text_layer_manager.set_layer(layer);
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Warning: Could not extract text from page {}: {}", page_index, e);
-                            }
-                        }
-                    }
-                    println!("TEXT_SELECTION: Initialized text layers for {} pages", text_layer_manager.layer_count());
+                    Self::extract_text_for_page(&text_layer_manager, &doc.pdf, 0);
+                    println!("TEXT_SELECTION: Lazy initialized text layer for page 1 (others on-demand)");
 
                     self.startup_profiler
                         .mark_phase(startup_profiler::StartupPhase::TextExtraction);
@@ -1868,6 +1845,62 @@ impl App {
             }
             Err(e) => {
                 eprintln!("FAILED to load PDF: {}", e);
+            }
+        }
+    }
+
+    /// Extract text for a single page and add it to the text layer manager
+    /// This is called lazily when navigating to a page that hasn't been extracted yet
+    fn extract_text_for_page(text_layer_manager: &TextLayerManager, pdf: &PdfDocument, page_index: u16) {
+        // Skip if already extracted
+        if text_layer_manager.has_layer(page_index) {
+            return;
+        }
+
+        match pdf.extract_text_spans(page_index) {
+            Ok(span_infos) => {
+                let spans: Vec<TextSpan> = span_infos
+                    .into_iter()
+                    .map(|info| {
+                        TextSpan::new(
+                            info.text,
+                            TextBoundingBox::new(info.x, info.y, info.width, info.height),
+                            1.0, // Native PDF text has 100% confidence
+                            12.0, // Default font size estimate
+                        )
+                    })
+                    .collect();
+
+                if !spans.is_empty() {
+                    let layer = PageTextLayer::from_spans(page_index, spans);
+                    text_layer_manager.set_layer(layer);
+                    println!("TEXT_SELECTION: Lazy extracted text for page {}", page_index + 1);
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not extract text from page {}: {}", page_index + 1, e);
+            }
+        }
+    }
+
+    /// Ensure text is extracted for the current page (lazy loading)
+    fn ensure_current_page_text_extracted(&self) {
+        if let (Some(text_layer_manager), Some(doc)) = (&self.text_layer_manager, &self.document) {
+            Self::extract_text_for_page(text_layer_manager, &doc.pdf, doc.current_page);
+        }
+    }
+
+    /// Ensure text is extracted for all pages (needed before full-document search)
+    fn ensure_all_pages_text_extracted(&self) {
+        if let (Some(text_layer_manager), Some(doc)) = (&self.text_layer_manager, &self.document) {
+            let already_extracted = text_layer_manager.layer_count();
+            if already_extracted < doc.page_count as usize {
+                println!("LAZY_LOADING: Extracting text for remaining {} pages for search...",
+                    doc.page_count as usize - already_extracted);
+                for page_index in 0..doc.page_count {
+                    Self::extract_text_for_page(text_layer_manager, &doc.pdf, page_index);
+                }
+                println!("LAZY_LOADING: All {} pages text extracted", doc.page_count);
             }
         }
     }
@@ -3236,6 +3269,7 @@ impl App {
                 println!("Page {}/{}", doc.current_page + 1, doc.page_count);
                 self.thumbnail_strip.set_current_page(doc.current_page);
                 self.update_thumbnail_texture();
+                self.ensure_current_page_text_extracted(); // Lazy text extraction
                 self.render_current_page();
                 self.update_page_info_overlay();
             }
@@ -3249,6 +3283,7 @@ impl App {
                 println!("Page {}/{}", doc.current_page + 1, doc.page_count);
                 self.thumbnail_strip.set_current_page(doc.current_page);
                 self.update_thumbnail_texture();
+                self.ensure_current_page_text_extracted(); // Lazy text extraction
                 self.render_current_page();
                 self.update_page_info_overlay();
             }
@@ -3263,6 +3298,7 @@ impl App {
                 println!("Page {}/{}", doc.current_page + 1, doc.page_count);
                 self.thumbnail_strip.set_current_page(doc.current_page);
                 self.update_thumbnail_texture();
+                self.ensure_current_page_text_extracted(); // Lazy text extraction
                 self.render_current_page();
                 self.update_page_info_overlay();
             }
@@ -4371,6 +4407,9 @@ impl App {
             return;
         }
 
+        // Ensure all pages have text extracted before searching
+        self.ensure_all_pages_text_extracted();
+
         if let Some(ref mut search_manager) = self.text_search_manager {
             let total_matches = search_manager.search(&query, case_sensitive);
             let current_match = if total_matches > 0 { 1 } else { 0 };
@@ -4384,6 +4423,7 @@ impl App {
                         if page_index != doc.current_page {
                             doc.current_page = page_index;
                             self.thumbnail_strip.set_current_page(page_index);
+                            self.ensure_current_page_text_extracted(); // Lazy text extraction
                             self.render_current_page();
                             self.update_page_info_overlay();
                             self.update_thumbnail_texture();
@@ -4415,6 +4455,7 @@ impl App {
                     if page_index != doc.current_page {
                         doc.current_page = page_index;
                         self.thumbnail_strip.set_current_page(page_index);
+                        self.ensure_current_page_text_extracted(); // Lazy text extraction
                         self.render_current_page();
                         self.update_page_info_overlay();
                         self.update_thumbnail_texture();
@@ -4444,6 +4485,7 @@ impl App {
                     if page_index != doc.current_page {
                         doc.current_page = page_index;
                         self.thumbnail_strip.set_current_page(page_index);
+                        self.ensure_current_page_text_extracted(); // Lazy text extraction
                         self.render_current_page();
                         self.update_page_info_overlay();
                         self.update_thumbnail_texture();

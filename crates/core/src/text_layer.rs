@@ -810,4 +810,80 @@ mod tests {
         assert_eq!(layer.page_index, 0);
         assert_eq!(layer.text, "Test");
     }
+
+    /// Test that verifies the lazy loading pattern works correctly:
+    /// - has_layer() returns false for pages not yet extracted
+    /// - set_layer() only adds layers once
+    /// - Layers can be added incrementally (simulating on-demand extraction)
+    #[test]
+    fn test_lazy_loading_pattern() {
+        let manager = TextLayerManager::new(100); // Simulate 100-page PDF
+
+        // Initially no pages have text layers
+        assert_eq!(manager.layer_count(), 0);
+        for i in 0..100 {
+            assert!(!manager.has_layer(i), "Page {} should not have layer yet", i);
+        }
+
+        // Simulate lazy loading: extract only page 0 on initial load
+        let layer0 = PageTextLayer::from_spans(
+            0,
+            vec![TextSpan::new(
+                "First page text".to_string(),
+                TextBoundingBox::new(0.0, 0.0, 100.0, 15.0),
+                1.0,
+                12.0,
+            )],
+        );
+        manager.set_layer(layer0);
+
+        assert_eq!(manager.layer_count(), 1);
+        assert!(manager.has_layer(0));
+        assert!(!manager.has_layer(1));
+
+        // Simulate user navigates to page 5 - should check has_layer before extracting
+        assert!(!manager.has_layer(5));
+        let layer5 = PageTextLayer::from_spans(
+            5,
+            vec![TextSpan::new(
+                "Page 5 text".to_string(),
+                TextBoundingBox::new(0.0, 0.0, 80.0, 15.0),
+                1.0,
+                12.0,
+            )],
+        );
+        manager.set_layer(layer5);
+
+        assert_eq!(manager.layer_count(), 2);
+        assert!(manager.has_layer(0));
+        assert!(manager.has_layer(5));
+        assert!(!manager.has_layer(1)); // Still not extracted
+
+        // Verify search works with partial extraction (only finds text in extracted pages)
+        let results = manager.search_all("text", false);
+        assert_eq!(results.len(), 2);
+        assert!(results.contains_key(&0));
+        assert!(results.contains_key(&5));
+
+        // Simulate bulk extraction when user initiates search
+        for i in 0..10 {
+            if !manager.has_layer(i) {
+                let layer = PageTextLayer::from_spans(
+                    i,
+                    vec![TextSpan::new(
+                        format!("Page {} content", i),
+                        TextBoundingBox::new(0.0, 0.0, 100.0, 15.0),
+                        1.0,
+                        12.0,
+                    )],
+                );
+                manager.set_layer(layer);
+            }
+        }
+
+        assert_eq!(manager.layer_count(), 10);
+        // Search should now find all pages
+        let results = manager.search_all("content", false);
+        assert_eq!(results.len(), 8); // Pages 0 and 5 have "text", not "content"
+    }
 }

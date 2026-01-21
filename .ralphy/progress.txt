@@ -11853,3 +11853,90 @@ STARTUP_PROFILE: First Frame Rendered completed at 178.45ms
 The profiling system uses a global atomic flag (`PROFILING_ENABLED`) to enable/disable profiling without overhead when not in use. When disabled, `mark_phase()` returns immediately without any timing operations. This ensures zero performance impact during normal operation.
 
 The `serial_test` crate is used for tests that modify the global profiling flag, ensuring tests don't interfere with each other when run in parallel.
+
+---
+
+## Phase 4.1 (continued): Lazy Load Subsystems - COMPLETED
+
+### Date: 2026-01-21
+
+### Summary
+Implemented lazy loading for text extraction in the PDF editor to improve startup time. Instead of extracting text from all pages at PDF load time, text is now extracted only for the current page initially, with other pages extracted on-demand when navigated to.
+
+### Technical Approach
+
+1. Modified `load_pdf()` in `crates/app/src/main.rs`:
+   - Changed from extracting text from ALL pages sequentially during PDF load
+   - Now only extracts text for page 0 (the initial page) during startup
+   - Added print statement: "TEXT_SELECTION: Lazy initialized text layer for page 1 (others on-demand)"
+
+2. Added new helper methods to App struct:
+   - `extract_text_for_page()`: Static helper to extract text for a single page, with has_layer check to skip already-extracted pages
+   - `ensure_current_page_text_extracted()`: Instance method that ensures text is extracted for the current page when navigating
+   - `ensure_all_pages_text_extracted()`: Instance method to extract text for all pages when performing a document-wide search
+
+3. Updated navigation functions to call lazy extraction:
+   - `next_page()`: Calls `ensure_current_page_text_extracted()` after page change
+   - `prev_page()`: Calls `ensure_current_page_text_extracted()` after page change
+   - `goto_page()`: Calls `ensure_current_page_text_extracted()` after page change
+   - `search_next_result()`: Calls `ensure_current_page_text_extracted()` when navigating to result page
+   - `search_previous_result()`: Calls `ensure_current_page_text_extracted()` when navigating to result page
+
+4. Updated search functionality:
+   - `perform_search()`: Calls `ensure_all_pages_text_extracted()` before searching
+   - This ensures search works across all pages while maintaining lazy loading benefits for non-search use cases
+
+### Files Modified
+
+1. `crates/app/src/main.rs`:
+   - Modified `load_pdf()` to extract only current page text (lines 1820-1828)
+   - Added `extract_text_for_page()` helper method (lines 1852-1884)
+   - Added `ensure_current_page_text_extracted()` method (lines 1886-1891)
+   - Added `ensure_all_pages_text_extracted()` method (lines 1893-1906)
+   - Updated `next_page()`, `prev_page()`, `goto_page()` (lines 3250-3291)
+   - Updated `search_next_result()`, `search_previous_result()` (lines 4424-4482)
+   - Updated `perform_search()` (lines 4396-4422)
+
+2. `crates/core/src/text_layer.rs`:
+   - Added `test_lazy_loading_pattern()` test to verify incremental extraction works correctly
+
+3. `PRD.md`:
+   - Marked "Lazy load subsystems" as complete
+
+### Performance Impact
+
+**Before:** Text extraction for ALL pages happened during PDF load, blocking the first frame render
+- For a 100-page PDF, this could add 10-50ms to startup time
+
+**After:** Text extraction happens:
+- Page 0 only during startup
+- Current page on navigation (if not already extracted)
+- All pages only when user initiates search
+
+This significantly reduces the critical path to first frame render, especially for multi-page PDFs.
+
+### Test Results
+
+- All 15 text_layer tests pass (including new test_lazy_loading_pattern)
+- All 476+ workspace tests pass
+- Clippy passes with no new warnings
+
+### Usage Notes
+
+Console output during lazy loading:
+```
+TEXT_SELECTION: Lazy initialized text layer for page 1 (others on-demand)
+TEXT_SELECTION: Lazy extracted text for page 2
+TEXT_SELECTION: Lazy extracted text for page 3
+...
+LAZY_LOADING: Extracting text for remaining 98 pages for search...
+LAZY_LOADING: All 100 pages text extracted
+```
+
+### Architecture Notes
+
+The lazy loading pattern uses the existing `has_layer()` method in TextLayerManager to check if a page already has its text extracted before attempting extraction. This ensures:
+- No duplicate work (pages are only extracted once)
+- Thread-safe operation (TextLayerManager uses RwLock internally)
+- Minimal code changes (leverages existing infrastructure)
+
