@@ -156,8 +156,9 @@ impl TextSearchManager {
     /// Start a new search query
     ///
     /// Searches all pages with text layers and collects all matches.
+    /// If `case_sensitive` is false, the search is case-insensitive.
     /// Returns the number of matches found.
-    pub fn search(&mut self, query: &str) -> usize {
+    pub fn search(&mut self, query: &str, case_sensitive: bool) -> usize {
         if query.is_empty() {
             self.clear_search();
             return 0;
@@ -168,7 +169,7 @@ impl TextSearchManager {
         self.selected_result_index = None;
 
         // Search all pages
-        let page_results = self.text_layers.search_all(query);
+        let page_results = self.text_layers.search_all(query, case_sensitive);
 
         // Flatten results into SearchResult objects
         for (page_index, matches) in page_results {
@@ -536,8 +537,8 @@ mod tests {
     fn test_search_basic() {
         let mut search_mgr = create_test_manager();
 
-        // Search for "test"
-        let count = search_mgr.search("test");
+        // Search for "test" (case-insensitive)
+        let count = search_mgr.search("test", false);
         assert_eq!(count, 1);
         assert_eq!(search_mgr.result_count(), 1);
     }
@@ -546,8 +547,21 @@ mod tests {
     fn test_search_case_insensitive() {
         let mut search_mgr = create_test_manager();
 
-        // Search for "HELLO" (should match "Hello")
-        let count = search_mgr.search("HELLO");
+        // Search for "HELLO" (should match "Hello" when case-insensitive)
+        let count = search_mgr.search("HELLO", false);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_search_case_sensitive() {
+        let mut search_mgr = create_test_manager();
+
+        // Search for "HELLO" (should NOT match "Hello" when case-sensitive)
+        let count = search_mgr.search("HELLO", true);
+        assert_eq!(count, 0);
+
+        // Search for "Hello" (should match when case-sensitive)
+        let count = search_mgr.search("Hello", true);
         assert_eq!(count, 1);
     }
 
@@ -556,7 +570,7 @@ mod tests {
         let mut search_mgr = create_test_manager();
 
         // Search for "is" (should match "This is")
-        let count = search_mgr.search("is");
+        let count = search_mgr.search("is", false);
         assert_eq!(count, 2); // "This" and "is"
     }
 
@@ -564,7 +578,7 @@ mod tests {
     fn test_search_navigation() {
         let mut search_mgr = create_test_manager();
 
-        search_mgr.search("is");
+        search_mgr.search("is", false);
         assert_eq!(search_mgr.result_count(), 2);
 
         // Navigate to next result
@@ -584,7 +598,7 @@ mod tests {
     fn test_clear_search() {
         let mut search_mgr = create_test_manager();
 
-        search_mgr.search("test");
+        search_mgr.search("test", false);
         assert_eq!(search_mgr.result_count(), 1);
 
         search_mgr.clear_search();
@@ -627,7 +641,7 @@ mod tests {
         let mut search_mgr = create_test_manager();
 
         // Add search results
-        search_mgr.search("is");
+        search_mgr.search("is", false);
 
         // Get highlights for page 0
         let highlights = search_mgr.get_highlights_for_page(0);
@@ -788,7 +802,7 @@ mod tests {
         assert!(search_mgr.selected_result_index().is_none());
 
         // After searching, first result is selected
-        search_mgr.search("is");
+        search_mgr.search("is", false);
         assert_eq!(search_mgr.selected_result_index(), Some(0));
 
         // After navigating to next, index should be 1
@@ -812,7 +826,7 @@ mod tests {
         assert!(search_mgr.get_current_result().is_none());
 
         // After searching, should return current result
-        search_mgr.search("test");
+        search_mgr.search("test", false);
         let result = search_mgr.get_current_result();
         assert!(result.is_some());
 
@@ -827,7 +841,7 @@ mod tests {
         let mut search_mgr = create_test_manager();
 
         // Search for something that doesn't exist
-        search_mgr.search("nonexistent");
+        search_mgr.search("nonexistent", false);
         assert!(search_mgr.get_current_result().is_none());
     }
 }

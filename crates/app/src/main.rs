@@ -2896,6 +2896,7 @@ impl App {
     /// Perform search based on current search bar text
     fn perform_search(&mut self) {
         let query = self.search_bar.search_text().to_string();
+        let case_sensitive = self.search_bar.is_case_sensitive();
 
         if query.is_empty() {
             // Clear search results
@@ -2907,7 +2908,7 @@ impl App {
         }
 
         if let Some(ref mut search_manager) = self.text_search_manager {
-            let total_matches = search_manager.search(&query);
+            let total_matches = search_manager.search(&query, case_sensitive);
             let current_match = if total_matches > 0 { 1 } else { 0 };
             self.search_bar.set_match_info(current_match, total_matches);
 
@@ -3883,6 +3884,12 @@ impl ApplicationHandler for App {
                                         }
                                         SearchBarButton::NextMatch => {
                                             self.search_next_result();
+                                        }
+                                        SearchBarButton::CaseSensitive => {
+                                            self.search_bar.toggle_case_sensitive();
+                                            self.update_search_bar_texture();
+                                            // Re-run search with new case sensitivity setting
+                                            self.perform_search();
                                         }
                                         SearchBarButton::Close => {
                                             self.search_bar.set_visible(false);

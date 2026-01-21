@@ -326,7 +326,7 @@ Wire up existing TextSearchManager.
 - [x] Highlight all matches in yellow
 - [x] Highlight current match in orange
 - [x] Scroll to match location
-- [ ] Case sensitive toggle
+- [x] Case sensitive toggle
 - [ ] **Terminal test:** `--search "term" file.pdf` outputs matches
 
 ### Phase 3.3: Annotations

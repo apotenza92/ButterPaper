@@ -11125,3 +11125,44 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 **Test Results:**
 - All 192 tests pass (4 new tests added)
 - Clippy linting passes on pdf-editor-ui crate
+
+### Task: Implement case-sensitive toggle for search functionality (Phase 3.2)
+
+**Status:** Complete
+
+**Changes:**
+- Updated `PageTextLayer::search()` in `crates/core/src/text_layer.rs` to accept a `case_sensitive` parameter
+- Updated `TextLayerManager::search_all()` in `crates/core/src/text_layer.rs` to accept and pass through the `case_sensitive` parameter
+- Updated `TextSearchManager::search()` in `crates/ui/src/text_selection.rs` to accept a `case_sensitive` parameter
+- Added `SearchBarButton::CaseSensitive` enum variant in `crates/ui/src/search_bar.rs`
+- Added "Aa" icon rendering for the case-sensitive toggle button
+- Added case-sensitive toggle button to the search bar UI (between navigation buttons and close button)
+- Button shows distinct blue background color when case-sensitive mode is active
+- Added `toggle_case_sensitive()` convenience method to SearchBar
+- Wired up the CaseSensitive button click handler in `crates/app/src/main.rs`:
+  - Toggles the case_sensitive flag in the search bar
+  - Re-runs the search with the new setting
+- Updated `perform_search()` in main.rs to pass case_sensitive flag from search bar to TextSearchManager
+
+**Tests Added:**
+- `test_page_text_layer_search_case_sensitive` - Tests case-sensitive vs case-insensitive search at page level
+- `test_text_layer_manager_search_case_sensitive` - Tests case-sensitive search across multiple pages
+- `test_search_case_sensitive` - Tests TextSearchManager with case-sensitive flag
+- `test_search_bar_toggle_case_sensitive` - Tests toggle convenience method
+- `test_search_bar_case_sensitive_button_exists` - Verifies button is present in UI
+
+**Files Modified:**
+- crates/core/src/text_layer.rs (search function signatures, new tests)
+- crates/ui/src/text_selection.rs (TextSearchManager search signature, new tests)
+- crates/ui/src/search_bar.rs (CaseSensitive button, icon, toggle method, tests)
+- crates/app/src/main.rs (button click handler, perform_search passes case_sensitive flag)
+- PRD.md (marked task complete)
+
+**Technical Details:**
+- Case-insensitive search uses `.to_lowercase()` on both query and text spans
+- Case-sensitive search uses the original text as-is
+- Toggle button displays "Aa" icon and changes to blue when active
+- Re-running search after toggle ensures results update immediately
+- All 476+ tests pass
+- Clippy linting passes with no warnings
+

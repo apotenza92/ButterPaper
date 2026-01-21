@@ -87,6 +87,8 @@ pub enum SearchBarButton {
     PreviousMatch,
     /// Next match button
     NextMatch,
+    /// Case sensitive toggle button
+    CaseSensitive,
     /// Close search bar button
     Close,
 }
@@ -123,6 +125,57 @@ impl SearchBarButton {
                 stroke_color: color,
                 stroke_width: 0.0,
             }],
+
+            // Case sensitive: "Aa" text indicator
+            SearchBarButton::CaseSensitive => {
+                // Render "Aa" to indicate case sensitivity
+                // Capital A on left, lowercase a on right
+                let char_width = icon_size * 0.4;
+                let char_height = icon_size * 0.6;
+                let start_x = center_x - char_width;
+                let start_y = center_y - char_height / 2.0;
+
+                vec![
+                    // Capital A - left stroke
+                    Primitive::Rectangle {
+                        rect: Rect::new(start_x, start_y, 2.0, char_height),
+                        color,
+                    },
+                    // Capital A - right stroke
+                    Primitive::Rectangle {
+                        rect: Rect::new(start_x + char_width * 0.6, start_y, 2.0, char_height),
+                        color,
+                    },
+                    // Capital A - top
+                    Primitive::Rectangle {
+                        rect: Rect::new(start_x, start_y, char_width * 0.6 + 2.0, 2.0),
+                        color,
+                    },
+                    // Capital A - middle bar
+                    Primitive::Rectangle {
+                        rect: Rect::new(start_x, start_y + char_height * 0.45, char_width * 0.6 + 2.0, 2.0),
+                        color,
+                    },
+                    // Lowercase a - circle part (simplified as square)
+                    Primitive::Rectangle {
+                        rect: Rect::new(center_x + 2.0, start_y + char_height * 0.3, char_width * 0.5, 2.0),
+                        color,
+                    },
+                    Primitive::Rectangle {
+                        rect: Rect::new(center_x + 2.0, start_y + char_height - 2.0, char_width * 0.5, 2.0),
+                        color,
+                    },
+                    Primitive::Rectangle {
+                        rect: Rect::new(center_x + 2.0, start_y + char_height * 0.3, 2.0, char_height * 0.7),
+                        color,
+                    },
+                    // Lowercase a - stem
+                    Primitive::Rectangle {
+                        rect: Rect::new(center_x + 2.0 + char_width * 0.5 - 2.0, start_y + char_height * 0.3, 2.0, char_height * 0.7),
+                        color,
+                    },
+                ]
+            }
 
             // Close: X shape
             SearchBarButton::Close => vec![
@@ -507,6 +560,12 @@ impl SearchBar {
         // Spacer
         x += self.config.padding;
 
+        // Case sensitive toggle button
+        x = self.add_button(&mut new_node, SearchBarButton::CaseSensitive, x, button_y);
+
+        // Spacer
+        x += self.config.padding;
+
         // Close button
         let _ = self.add_button(&mut new_node, SearchBarButton::Close, x, button_y);
 
@@ -718,9 +777,17 @@ impl SearchBar {
             .map(|(_, s, _)| *s)
             .unwrap_or(ButtonState::Normal);
 
-        let bg_color = match state {
-            ButtonState::Normal => self.config.button_color,
-            ButtonState::Hover => self.config.button_hover_color,
+        // Special handling for CaseSensitive button: show as "active" when case_sensitive is true
+        let is_toggle_active = button == SearchBarButton::CaseSensitive && self.case_sensitive;
+
+        let bg_color = if is_toggle_active {
+            // Use a distinct active color (blue-ish) when case-sensitive mode is enabled
+            Color::rgba(0.2, 0.4, 0.6, 1.0)
+        } else {
+            match state {
+                ButtonState::Normal => self.config.button_color,
+                ButtonState::Hover => self.config.button_hover_color,
+            }
         };
 
         // Button background
@@ -740,6 +807,11 @@ impl SearchBar {
         self.button_states.push((button, state, rect));
 
         x + NAV_BUTTON_SIZE + 4.0
+    }
+
+    /// Toggle case sensitive option (convenience method)
+    pub fn toggle_case_sensitive(&mut self) {
+        self.set_case_sensitive(!self.case_sensitive);
     }
 }
 
@@ -887,6 +959,32 @@ mod tests {
     }
 
     #[test]
+    fn test_search_bar_toggle_case_sensitive() {
+        let mut search_bar = SearchBar::new(1200.0);
+
+        assert!(!search_bar.is_case_sensitive());
+
+        search_bar.toggle_case_sensitive();
+        assert!(search_bar.is_case_sensitive());
+
+        search_bar.toggle_case_sensitive();
+        assert!(!search_bar.is_case_sensitive());
+    }
+
+    #[test]
+    fn test_search_bar_case_sensitive_button_exists() {
+        let mut search_bar = SearchBar::new(1200.0);
+        search_bar.set_visible(true);
+
+        // Check that the CaseSensitive button is in the button_states
+        let has_case_sensitive_button = search_bar
+            .button_states
+            .iter()
+            .any(|(btn, _, _)| *btn == SearchBarButton::CaseSensitive);
+        assert!(has_case_sensitive_button, "CaseSensitive button should exist in search bar");
+    }
+
+    #[test]
     fn test_search_bar_hit_test_when_visible() {
         let mut search_bar = SearchBar::new(1200.0);
         search_bar.set_visible(true);
@@ -996,6 +1094,7 @@ mod tests {
         let buttons = [
             SearchBarButton::PreviousMatch,
             SearchBarButton::NextMatch,
+            SearchBarButton::CaseSensitive,
             SearchBarButton::Close,
         ];
 

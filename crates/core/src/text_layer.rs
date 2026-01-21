@@ -179,7 +179,11 @@ impl PageTextLayer {
 
     /// Create a text layer from a list of text spans
     pub fn from_spans(page_index: u16, spans: Vec<TextSpan>) -> Self {
-        let text = spans.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+        let text = spans
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
 
         let avg_confidence = if spans.is_empty() {
             0.0
@@ -209,19 +213,28 @@ impl PageTextLayer {
         self.spans.iter().find(|span| span.contains_point(point))
     }
 
-    /// Search for text in this layer (case-insensitive)
+    /// Search for text in this layer
     ///
     /// Returns the indices of matching spans and their character positions.
-    pub fn search(&self, query: &str) -> Vec<SearchMatch> {
-        let query_lower = query.to_lowercase();
+    /// If `case_sensitive` is false, the search is case-insensitive.
+    pub fn search(&self, query: &str, case_sensitive: bool) -> Vec<SearchMatch> {
+        let query_search = if case_sensitive {
+            query.to_string()
+        } else {
+            query.to_lowercase()
+        };
         let mut matches = Vec::new();
         let mut char_pos = 0;
 
         for (span_index, span) in self.spans.iter().enumerate() {
-            let span_text_lower = span.text.to_lowercase();
+            let span_text_search = if case_sensitive {
+                span.text.clone()
+            } else {
+                span.text.to_lowercase()
+            };
             let mut search_pos = 0;
 
-            while let Some(match_pos) = span_text_lower[search_pos..].find(&query_lower) {
+            while let Some(match_pos) = span_text_search[search_pos..].find(&query_search) {
                 let absolute_pos = search_pos + match_pos;
                 matches.push(SearchMatch {
                     span_index,
@@ -361,12 +374,13 @@ impl TextLayerManager {
     /// Search for text across all pages
     ///
     /// Returns matches grouped by page index.
-    pub fn search_all(&self, query: &str) -> HashMap<u16, Vec<SearchMatch>> {
+    /// If `case_sensitive` is false, the search is case-insensitive.
+    pub fn search_all(&self, query: &str, case_sensitive: bool) -> HashMap<u16, Vec<SearchMatch>> {
         let layers = self.layers.read().unwrap();
         let mut results = HashMap::new();
 
         for (page_index, layer) in layers.iter() {
-            let matches = layer.search(query);
+            let matches = layer.search(query, case_sensitive);
             if !matches.is_empty() {
                 results.insert(*page_index, matches);
             }
@@ -504,7 +518,7 @@ mod tests {
         assert_eq!(layer.spans.len(), 2);
         assert_eq!(layer.text, "Hello World");
         assert!(layer.is_ocr);
-        assert_eq!(layer.confidence, 0.925); // Average of 0.95 and 0.90
+        assert!((layer.confidence - 0.925).abs() < 0.001); // Average of 0.95 and 0.90
     }
 
     #[test]
@@ -563,17 +577,61 @@ mod tests {
 
         let layer = PageTextLayer::from_spans(0, spans);
 
-        let matches = layer.search("hello");
+        // Case-insensitive search (default)
+        let matches = layer.search("hello", false);
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].text, "Hello");
         assert_eq!(matches[1].text, "Hello");
 
-        let matches = layer.search("world");
+        let matches = layer.search("world", false);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].text, "World");
 
-        let matches = layer.search("notfound");
+        let matches = layer.search("notfound", false);
         assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn test_page_text_layer_search_case_sensitive() {
+        let spans = vec![
+            TextSpan::new(
+                "Hello".to_string(),
+                TextBoundingBox::new(10.0, 20.0, 50.0, 15.0),
+                0.95,
+                12.0,
+            ),
+            TextSpan::new(
+                "hello".to_string(),
+                TextBoundingBox::new(65.0, 20.0, 50.0, 15.0),
+                0.90,
+                12.0,
+            ),
+            TextSpan::new(
+                "HELLO".to_string(),
+                TextBoundingBox::new(120.0, 20.0, 50.0, 15.0),
+                0.92,
+                12.0,
+            ),
+        ];
+
+        let layer = PageTextLayer::from_spans(0, spans);
+
+        // Case-sensitive search
+        let matches = layer.search("Hello", true);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].text, "Hello");
+
+        let matches = layer.search("hello", true);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].text, "hello");
+
+        let matches = layer.search("HELLO", true);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].text, "HELLO");
+
+        // Case-insensitive search should find all three
+        let matches = layer.search("hello", false);
+        assert_eq!(matches.len(), 3);
     }
 
     #[test]
@@ -634,10 +692,55 @@ mod tests {
         manager.set_layer(layer1);
         manager.set_layer(layer2);
 
-        let results = manager.search_all("world");
+        // Case-insensitive search
+        let results = manager.search_all("world", false);
         assert_eq!(results.len(), 2);
         assert!(results.contains_key(&0));
         assert!(results.contains_key(&1));
+    }
+
+    #[test]
+    fn test_text_layer_manager_search_case_sensitive() {
+        let manager = TextLayerManager::new(3);
+
+        let layer1 = PageTextLayer::from_spans(
+            0,
+            vec![TextSpan::new(
+                "Hello World".to_string(),
+                TextBoundingBox::new(0.0, 0.0, 100.0, 15.0),
+                0.9,
+                12.0,
+            )],
+        );
+
+        let layer2 = PageTextLayer::from_spans(
+            1,
+            vec![TextSpan::new(
+                "world peace".to_string(),
+                TextBoundingBox::new(0.0, 0.0, 100.0, 15.0),
+                0.85,
+                12.0,
+            )],
+        );
+
+        manager.set_layer(layer1);
+        manager.set_layer(layer2);
+
+        // Case-sensitive search for "World" should only find page 0
+        let results = manager.search_all("World", true);
+        assert_eq!(results.len(), 1);
+        assert!(results.contains_key(&0));
+        assert!(!results.contains_key(&1));
+
+        // Case-sensitive search for "world" should only find page 1
+        let results = manager.search_all("world", true);
+        assert_eq!(results.len(), 1);
+        assert!(!results.contains_key(&0));
+        assert!(results.contains_key(&1));
+
+        // Case-insensitive search should find both
+        let results = manager.search_all("world", false);
+        assert_eq!(results.len(), 2);
     }
 
     #[test]
@@ -673,18 +776,8 @@ mod tests {
     #[test]
     fn test_page_text_layer_from_ocr_result() {
         let text_blocks = vec![
-            TextBlock::new(
-                "Hello".to_string(),
-                (10.0, 20.0, 50.0, 15.0),
-                0.95,
-                12.0,
-            ),
-            TextBlock::new(
-                "World".to_string(),
-                (65.0, 20.0, 50.0, 15.0),
-                0.90,
-                12.0,
-            ),
+            TextBlock::new("Hello".to_string(), (10.0, 20.0, 50.0, 15.0), 0.95, 12.0),
+            TextBlock::new("World".to_string(), (65.0, 20.0, 50.0, 15.0), 0.90, 12.0),
         ];
 
         let ocr_result = OcrResult::new(0, "Hello World".to_string(), text_blocks, 0.92);
