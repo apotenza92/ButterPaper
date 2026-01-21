@@ -69,6 +69,15 @@ pub struct ViewportCompositor {
 
     /// Text edit manager (for rendering edited text)
     text_edit_manager: Option<Arc<TextEditManager>>,
+
+    /// Cached text edit layer (rebuilt only when dirty)
+    cached_text_edit_layer: Option<Arc<SceneNode>>,
+
+    /// Page index of the cached text edit layer
+    cached_text_edit_page: Option<u16>,
+
+    /// Flag indicating if text edit layer needs rebuilding
+    text_edit_layer_dirty: bool,
 }
 
 impl ViewportCompositor {
@@ -132,6 +141,9 @@ impl ViewportCompositor {
             manipulation_state: None,
             text_search_manager: None,
             text_edit_manager: None,
+            cached_text_edit_layer: None,
+            cached_text_edit_page: None,
+            text_edit_layer_dirty: false,
         }
     }
 
@@ -158,8 +170,17 @@ impl ViewportCompositor {
         // Rebuild text highlight layer (Phase 9 - text search and selection)
         self.rebuild_text_highlight_layer(viewport);
 
-        // Rebuild text edit layer (Phase 10 - edited text)
-        self.rebuild_text_edit_layer(viewport);
+        // Rebuild text edit layer only if dirty or page changed (Phase 10 - edited text)
+        // This avoids blocking the UI thread on every frame
+        let page_changed = self.cached_text_edit_page != Some(viewport.page_index);
+        if self.text_edit_layer_dirty || page_changed {
+            self.rebuild_text_edit_layer(viewport);
+            self.text_edit_layer_dirty = false;
+            self.cached_text_edit_page = Some(viewport.page_index);
+        } else if let Some(ref cached_layer) = self.cached_text_edit_layer {
+            // Use cached layer without rebuilding
+            self.update_layer(2, Arc::clone(cached_layer));
+        }
 
         // Rebuild annotation layer (Phase 7 - placeholder for now)
         self.rebuild_annotation_layer(viewport);
@@ -196,6 +217,15 @@ impl ViewportCompositor {
     /// Set the text edit manager (for text edit rendering)
     pub fn set_text_edit_manager(&mut self, manager: Arc<TextEditManager>) {
         self.text_edit_manager = Some(manager);
+        self.text_edit_layer_dirty = true;
+    }
+
+    /// Mark the text edit layer as dirty (needs rebuild on next frame)
+    ///
+    /// Call this after adding, removing, or modifying text edits to ensure
+    /// the layer is rebuilt asynchronously without blocking the current operation.
+    pub fn mark_text_edit_layer_dirty(&mut self) {
+        self.text_edit_layer_dirty = true;
     }
 
     /// Rebuild the tile layer based on viewport
@@ -338,7 +368,12 @@ impl ViewportCompositor {
         }
 
         text_edit_layer.set_primitives(primitives);
-        self.update_layer(2, Arc::new(text_edit_layer));
+        let layer_arc = Arc::new(text_edit_layer);
+
+        // Cache the layer for future frames
+        self.cached_text_edit_layer = Some(Arc::clone(&layer_arc));
+
+        self.update_layer(2, layer_arc);
     }
 
     /// Rebuild annotation layer (Phase 7)

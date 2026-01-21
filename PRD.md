@@ -116,7 +116,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Preserve embedded fonts where possible
 - [x] Apply minimal layout adjustments only
 - [x] Ensure edits remain selectable (no rasterization fallback)
-- [ ] Make text edits non-blocking (no sync re-render)
+- [x] Make text edits non-blocking (no sync re-render)
 
 ### Phase 11: Persistence and Export
 - [ ] Implement working state in memory with batched atomic writes
