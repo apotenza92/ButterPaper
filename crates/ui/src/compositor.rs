@@ -11,8 +11,9 @@
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneGraph, SceneNode};
 use pdf_editor_cache::gpu::GpuTextureCache;
 use pdf_editor_core::annotation::{Annotation, AnnotationGeometry, PageCoordinate};
-use pdf_editor_core::manipulation::ManipulationHandle;
+use pdf_editor_core::manipulation::{ManipulationHandle, ManipulationState};
 use pdf_editor_core::measurement::MeasurementCollection;
+use pdf_editor_core::snapping::SnapType;
 use pdf_editor_render::tile::{TileCoordinate, TileId, TileProfile, TILE_SIZE};
 use pdf_editor_scheduler::Viewport;
 use std::sync::Arc;
@@ -49,6 +50,9 @@ pub struct ViewportCompositor {
 
     /// Measurements to render (Phase 8)
     measurements: Option<Arc<MeasurementCollection>>,
+
+    /// Current manipulation state (for snap guide rendering)
+    manipulation_state: Option<ManipulationState>,
 }
 
 impl ViewportCompositor {
@@ -97,6 +101,7 @@ impl ViewportCompositor {
             current_viewport: None,
             annotations: Vec::new(),
             measurements: None,
+            manipulation_state: None,
         }
     }
 
@@ -140,6 +145,11 @@ impl ViewportCompositor {
     /// Set the measurement collection for rendering labels
     pub fn set_measurements(&mut self, measurements: Arc<MeasurementCollection>) {
         self.measurements = Some(measurements);
+    }
+
+    /// Set the current manipulation state (for snap guide rendering)
+    pub fn set_manipulation_state(&mut self, state: Option<ManipulationState>) {
+        self.manipulation_state = state;
     }
 
     /// Rebuild the tile layer based on viewport
@@ -220,15 +230,73 @@ impl ViewportCompositor {
     }
 
     /// Rebuild guide layer (Phase 8 - placeholder)
-    fn rebuild_guide_layer(&mut self, _viewport: &Viewport) {
-        // Phase 8 will add:
-        // - Render measurement guides (snapping lines)
-        // - Render scale indicators
-        // - Render grid overlays (if enabled)
+    fn rebuild_guide_layer(&mut self, viewport: &Viewport) {
+        let mut guide_layer = SceneNode::new();
+        let mut primitives = Vec::new();
 
-        // For now, create empty layer
-        let guide_layer = SceneNode::new();
+        // Render snap guides if manipulation is active
+        if let Some(ref manipulation_state) = self.manipulation_state {
+            if let Some(ref snap_target) = manipulation_state.snap_target {
+                // Determine guide color based on snap type
+                let guide_color = match snap_target.snap_type {
+                    SnapType::Point => Color::rgb(0.0, 0.78, 0.0),      // Green for point snaps
+                    SnapType::Horizontal => Color::rgb(0.0, 0.59, 1.0), // Blue for alignment
+                    SnapType::Vertical => Color::rgb(0.0, 0.59, 1.0),   // Blue for alignment
+                    SnapType::Angle => Color::rgb(1.0, 0.59, 0.0),      // Orange for angle
+                    SnapType::Grid => Color::rgb(0.5, 0.5, 0.5),        // Gray for grid
+                };
 
+                // Render guide line from source to target
+                let source_screen = transform_page_to_screen(
+                    &snap_target.source_position,
+                    viewport,
+                );
+                let target_screen = transform_page_to_screen(
+                    &snap_target.target_position,
+                    viewport,
+                );
+
+                // Render snap guide line
+                primitives.push(Primitive::Line {
+                    start: source_screen,
+                    end: target_screen,
+                    width: 1.5,
+                    color: guide_color,
+                });
+
+                // Render snap target indicator (small circle at target position)
+                primitives.push(Primitive::Circle {
+                    center: target_screen,
+                    radius: 4.0,
+                    color: guide_color,
+                });
+
+                // For horizontal/vertical alignment, draw extended guide lines
+                match snap_target.snap_type {
+                    SnapType::Horizontal => {
+                        // Draw horizontal line across viewport
+                        primitives.push(Primitive::Line {
+                            start: [0.0, target_screen[1]],
+                            end: [viewport.width, target_screen[1]],
+                            width: 1.0,
+                            color: Color::rgba(0.0, 0.59, 1.0, 0.5),
+                        });
+                    }
+                    SnapType::Vertical => {
+                        // Draw vertical line across viewport
+                        primitives.push(Primitive::Line {
+                            start: [target_screen[0], 0.0],
+                            end: [target_screen[0], viewport.height],
+                            width: 1.0,
+                            color: Color::rgba(0.0, 0.59, 1.0, 0.5),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        guide_layer.set_primitives(primitives);
         self.update_layer(2, Arc::new(guide_layer));
     }
 

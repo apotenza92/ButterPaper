@@ -17,6 +17,8 @@ use pdf_editor_core::annotation::{AnnotationCollection, AnnotationId};
 use pdf_editor_core::manipulation::{
     generate_handles, ManipulationHandle, ManipulationState,
 };
+use pdf_editor_core::measurement::MeasurementCollection;
+use pdf_editor_core::snapping::{SnapConfig, SnapEngine};
 use pdf_editor_core::PageCoordinate;
 use pdf_editor_scheduler::Viewport;
 use std::time::Duration;
@@ -70,6 +72,9 @@ pub struct InputHandler {
 
     /// Handle size in page coordinates (points)
     handle_size: f32,
+
+    /// Snapping engine for precision alignment
+    snap_engine: SnapEngine,
 }
 
 /// Pan state with velocity interpolation
@@ -141,6 +146,7 @@ impl InputHandler {
             hit_test_tolerance: 5.0, // 5 points in page coordinates
             manipulation_state: None,
             handle_size: 6.0, // 6 points in page coordinates
+            snap_engine: SnapEngine::new(),
         }
     }
 
@@ -500,10 +506,41 @@ impl InputHandler {
     }
 
     /// Update active handle manipulation (call on mouse move while dragging)
-    pub fn update_handle_manipulation(&mut self) {
+    ///
+    /// This method calculates snap targets and applies snapping if enabled.
+    pub fn update_handle_manipulation(
+        &mut self,
+        annotations: &AnnotationCollection,
+        measurements: &MeasurementCollection,
+    ) {
         let page_coord = self.screen_to_page(self.mouse_position.0, self.mouse_position.1);
         if let Some(ref mut state) = self.manipulation_state {
             state.update_position(page_coord);
+
+            // Calculate snap target
+            // For line/arrow endpoints, use the other endpoint as reference for angle snapping
+            let reference_point = match &state.original_geometry {
+                pdf_editor_core::AnnotationGeometry::Line { start, end } |
+                pdf_editor_core::AnnotationGeometry::Arrow { start, end } => {
+                    match state.handle_type {
+                        pdf_editor_core::HandleType::TopLeft => Some(*end),
+                        pdf_editor_core::HandleType::BottomRight => Some(*start),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+
+            let snap_target = self.snap_engine.calculate_snap(
+                &page_coord,
+                self.viewport.page_index,
+                annotations,
+                measurements,
+                Some(state.annotation_id),
+                reference_point.as_ref(),
+            );
+
+            state.set_snap_target(snap_target);
         }
     }
 
@@ -538,6 +575,21 @@ impl InputHandler {
     /// Get the handle size in page coordinates
     pub fn handle_size(&self) -> f32 {
         self.handle_size
+    }
+
+    /// Get a reference to the snap engine
+    pub fn snap_engine(&self) -> &SnapEngine {
+        &self.snap_engine
+    }
+
+    /// Get a mutable reference to the snap engine (for configuration)
+    pub fn snap_engine_mut(&mut self) -> &mut SnapEngine {
+        &mut self.snap_engine
+    }
+
+    /// Set snap configuration
+    pub fn set_snap_config(&mut self, config: SnapConfig) {
+        self.snap_engine.set_config(config);
     }
 }
 
@@ -1115,7 +1167,10 @@ mod tests {
 
         // Drag to (200, 200)
         handler.on_mouse_move(200.0, 200.0);
-        handler.update_handle_manipulation();
+
+        use pdf_editor_core::MeasurementCollection;
+        let measurements = MeasurementCollection::new();
+        handler.update_handle_manipulation(&collection, &measurements);
 
         // End manipulation
         let result = handler.end_handle_manipulation();

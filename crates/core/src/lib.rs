@@ -10,6 +10,7 @@ pub mod manipulation;
 pub mod measurement;
 pub mod page_switch;
 pub mod preview;
+pub mod snapping;
 
 pub use annotation::{
     Annotation, AnnotationCollection, AnnotationGeometry, AnnotationId, AnnotationMetadata,
@@ -30,3 +31,4 @@ pub use measurement::{
 };
 pub use page_switch::{PageSwitchResult, PageSwitcher};
 pub use preview::{AsyncPreviewRenderer, PreviewRenderer, PreviewHandle, PreviewResult};
+pub use snapping::{SnapConfig, SnapEngine, SnapTarget, SnapType};

@@ -4,6 +4,7 @@
 //! Handles are rendered as small control points on the annotation's bounding box.
 
 use crate::annotation::{Annotation, AnnotationGeometry, AnnotationId, PageCoordinate};
+use crate::snapping::SnapTarget;
 
 /// Type of manipulation handle
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,8 +286,11 @@ pub struct ManipulationState {
     /// Drag start position in page coordinates
     pub drag_start: PageCoordinate,
 
-    /// Current drag position in page coordinates
+    /// Current drag position in page coordinates (before snapping)
     pub current_position: PageCoordinate,
+
+    /// Active snap target (if any)
+    pub snap_target: Option<SnapTarget>,
 }
 
 impl ManipulationState {
@@ -303,6 +307,7 @@ impl ManipulationState {
             original_geometry,
             drag_start,
             current_position: drag_start,
+            snap_target: None,
         }
     }
 
@@ -311,10 +316,26 @@ impl ManipulationState {
         self.current_position = position;
     }
 
+    /// Set the active snap target
+    pub fn set_snap_target(&mut self, snap_target: Option<SnapTarget>) {
+        self.snap_target = snap_target;
+    }
+
+    /// Get the effective position (snapped if snap is active)
+    pub fn effective_position(&self) -> PageCoordinate {
+        if let Some(ref snap) = self.snap_target {
+            snap.target_position
+        } else {
+            self.current_position
+        }
+    }
+
     /// Calculate the new geometry based on current manipulation
     pub fn calculate_new_geometry(&self) -> AnnotationGeometry {
-        let delta_x = self.current_position.x - self.drag_start.x;
-        let delta_y = self.current_position.y - self.drag_start.y;
+        // Use effective position (with snapping applied)
+        let effective_pos = self.effective_position();
+        let delta_x = effective_pos.x - self.drag_start.x;
+        let delta_y = effective_pos.y - self.drag_start.y;
 
         match &self.original_geometry {
             AnnotationGeometry::Line { start, end } => {
@@ -418,8 +439,9 @@ impl ManipulationState {
             AnnotationGeometry::Circle { center, radius: _ } => {
                 match self.handle_type {
                     HandleType::Top | HandleType::Bottom | HandleType::Left | HandleType::Right => {
-                        // Calculate new radius based on distance from center to current position
-                        let new_radius = center.distance_to(&self.current_position);
+                        // Calculate new radius based on distance from center to effective position
+                        let effective_pos = self.effective_position();
+                        let new_radius = center.distance_to(&effective_pos);
                         AnnotationGeometry::Circle {
                             center: *center,
                             radius: new_radius,
@@ -430,9 +452,10 @@ impl ManipulationState {
             }
 
             AnnotationGeometry::Ellipse { center, radius_x, radius_y } => {
+                let effective_pos = self.effective_position();
                 match self.handle_type {
                     HandleType::Left | HandleType::Right => {
-                        let new_radius_x = (self.current_position.x - center.x).abs();
+                        let new_radius_x = (effective_pos.x - center.x).abs();
                         AnnotationGeometry::Ellipse {
                             center: *center,
                             radius_x: new_radius_x,
@@ -440,7 +463,7 @@ impl ManipulationState {
                         }
                     }
                     HandleType::Top | HandleType::Bottom => {
-                        let new_radius_y = (self.current_position.y - center.y).abs();
+                        let new_radius_y = (effective_pos.y - center.y).abs();
                         AnnotationGeometry::Ellipse {
                             center: *center,
                             radius_x: *radius_x,
