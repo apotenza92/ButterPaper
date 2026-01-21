@@ -1084,6 +1084,7 @@ dependencies = [
 name = "pdf-editor-core"
 version = "0.1.0"
 dependencies = [
+ "pdf-editor-cache",
  "pdf-editor-render",
 ]
 
