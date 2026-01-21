@@ -1083,6 +1083,9 @@ dependencies = [
 [[package]]
 name = "pdf-editor-core"
 version = "0.1.0"
+dependencies = [
+ "pdf-editor-render",
+]
 
 [[package]]
 name = "pdf-editor-render"

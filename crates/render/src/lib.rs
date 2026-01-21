@@ -5,3 +5,7 @@
 pub mod pdf;
 pub mod progressive;
 pub mod tile;
+
+pub use pdf::{PageDimensions, PdfDocument, PdfError, PdfMetadata, PdfResult};
+pub use progressive::{ProgressCallback, ProgressiveTileLoader, TileState};
+pub use tile::{RenderedTile, TileCoordinate, TileId, TileProfile, TileRenderer};
