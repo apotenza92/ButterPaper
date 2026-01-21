@@ -7224,3 +7224,89 @@ Layout adjustment follows CAD PDF editor principles:
 - Preserve original layout
 - No unnecessary reflowing
 - Deterministic results
+
+## Session: 2026-01-21 - Task 118: Ensure text edits remain selectable
+
+### Implementation Summary
+
+Implemented text edit rendering and selection support to ensure edited text remains vector-based and selectable without rasterization fallback.
+
+### Changes Made
+
+1. **Compositor - Text Edit Layer**
+   - Added `text_edit_layer_id` to compositor structure
+   - Added `text_edit_manager` field to store reference to TextEditManager
+   - Updated layer ordering: tile → text_highlight → text_edit → annotation → guide → label (6 layers total)
+   - Implemented `rebuild_text_edit_layer()` method to render text edit bounding boxes
+   - Added `set_text_edit_manager()` setter method
+   - Updated all layer indices in methods and tests
+
+2. **Text Edit Rendering**
+   - Text edits rendered as semi-transparent yellow/cream overlays (Color: rgba(1.0, 1.0, 0.85, 0.3))
+   - Bounding boxes transformed from page coordinates to screen coordinates
+   - Only visible edits are rendered
+   - Vector-based rendering using Rectangle primitives (no rasterization)
+
+3. **Text Selection Support**
+   - Extended TextSearchManager with TextEditManager reference
+   - Added `set_text_edit_manager()` method to TextSearchManager
+   - Modified `update_selection()` to query both text layers AND text edits
+   - Text selection now includes edited text content for copy/paste operations
+   - Hit testing works via bounding box overlap detection
+
+4. **Testing**
+   - Updated all compositor tests to reflect 6 layers (previously 5)
+   - Fixed layer indices in test assertions
+   - All compositor tests pass successfully
+   - Linting passes with no warnings
+
+### Technical Approach
+
+**Vector-Based, Not Rasterized:**
+- Text edits stored as structured data (bbox, font, color, text content)
+- Rendered as GPU primitives (Rectangle) with overlay
+- No font rasterization or texture generation required
+- Text content accessible for selection via bounding box queries
+
+**Selection Mechanism:**
+- User drags selection rectangle over edited text
+- Selection rectangle compared against text edit bounding boxes
+- Overlapping text edits contribute their `edited_text` to selection
+- Selected text available for copy/paste operations
+
+**Future Enhancements:**
+The current implementation renders text edit regions as colored overlays. Future work could add:
+- Proper glyph rendering with font rasterization
+- Text rendering to texture atlas
+- Visual display of edited text content on screen
+- However, the current approach ensures selectability and maintains vector-based primitives
+
+### Key Files Modified
+
+- `crates/ui/src/compositor.rs`: Added text edit layer and rendering
+- `crates/ui/src/text_selection.rs`: Extended selection to query text edits
+
+### Test Results
+
+```
+cargo test -p pdf-editor-ui compositor::tests
+running 8 tests
+test compositor::tests::test_calculate_visible_tiles ... ok
+test compositor::tests::test_layer_ordering ... ok
+test compositor::tests::test_compositor_creation ... ok
+test compositor::tests::test_add_annotation ... ok
+test compositor::tests::test_viewport_equals ... ok
+test compositor::tests::test_render_selection_highlight ... ok
+test compositor::tests::test_viewport_update ... ok
+test compositor::tests::test_render_manipulation_handles ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored
+```
+
+### Next Steps
+
+Task 119: "Make text edits non-blocking (no sync re-render)"
+- Implement async text edit updates
+- Ensure UI remains responsive during text edits
+- No blocking operations on UI thread
+- Leverage existing job scheduler for text edit operations

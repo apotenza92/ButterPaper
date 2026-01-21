@@ -15,6 +15,7 @@ use pdf_editor_core::annotation::{Annotation, AnnotationGeometry, PageCoordinate
 use pdf_editor_core::manipulation::{ManipulationHandle, ManipulationState};
 use pdf_editor_core::measurement::MeasurementCollection;
 use pdf_editor_core::snapping::SnapType;
+use pdf_editor_core::text_edit::TextEditManager;
 use pdf_editor_render::tile::{TileCoordinate, TileId, TileProfile, TILE_SIZE};
 use pdf_editor_scheduler::Viewport;
 use std::sync::Arc;
@@ -47,6 +48,10 @@ pub struct ViewportCompositor {
     #[allow(dead_code)]
     text_highlight_layer_id: NodeId,
 
+    /// Node ID for text edit layer (reserved for future use in node updating)
+    #[allow(dead_code)]
+    text_edit_layer_id: NodeId,
+
     /// Current viewport state (cached to detect changes)
     current_viewport: Option<Viewport>,
 
@@ -61,6 +66,9 @@ pub struct ViewportCompositor {
 
     /// Text search manager (for text highlights and selection)
     text_search_manager: Option<Arc<TextSearchManager>>,
+
+    /// Text edit manager (for rendering edited text)
+    text_edit_manager: Option<Arc<TextEditManager>>,
 }
 
 impl ViewportCompositor {
@@ -71,13 +79,15 @@ impl ViewportCompositor {
         // Create layered structure:
         // - root
         //   - tile_layer (bottom - rendered first)
-        //   - text_highlight_layer (above tiles, below annotations)
+        //   - text_highlight_layer (above tiles, below text edits)
+        //   - text_edit_layer (above text highlights, below annotations)
         //   - annotation_layer (middle)
         //   - guide_layer (above annotations)
         //   - label_layer (top - rendered last, always visible)
 
         let tile_layer_id = NodeId::new();
         let text_highlight_layer_id = NodeId::new();
+        let text_edit_layer_id = NodeId::new();
         let annotation_layer_id = NodeId::new();
         let guide_layer_id = NodeId::new();
         let label_layer_id = NodeId::new();
@@ -86,6 +96,8 @@ impl ViewportCompositor {
         let tile_layer = SceneNode::new();
 
         let text_highlight_layer = SceneNode::new();
+
+        let text_edit_layer = SceneNode::new();
 
         let annotation_layer = SceneNode::new();
 
@@ -97,6 +109,7 @@ impl ViewportCompositor {
         let mut root = SceneNode::new();
         root.add_child(Arc::new(tile_layer));
         root.add_child(Arc::new(text_highlight_layer));
+        root.add_child(Arc::new(text_edit_layer));
         root.add_child(Arc::new(annotation_layer));
         root.add_child(Arc::new(guide_layer));
         root.add_child(Arc::new(label_layer));
@@ -109,6 +122,7 @@ impl ViewportCompositor {
             scene_graph,
             tile_layer_id,
             text_highlight_layer_id,
+            text_edit_layer_id,
             annotation_layer_id,
             guide_layer_id,
             label_layer_id,
@@ -117,6 +131,7 @@ impl ViewportCompositor {
             measurements: None,
             manipulation_state: None,
             text_search_manager: None,
+            text_edit_manager: None,
         }
     }
 
@@ -142,6 +157,9 @@ impl ViewportCompositor {
 
         // Rebuild text highlight layer (Phase 9 - text search and selection)
         self.rebuild_text_highlight_layer(viewport);
+
+        // Rebuild text edit layer (Phase 10 - edited text)
+        self.rebuild_text_edit_layer(viewport);
 
         // Rebuild annotation layer (Phase 7 - placeholder for now)
         self.rebuild_annotation_layer(viewport);
@@ -173,6 +191,11 @@ impl ViewportCompositor {
     /// Set the text search manager (for text highlight rendering)
     pub fn set_text_search_manager(&mut self, manager: Arc<TextSearchManager>) {
         self.text_search_manager = Some(manager);
+    }
+
+    /// Set the text edit manager (for text edit rendering)
+    pub fn set_text_edit_manager(&mut self, manager: Arc<TextEditManager>) {
+        self.text_edit_manager = Some(manager);
     }
 
     /// Rebuild the tile layer based on viewport
@@ -262,6 +285,62 @@ impl ViewportCompositor {
         self.update_layer(1, Arc::new(highlight_layer));
     }
 
+    /// Rebuild text edit layer (Phase 10 - edited text rendering)
+    fn rebuild_text_edit_layer(&mut self, viewport: &Viewport) {
+        let mut text_edit_layer = SceneNode::new();
+        let mut primitives = Vec::new();
+
+        // Render text edits if text edit manager is available
+        if let Some(ref edit_manager) = self.text_edit_manager {
+            // Get all text edits for the current page
+            if let Ok(edits) = edit_manager.get_page_edits(viewport.page_index) {
+                for edit in edits {
+                    // Only render visible edits
+                    if !edit.visible {
+                        continue;
+                    }
+
+                    // Transform bounding box to screen coordinates
+                    let bbox = &edit.bbox;
+                    let top_left = transform_page_to_screen(
+                        &PageCoordinate::new(bbox.x, bbox.y),
+                        viewport,
+                    );
+                    let bottom_right = transform_page_to_screen(
+                        &PageCoordinate::new(bbox.x + bbox.width, bbox.y + bbox.height),
+                        viewport,
+                    );
+
+                    // Render text edit bounding box with a semi-transparent overlay
+                    // This makes it clear where text has been edited
+                    // The overlay uses a light yellow/cream color to indicate editability
+                    primitives.push(Primitive::Rectangle {
+                        rect: Rect {
+                            x: top_left[0],
+                            y: top_left[1],
+                            width: bottom_right[0] - top_left[0],
+                            height: bottom_right[1] - top_left[1],
+                        },
+                        color: Color {
+                            r: 1.0,
+                            g: 1.0,
+                            b: 0.85,
+                            a: 0.3,
+                        }, // Light yellow/cream overlay
+                    });
+
+                    // For now, we render a simple placeholder for the edited text
+                    // Future implementation could add proper text rasterization
+                    // The text content (edit.edited_text) is stored and can be accessed
+                    // for selection/copy operations via hit testing
+                }
+            }
+        }
+
+        text_edit_layer.set_primitives(primitives);
+        self.update_layer(2, Arc::new(text_edit_layer));
+    }
+
     /// Rebuild annotation layer (Phase 7)
     fn rebuild_annotation_layer(&mut self, viewport: &Viewport) {
         let mut annotation_primitives = Vec::new();
@@ -290,7 +369,7 @@ impl ViewportCompositor {
         let mut annotation_layer = SceneNode::new();
         annotation_layer.set_primitives(annotation_primitives);
 
-        self.update_layer(2, Arc::new(annotation_layer));
+        self.update_layer(3, Arc::new(annotation_layer));
     }
 
     /// Rebuild guide layer (Phase 8 - placeholder)
@@ -361,7 +440,7 @@ impl ViewportCompositor {
         }
 
         guide_layer.set_primitives(primitives);
-        self.update_layer(3, Arc::new(guide_layer));
+        self.update_layer(4, Arc::new(guide_layer));
     }
 
     /// Rebuild label layer (Phase 8 - measurement labels)
@@ -398,7 +477,7 @@ impl ViewportCompositor {
         }
 
         label_layer.set_primitives(primitives);
-        self.update_layer(4, Arc::new(label_layer));
+        self.update_layer(5, Arc::new(label_layer));
     }
 
     /// Update a specific layer in the scene graph
@@ -442,23 +521,6 @@ impl ViewportCompositor {
     /// Add an annotation primitive to the annotation layer
     /// (Phase 7 - exposed for future annotation engine integration)
     pub fn add_annotation(&mut self, primitive: Primitive) {
-        let current_layer = self.get_layer(2);
-        let mut primitives = current_layer.primitives().to_vec();
-        primitives.push(primitive);
-
-        let mut new_layer = SceneNode::new();
-        new_layer.set_transform(*current_layer.transform());
-        new_layer.set_primitives(primitives);
-        for child in current_layer.children() {
-            new_layer.add_child(Arc::clone(child));
-        }
-
-        self.update_layer(2, Arc::new(new_layer));
-    }
-
-    /// Add a guide primitive to the guide layer
-    /// (Phase 8 - exposed for future measurement engine integration)
-    pub fn add_guide(&mut self, primitive: Primitive) {
         let current_layer = self.get_layer(3);
         let mut primitives = current_layer.primitives().to_vec();
         primitives.push(primitive);
@@ -473,9 +535,9 @@ impl ViewportCompositor {
         self.update_layer(3, Arc::new(new_layer));
     }
 
-    /// Add a label primitive to the label layer
+    /// Add a guide primitive to the guide layer
     /// (Phase 8 - exposed for future measurement engine integration)
-    pub fn add_label(&mut self, primitive: Primitive) {
+    pub fn add_guide(&mut self, primitive: Primitive) {
         let current_layer = self.get_layer(4);
         let mut primitives = current_layer.primitives().to_vec();
         primitives.push(primitive);
@@ -488,6 +550,23 @@ impl ViewportCompositor {
         }
 
         self.update_layer(4, Arc::new(new_layer));
+    }
+
+    /// Add a label primitive to the label layer
+    /// (Phase 8 - exposed for future measurement engine integration)
+    pub fn add_label(&mut self, primitive: Primitive) {
+        let current_layer = self.get_layer(5);
+        let mut primitives = current_layer.primitives().to_vec();
+        primitives.push(primitive);
+
+        let mut new_layer = SceneNode::new();
+        new_layer.set_transform(*current_layer.transform());
+        new_layer.set_primitives(primitives);
+        for child in current_layer.children() {
+            new_layer.add_child(Arc::clone(child));
+        }
+
+        self.update_layer(5, Arc::new(new_layer));
     }
 
     /// Get a layer by index
@@ -852,7 +931,7 @@ mod tests {
 
         // Verify scene graph structure
         let root = compositor.scene_graph().root();
-        assert_eq!(root.children().len(), 5, "Should have 5 layers");
+        assert_eq!(root.children().len(), 6, "Should have 6 layers");
     }
 
     #[test]
@@ -923,7 +1002,7 @@ mod tests {
         compositor.add_annotation(annotation);
 
         // Verify annotation layer has 1 primitive
-        let annotation_layer = compositor.get_layer(2);
+        let annotation_layer = compositor.get_layer(3);
         assert_eq!(annotation_layer.primitives().len(), 1);
     }
 
@@ -937,13 +1016,14 @@ mod tests {
         let layers = root.children();
 
         // Verify we have the expected number of layers in the correct order
-        assert_eq!(layers.len(), 5);
+        assert_eq!(layers.len(), 6);
 
         // The layers should be distinct nodes
         assert_ne!(layers[0].id(), layers[1].id());
         assert_ne!(layers[1].id(), layers[2].id());
         assert_ne!(layers[2].id(), layers[3].id());
         assert_ne!(layers[3].id(), layers[4].id());
+        assert_ne!(layers[4].id(), layers[5].id());
     }
 
     #[test]
@@ -968,7 +1048,7 @@ mod tests {
         compositor.render_selection_highlight(&annotation, &viewport);
 
         // Verify guide layer has primitives
-        let guide_layer = compositor.get_layer(3);
+        let guide_layer = compositor.get_layer(4);
         assert!(!guide_layer.primitives().is_empty());
     }
 
@@ -996,7 +1076,7 @@ mod tests {
         compositor.render_manipulation_handles(&handles, &viewport);
 
         // Verify guide layer has primitives (2 per handle: border + fill)
-        let guide_layer = compositor.get_layer(3);
+        let guide_layer = compositor.get_layer(4);
         assert_eq!(guide_layer.primitives().len(), handles.len() * 2);
     }
 }

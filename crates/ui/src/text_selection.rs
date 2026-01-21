@@ -11,6 +11,7 @@
 //! 2. **Search highlights**: Highlight all instances of a search query
 
 use pdf_editor_core::annotation::PageCoordinate;
+use pdf_editor_core::text_edit::TextEditManager;
 use pdf_editor_core::text_layer::{SearchMatch, TextBoundingBox, TextLayerManager};
 use std::sync::Arc;
 
@@ -116,9 +117,13 @@ impl SearchResult {
 ///
 /// Manages text search queries, search results, and text selection state.
 /// Works with TextLayerManager to query text content and coordinates.
+/// Also supports text edits for selection and copy operations.
 pub struct TextSearchManager {
     /// Reference to the document's text layer manager
     text_layers: Arc<TextLayerManager>,
+
+    /// Reference to the text edit manager (optional)
+    text_edits: Option<Arc<TextEditManager>>,
 
     /// Current search query (if any)
     search_query: Option<String>,
@@ -138,11 +143,19 @@ impl TextSearchManager {
     pub fn new(text_layers: Arc<TextLayerManager>) -> Self {
         Self {
             text_layers,
+            text_edits: None,
             search_query: None,
             search_results: Vec::new(),
             selected_result_index: None,
             text_selection: None,
         }
+    }
+
+    /// Set the text edit manager
+    ///
+    /// This enables text selection to also query text edits for selectable content.
+    pub fn set_text_edit_manager(&mut self, text_edits: Arc<TextEditManager>) {
+        self.text_edits = Some(text_edits);
     }
 
     /// Start a new search query
@@ -282,15 +295,28 @@ impl TextSearchManager {
         if let Some(selection) = &mut self.text_selection {
             selection.update_end_point(end_point);
 
+            let mut text_parts = Vec::new();
+
             // Query the text layer for text in the selection rectangle
             if let Some(layer) = self.text_layers.get_layer(selection.page_index) {
                 let spans = layer.find_spans_in_rect(&selection.selection_rect);
-                selection.text = spans
-                    .iter()
-                    .map(|span| span.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                for span in spans {
+                    text_parts.push(span.text.clone());
+                }
             }
+
+            // Also query text edits in the selection rectangle
+            if let Some(ref text_edits) = self.text_edits {
+                if let Ok(edits) = text_edits.get_page_edits(selection.page_index) {
+                    for edit in edits {
+                        if edit.visible && edit.overlaps(&selection.selection_rect) {
+                            text_parts.push(edit.edited_text.clone());
+                        }
+                    }
+                }
+            }
+
+            selection.text = text_parts.join(" ");
         }
     }
 
