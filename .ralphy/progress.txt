@@ -4471,3 +4471,110 @@ collection.recompute_page(0);
 9. ✅ Comprehensive test coverage (10 tests)
 10. ✅ Full documentation and usage examples
 
+
+---
+
+## Task: Implement scale system (manual ratio, two-point calibration, per-page)
+**Date:** 2026-01-21
+**Status:** COMPLETE ✅
+
+### Summary
+
+Verified that the scale system implementation is fully complete and functional. The implementation includes all required features from Phase 8, Task 2 of the PRD.
+
+### Implementation Details
+
+The scale system has been fully implemented in `crates/core/src/measurement.rs` with the following components:
+
+1. **ScaleType enum** (lines 17-63):
+   - Manual ratio scales with configurable ratio
+   - Two-point calibration using known distance between points
+   - OCR-detected scales with confidence scoring
+   - Automatic ratio calculation for all scale types
+
+2. **ScaleSystem struct** (lines 66-174):
+   - Per-page scale management
+   - Unit conversion (page coords ↔ real-world units)
+   - Label support for scale descriptions
+   - Reliability checking (manual/two-point always reliable, OCR only if confidence > 0.8)
+
+3. **MeasurementCollection integration** (lines 439-575):
+   - Scale storage and retrieval by ID
+   - Default scale per page with automatic assignment
+   - Multiple scales per page support
+   - Batch recomputation when scales change
+
+### Key Features
+
+✅ **Manual Ratio Scales:** Simple ratio-based scales (e.g., 72 points = 1 inch)
+✅ **Two-Point Calibration:** User-defined distance between two points for automatic scale calculation
+✅ **Per-Page Scales:** Each page can have its own scale system with defaults
+✅ **Multiple Scales:** Support for multiple scale systems per page
+✅ **Unit Conversion:** Bidirectional conversion between page and real-world coordinates
+✅ **OCR Integration Ready:** Infrastructure for OCR-detected scales with confidence tracking
+✅ **Batch Recomputation:** Efficient recomputation of all measurements after scale changes
+
+### Test Coverage
+
+All 10 tests pass successfully:
+- Manual scale creation and conversion
+- Two-point calibration scale calculation
+- Distance, area, radius, and angle measurements with scales
+- MeasurementCollection operations
+- Scale recomputation after changes
+- Polygon area calculation using shoelace formula
+
+### Validation
+
+✅ **Linting:** `cargo clippy --all-targets --all-features -- -D warnings` passes with no warnings
+✅ **Compilation:** All crates compile successfully
+✅ **Architecture:** Integrates seamlessly with existing annotation and coordinate systems
+✅ **Documentation:** Comprehensive inline documentation throughout
+
+### Usage Example
+
+```rust
+use pdf_editor_core::measurement::*;
+
+// Create a manual scale: 72 points = 1 inch
+let scale = ScaleSystem::manual(0, 72.0, "inches");
+
+// Or create a two-point calibration scale
+let p1 = PageCoordinate::new(0.0, 0.0);
+let p2 = PageCoordinate::new(100.0, 0.0);
+let scale = ScaleSystem::two_point(0, p1, p2, 10.0, "meters");
+
+// Add to collection
+let mut collection = MeasurementCollection::new();
+let scale_id = collection.add_scale(scale);
+
+// Scale is automatically set as default for the page
+// Create measurements that use this scale
+let geometry = AnnotationGeometry::Line {
+    start: PageCoordinate::new(0.0, 0.0),
+    end: PageCoordinate::new(144.0, 0.0),
+};
+
+let measurement = Measurement::new(0, geometry, MeasurementType::Distance, scale_id);
+collection.add(measurement);
+
+// Measurement value is automatically computed: 2.00 inches
+```
+
+### Design Decisions
+
+1. **Immutable Scale Systems:** Scales are created and added, not modified in place
+2. **ID-Based References:** Measurements reference scales by ID for flexibility
+3. **Lazy Computation:** Values computed when measurements are added or scales change
+4. **Default Scale Per Page:** Simplifies common case where one scale applies to entire page
+5. **OCR Scale Confidence:** OCR-detected scales marked as suggestions, can be promoted to manual
+
+### Next Steps in Phase 8
+
+The remaining tasks in Phase 8 are:
+- [ ] Add measurement labels with real-time value derivation (UI rendering)
+- [ ] Implement snapping guides for precision (interactive editing)
+- [ ] Store scale in document metadata (persistence)
+- [ ] Build scale detection from OCR (text parsing)
+
+**Phase 8, Task 2: COMPLETE ✅**
