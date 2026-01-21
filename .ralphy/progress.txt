@@ -10715,3 +10715,45 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 - Placeholder thumbnails show page numbers (actual PDF thumbnail rendering requires GPU texture cache population)
 - Selected page is highlighted with a blue border
 - Strip width is 136px (120px thumbnail + 8px spacing * 2)
+
+### Task: Implement smooth scroll in sidebar (Phase 2.3)
+
+**Status:** Complete
+
+**Changes:**
+- Added `ScrollState` struct to manage smooth scroll animation state
+  - Tracks current offset, target offset, velocity, and animation parameters
+  - Supports momentum-based scrolling with velocity decay (0.92 decay factor)
+  - Uses smooth interpolation (15% of remaining distance per frame)
+- Updated `ThumbnailStrip` to use `ScrollState` instead of plain `scroll_offset`
+- Added new methods for smooth scrolling:
+  - `scroll()` - applies scroll delta as velocity for momentum scrolling
+  - `scroll_immediate()` - instantly scrolls without animation
+  - `scroll_to()` - smoothly scrolls to a specific offset
+  - `scroll_offset()` - gets current visual scroll position
+  - `target_scroll_offset()` - gets animation target position
+  - `is_scroll_animating()` - checks if animation is in progress
+  - `update()` - updates animation state each frame, returns true if changed
+- Updated `auto_scroll_to_current()` to use smooth animation when navigating to current page
+- Updated all scroll-related internal methods to use `scroll_state.offset`
+- Added comprehensive tests for smooth scroll functionality:
+  - `test_scroll_immediate` - tests immediate scroll without animation
+  - `test_smooth_scroll_animation` - tests smooth scroll interpolation
+  - `test_smooth_scroll_completes` - tests animation completion
+  - `test_momentum_scrolling` - tests velocity-based momentum scrolling
+  - `test_scroll_clamped_to_bounds` - tests scroll position clamping
+
+**Files Modified:**
+- crates/ui/src/thumbnail.rs (added smooth scroll animation)
+- PRD.md (marked task complete)
+
+**Technical Details:**
+- Scroll animation uses same pattern as zoom animation in input.rs
+- Interpolation speed: 15% of remaining distance per frame
+- Momentum decay: 0.92 (decays to ~8% after ~30 frames at 60fps)
+- Velocity threshold: 0.5 pixels/second (stops momentum when below)
+- Offset threshold: 0.5 pixels (triggers interpolation)
+- Snap threshold: 0.01 pixels (snaps to target when very close)
+
+**Tests:** All 14 thumbnail tests pass
+**Linting:** No new warnings (pre-existing warnings unrelated to this change)

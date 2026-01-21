@@ -2,11 +2,16 @@
 //!
 //! Provides a thumbnail strip UI component that displays page thumbnails
 //! and allows users to navigate between pages in the PDF document.
+//!
+//! The sidebar supports smooth scrolling with momentum-based animation,
+//! providing a natural, fluid scrolling experience similar to native
+//! macOS scrolling behavior.
 
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneNode};
 use pdf_editor_cache::gpu::GpuTextureCache;
 use pdf_editor_render::tile::{TileCoordinate, TileId, TileProfile};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Configuration for thumbnail strip layout
 #[derive(Debug, Clone)]
@@ -68,6 +73,37 @@ pub enum StripPosition {
     Bottom,
 }
 
+/// State for smooth scroll animation
+#[derive(Debug, Clone)]
+struct ScrollState {
+    /// Current scroll offset (visual position)
+    offset: f32,
+
+    /// Target scroll offset (where we're animating toward)
+    target_offset: f32,
+
+    /// Scroll velocity (pixels per second) for momentum scrolling
+    velocity: f32,
+
+    /// Interpolation speed (0.0 - 1.0) - fraction of remaining distance per frame
+    interpolation_speed: f32,
+
+    /// Velocity decay factor (0.0 - 1.0) for momentum deceleration
+    momentum_decay: f32,
+}
+
+impl Default for ScrollState {
+    fn default() -> Self {
+        Self {
+            offset: 0.0,
+            target_offset: 0.0,
+            velocity: 0.0,
+            interpolation_speed: 0.15, // 15% of remaining distance per frame
+            momentum_decay: 0.92,      // Decay to 8% per frame at 60fps
+        }
+    }
+}
+
 /// Thumbnail strip component that displays page thumbnails for navigation
 pub struct ThumbnailStrip {
     /// Configuration for layout and appearance
@@ -91,8 +127,8 @@ pub struct ThumbnailStrip {
     /// Viewport dimensions (width, height)
     viewport_size: (f32, f32),
 
-    /// Scroll offset for the thumbnail strip (for many pages)
-    scroll_offset: f32,
+    /// Smooth scroll state
+    scroll_state: ScrollState,
 }
 
 impl ThumbnailStrip {
@@ -119,7 +155,7 @@ impl ThumbnailStrip {
             scene_node,
             node_id,
             viewport_size,
-            scroll_offset: 0.0,
+            scroll_state: ScrollState::default(),
         };
 
         strip.rebuild();
@@ -144,7 +180,7 @@ impl ThumbnailStrip {
             scene_node,
             node_id,
             viewport_size,
-            scroll_offset: 0.0,
+            scroll_state: ScrollState::default(),
         };
 
         strip.rebuild();
@@ -167,8 +203,8 @@ impl ThumbnailStrip {
 
     /// Update viewport size (e.g., on window resize)
     pub fn set_viewport_size(&mut self, width: f32, height: f32) {
-        if (self.viewport_size.0 - width).abs() > 0.1
-            || (self.viewport_size.1 - height).abs() > 0.1 {
+        if (self.viewport_size.0 - width).abs() > 0.1 || (self.viewport_size.1 - height).abs() > 0.1
+        {
             self.viewport_size = (width, height);
             self.rebuild();
         }
@@ -205,14 +241,106 @@ impl ThumbnailStrip {
         self.node_id
     }
 
-    /// Handle scroll input for the thumbnail strip
+    /// Handle scroll input for the thumbnail strip (with momentum)
+    ///
+    /// This initiates smooth scrolling by adding velocity to the scroll state.
+    /// Call `update()` each frame to animate the scroll.
     pub fn scroll(&mut self, delta: f32) {
+        // Add to velocity for momentum-based scrolling
+        // Scale delta for natural feeling (larger delta = more momentum)
+        self.scroll_state.velocity += delta * 60.0; // Convert to per-second velocity
+    }
+
+    /// Handle scroll input for the thumbnail strip (immediate, no animation)
+    ///
+    /// Use this for direct scroll position changes without animation.
+    pub fn scroll_immediate(&mut self, delta: f32) {
         let max_scroll = self.calculate_max_scroll();
-        self.scroll_offset = (self.scroll_offset + delta).clamp(0.0, max_scroll);
+        self.scroll_state.offset = (self.scroll_state.offset + delta).clamp(0.0, max_scroll);
+        self.scroll_state.target_offset = self.scroll_state.offset;
+        self.scroll_state.velocity = 0.0;
         self.rebuild();
     }
 
-    /// Auto-scroll to show the current page
+    /// Scroll to a specific offset with smooth animation
+    pub fn scroll_to(&mut self, offset: f32) {
+        let max_scroll = self.calculate_max_scroll();
+        self.scroll_state.target_offset = offset.clamp(0.0, max_scroll);
+        // Stop any existing momentum
+        self.scroll_state.velocity = 0.0;
+    }
+
+    /// Get the current scroll offset (visual position)
+    pub fn scroll_offset(&self) -> f32 {
+        self.scroll_state.offset
+    }
+
+    /// Get the target scroll offset (where animation is heading)
+    pub fn target_scroll_offset(&self) -> f32 {
+        self.scroll_state.target_offset
+    }
+
+    /// Check if scroll animation is currently in progress
+    pub fn is_scroll_animating(&self) -> bool {
+        let offset_diff = (self.scroll_state.offset - self.scroll_state.target_offset).abs();
+        let has_velocity = self.scroll_state.velocity.abs() > 0.5;
+        offset_diff > 0.5 || has_velocity
+    }
+
+    /// Update animation state (call every frame)
+    ///
+    /// Returns true if the scroll position changed and a rebuild is needed.
+    pub fn update(&mut self, delta_time: Duration) -> bool {
+        let delta_seconds = delta_time.as_secs_f32();
+        let max_scroll = self.calculate_max_scroll();
+        let mut changed = false;
+
+        // Apply momentum-based scrolling
+        if self.scroll_state.velocity.abs() > 0.5 {
+            // Apply velocity decay
+            self.scroll_state.velocity *= self.scroll_state.momentum_decay;
+
+            // Update target based on velocity
+            let velocity_delta = self.scroll_state.velocity * delta_seconds;
+            self.scroll_state.target_offset =
+                (self.scroll_state.target_offset + velocity_delta).clamp(0.0, max_scroll);
+
+            // If we hit the bounds, stop velocity
+            if self.scroll_state.target_offset <= 0.0
+                || self.scroll_state.target_offset >= max_scroll
+            {
+                self.scroll_state.velocity = 0.0;
+            }
+
+            changed = true;
+        } else {
+            // Stop momentum completely when very small
+            self.scroll_state.velocity = 0.0;
+        }
+
+        // Smooth interpolation toward target
+        let offset_diff = self.scroll_state.target_offset - self.scroll_state.offset;
+        if offset_diff.abs() > 0.5 {
+            // Interpolate toward target
+            let new_offset = self.scroll_state.offset
+                + offset_diff * self.scroll_state.interpolation_speed;
+            self.scroll_state.offset = new_offset.clamp(0.0, max_scroll);
+            changed = true;
+        } else if offset_diff.abs() > 0.01 {
+            // Snap to target when very close
+            self.scroll_state.offset = self.scroll_state.target_offset;
+            changed = true;
+        }
+
+        // Rebuild scene if scroll position changed
+        if changed {
+            self.rebuild();
+        }
+
+        changed
+    }
+
+    /// Auto-scroll to show the current page with smooth animation
     fn auto_scroll_to_current(&mut self) {
         let thumbnail_height = self.config.thumbnail_height + self.config.spacing;
         let current_pos = self.current_page as f32 * thumbnail_height;
@@ -223,15 +351,22 @@ impl ThumbnailStrip {
             StripPosition::Top | StripPosition::Bottom => self.viewport_size.0,
         };
 
-        // Scroll to show current page
-        if current_pos < self.scroll_offset {
-            self.scroll_offset = current_pos;
-        } else if current_pos + thumbnail_height > self.scroll_offset + visible_height {
-            self.scroll_offset = current_pos + thumbnail_height - visible_height;
+        // Calculate target scroll to show current page
+        let current_offset = self.scroll_state.offset;
+        let mut target = self.scroll_state.target_offset;
+
+        if current_pos < current_offset {
+            // Page is above visible area, scroll up
+            target = current_pos;
+        } else if current_pos + thumbnail_height > current_offset + visible_height {
+            // Page is below visible area, scroll down
+            target = current_pos + thumbnail_height - visible_height;
         }
 
         let max_scroll = self.calculate_max_scroll();
-        self.scroll_offset = self.scroll_offset.clamp(0.0, max_scroll);
+        self.scroll_state.target_offset = target.clamp(0.0, max_scroll);
+        // Stop any existing momentum when programmatically scrolling
+        self.scroll_state.velocity = 0.0;
     }
 
     /// Calculate maximum scroll offset
@@ -259,14 +394,15 @@ impl ThumbnailStrip {
         if x < strip_rect.x
             || x > strip_rect.x + strip_rect.width
             || y < strip_rect.y
-            || y > strip_rect.y + strip_rect.height {
+            || y > strip_rect.y + strip_rect.height
+        {
             return None;
         }
 
         // Calculate which thumbnail was clicked
         match self.config.position {
             StripPosition::Left | StripPosition::Right => {
-                let relative_y = y - strip_rect.y + self.scroll_offset;
+                let relative_y = y - strip_rect.y + self.scroll_state.offset;
                 let thumbnail_height = self.config.thumbnail_height + self.config.spacing;
                 let page_index = (relative_y / thumbnail_height).floor() as u16;
 
@@ -277,7 +413,7 @@ impl ThumbnailStrip {
                 }
             }
             StripPosition::Top | StripPosition::Bottom => {
-                let relative_x = x - strip_rect.x + self.scroll_offset;
+                let relative_x = x - strip_rect.x + self.scroll_state.offset;
                 let thumbnail_width = self.config.thumbnail_width + self.config.spacing;
                 let page_index = (relative_x / thumbnail_width).floor() as u16;
 
@@ -344,11 +480,16 @@ impl ThumbnailStrip {
         let (start_x, start_y, dx, dy) = match self.config.position {
             StripPosition::Left | StripPosition::Right => {
                 let x = strip_rect.x + self.config.spacing;
-                let y = strip_rect.y + self.config.spacing - self.scroll_offset;
-                (x, y, 0.0, self.config.thumbnail_height + self.config.spacing)
+                let y = strip_rect.y + self.config.spacing - self.scroll_state.offset;
+                (
+                    x,
+                    y,
+                    0.0,
+                    self.config.thumbnail_height + self.config.spacing,
+                )
             }
             StripPosition::Top | StripPosition::Bottom => {
-                let x = strip_rect.x + self.config.spacing - self.scroll_offset;
+                let x = strip_rect.x + self.config.spacing - self.scroll_state.offset;
                 let y = strip_rect.y + self.config.spacing;
                 (x, y, self.config.thumbnail_width + self.config.spacing, 0.0)
             }
@@ -508,23 +649,124 @@ mod tests {
     }
 
     #[test]
-    fn test_scroll() {
+    fn test_scroll_immediate() {
         let config = CacheConfig::default();
         let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
         let mut strip = ThumbnailStrip::new(cache, 50, (1200.0, 800.0));
 
-        assert_eq!(strip.scroll_offset, 0.0);
-        strip.scroll(100.0);
-        assert!(strip.scroll_offset > 0.0);
+        assert_eq!(strip.scroll_offset(), 0.0);
+        strip.scroll_immediate(100.0);
+        assert!(strip.scroll_offset() > 0.0);
 
         // Scroll should be clamped to max
-        strip.scroll(100000.0);
+        strip.scroll_immediate(100000.0);
         let max_scroll = strip.calculate_max_scroll();
-        assert_eq!(strip.scroll_offset, max_scroll);
+        assert_eq!(strip.scroll_offset(), max_scroll);
 
         // Scroll back
-        strip.scroll(-100000.0);
-        assert_eq!(strip.scroll_offset, 0.0);
+        strip.scroll_immediate(-100000.0);
+        assert_eq!(strip.scroll_offset(), 0.0);
+    }
+
+    #[test]
+    fn test_smooth_scroll_animation() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 50, (1200.0, 800.0));
+
+        // Start with no scroll
+        assert_eq!(strip.scroll_offset(), 0.0);
+        assert!(!strip.is_scroll_animating());
+
+        // Scroll to a target position
+        strip.scroll_to(500.0);
+        assert_eq!(strip.target_scroll_offset(), 500.0);
+        assert!(strip.is_scroll_animating());
+
+        // Update for one frame (16ms)
+        let delta = Duration::from_millis(16);
+        let changed = strip.update(delta);
+
+        assert!(changed);
+        // Offset should have moved toward target
+        assert!(strip.scroll_offset() > 0.0);
+        assert!(strip.scroll_offset() < 500.0);
+    }
+
+    #[test]
+    fn test_smooth_scroll_completes() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 50, (1200.0, 800.0));
+
+        // Scroll to target
+        strip.scroll_to(200.0);
+
+        // Run many frames to complete animation
+        let delta = Duration::from_millis(16);
+        for _ in 0..100 {
+            strip.update(delta);
+        }
+
+        // Animation should be complete
+        assert!(!strip.is_scroll_animating());
+        assert!((strip.scroll_offset() - 200.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_momentum_scrolling() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 50, (1200.0, 800.0));
+
+        // Apply scroll with momentum (simulating trackpad swipe)
+        strip.scroll(100.0);
+        assert!(strip.is_scroll_animating());
+
+        // Update for several frames
+        let delta = Duration::from_millis(16);
+        strip.update(delta);
+
+        // Scroll offset should have moved
+        let offset_after_first = strip.scroll_offset();
+        assert!(offset_after_first > 0.0, "Scroll should have started moving");
+
+        // Continue updating - momentum should carry through
+        strip.update(delta);
+        let offset_after_second = strip.scroll_offset();
+        assert!(
+            offset_after_second > offset_after_first,
+            "Momentum should keep scrolling"
+        );
+    }
+
+    #[test]
+    fn test_scroll_clamped_to_bounds() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 50, (1200.0, 800.0));
+
+        // Try to scroll past max
+        let max_scroll = strip.calculate_max_scroll();
+        strip.scroll_to(max_scroll + 1000.0);
+
+        // Run animation
+        let delta = Duration::from_millis(16);
+        for _ in 0..100 {
+            strip.update(delta);
+        }
+
+        // Should be clamped to max
+        assert!(strip.scroll_offset() <= max_scroll + 0.1);
+
+        // Try to scroll below 0
+        strip.scroll_to(-1000.0);
+        for _ in 0..100 {
+            strip.update(delta);
+        }
+
+        // Should be clamped to 0
+        assert!(strip.scroll_offset() >= -0.1);
     }
 
     #[test]
@@ -578,12 +820,7 @@ mod tests {
             ..Default::default()
         };
 
-        let strip = ThumbnailStrip::with_config(
-            cache,
-            10,
-            (1200.0, 800.0),
-            custom_config,
-        );
+        let strip = ThumbnailStrip::with_config(cache, 10, (1200.0, 800.0), custom_config);
 
         assert_eq!(strip.config.thumbnail_width, 200.0);
         assert_eq!(strip.config.thumbnail_height, 250.0);

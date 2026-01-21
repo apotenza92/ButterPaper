@@ -296,7 +296,7 @@ Wire up the existing ThumbnailStrip component.
 - [x] Highlight current page
 - [x] Click thumbnail to navigate
 - [x] Toggle visibility (Cmd+T)
-- [ ] Smooth scroll in sidebar
+- [x] Smooth scroll in sidebar
 - [ ] Lazy load thumbnails (visible first)
 - [x] ~~Manual test: Verify thumbnail rendering~~ (SKIP - requires human)
 
