@@ -67,6 +67,21 @@ impl DocumentLoader {
         let pdf_metadata = pdf_doc.metadata();
         let page_count = pdf_doc.page_count();
 
+        // Cache page dimensions to avoid reopening the PDF later
+        // This adds minimal overhead during loading but prevents UI stalls during page switching
+        let mut page_dimensions = std::collections::HashMap::new();
+        for page_index in 0..page_count {
+            if let Ok(page) = pdf_doc.get_page(page_index) {
+                page_dimensions.insert(
+                    page_index,
+                    crate::document::PageDimensions {
+                        width: page.width().value,
+                        height: page.height().value,
+                    },
+                );
+            }
+        }
+
         // Build DocumentMetadata
         let mut metadata = DocumentMetadata {
             title: pdf_metadata.title,
@@ -77,6 +92,7 @@ impl DocumentLoader {
             page_count,
             file_path: path.to_path_buf(),
             file_size,
+            page_dimensions,
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
@@ -89,6 +105,10 @@ impl DocumentLoader {
             metadata.default_scales = persisted.default_scales;
             metadata.text_edits = persisted.text_edits;
             metadata.annotations = persisted.annotations;
+            // Merge persisted page dimensions if available (in case they weren't cached before)
+            if !persisted.page_dimensions.is_empty() {
+                metadata.page_dimensions = persisted.page_dimensions;
+            }
         }
 
         // Note: pdf_doc is dropped here, closing the file

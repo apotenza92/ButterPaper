@@ -182,6 +182,17 @@ impl PageSwitcher {
 
         let file_path = &document.metadata().file_path;
 
+        // Get cached page dimensions to avoid reopening PDF
+        let (page_width, page_height) = document
+            .metadata()
+            .page_dimensions
+            .get(&page_index)
+            .map(|d| (d.width, d.height))
+            .ok_or_else(|| DocumentError::LoadError(format!(
+                "Page dimensions not cached for page {}",
+                page_index
+            )))?;
+
         // Try to load from cache first (fast path: <100ms)
         if let Some(cached_result) = self.try_load_from_cache(
             document.id(),
@@ -189,6 +200,8 @@ impl PageSwitcher {
             page_index,
             zoom_level,
             rotation,
+            page_width,
+            page_height,
         )? {
             let elapsed = start_time.elapsed().as_millis() as u64;
             let mut result = cached_result;
@@ -205,6 +218,8 @@ impl PageSwitcher {
             zoom_level,
             rotation,
             TileProfile::Preview,
+            page_width,
+            page_height,
         )?;
 
         let elapsed = start_time.elapsed().as_millis() as u64;
@@ -231,23 +246,20 @@ impl PageSwitcher {
     /// Try to load page tiles from cache
     ///
     /// Checks RAM cache first, then disk cache. Returns immediately if found.
+    /// Uses cached page dimensions to avoid reopening the PDF.
+    #[allow(clippy::too_many_arguments)]
     fn try_load_from_cache(
         &self,
         document_id: DocumentId,
-        file_path: &PathBuf,
+        _file_path: &PathBuf,
         page_index: u16,
         zoom_level: u32,
         rotation: u16,
+        page_width: f32,
+        page_height: f32,
     ) -> DocumentResult<Option<PageSwitchResult>> {
-        // Open PDF to get page dimensions
-        let pdf_doc = PdfDocument::open(file_path)
-            .map_err(|e| DocumentError::LoadError(format!("Failed to open PDF: {}", e)))?;
-
-        let page = pdf_doc
-            .get_page(page_index)
-            .map_err(|e| DocumentError::LoadError(format!("Failed to get page: {}", e)))?;
-        let page_width = page.width().value;
-        let page_height = page.height().value;
+        // Use provided page dimensions (from cache) instead of reopening PDF
+        // This eliminates a major UI stall point
 
         // Calculate tile grid
         let (columns, rows) = self
@@ -338,6 +350,7 @@ impl PageSwitcher {
     }
 
     /// Render page tiles and store in cache
+    #[allow(clippy::too_many_arguments)]
     fn render_page_tiles(
         &self,
         document_id: DocumentId,
@@ -346,17 +359,14 @@ impl PageSwitcher {
         zoom_level: u32,
         rotation: u16,
         profile: TileProfile,
+        page_width: f32,
+        page_height: f32,
     ) -> DocumentResult<PageSwitchResult> {
         // Open PDF for rendering
         let pdf_doc = PdfDocument::open(file_path)
             .map_err(|e| DocumentError::LoadError(format!("Failed to open PDF: {}", e)))?;
 
-        // Get page dimensions
-        let page = pdf_doc
-            .get_page(page_index)
-            .map_err(|e| DocumentError::LoadError(format!("Failed to get page: {}", e)))?;
-        let page_width = page.width().value;
-        let page_height = page.height().value;
+        // Use provided page dimensions (from cache) instead of querying the page
 
         // Render tiles
         let tiles = self
@@ -437,6 +447,17 @@ impl PageSwitcher {
 
         let file_path = &document.metadata().file_path;
 
+        // Get cached page dimensions
+        let (page_width, page_height) = document
+            .metadata()
+            .page_dimensions
+            .get(&page_index)
+            .map(|d| (d.width, d.height))
+            .ok_or_else(|| DocumentError::LoadError(format!(
+                "Page dimensions not cached for page {}",
+                page_index
+            )))?;
+
         // Render crisp tiles
         let mut result = self.render_page_tiles(
             document.id(),
@@ -445,6 +466,8 @@ impl PageSwitcher {
             zoom_level,
             rotation,
             TileProfile::Crisp,
+            page_width,
+            page_height,
         )?;
 
         let elapsed = start_time.elapsed().as_millis() as u64;
@@ -647,6 +670,7 @@ mod tests {
             page_count: 10,
             file_path: PathBuf::from("/nonexistent/test.pdf"),
             file_size: 1024,
+            page_dimensions: std::collections::HashMap::new(),
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),

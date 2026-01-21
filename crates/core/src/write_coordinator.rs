@@ -302,6 +302,7 @@ mod tests {
             page_count: 5,
             file_path: pdf_path,
             file_size: 1024,
+            page_dimensions: std::collections::HashMap::new(),
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),

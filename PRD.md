@@ -127,7 +127,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 
 ### Phase 12: Polish and Performance
 - [x] Profile and optimize startup time
-- [ ] Ensure large PDFs open without UI stalls
+- [x] Ensure large PDFs open without UI stalls
 - [ ] Verify page flipping feels instantaneous
 - [ ] Test reopening cached documents (must feel instant)
 - [ ] Test on macOS with Metal rendering

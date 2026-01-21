@@ -12,6 +12,13 @@ use crate::annotation::SerializableAnnotation;
 /// Unique identifier for a document
 pub type DocumentId = u64;
 
+/// Page dimensions in points (1/72 inch)
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct PageDimensions {
+    pub width: f32,
+    pub height: f32,
+}
+
 /// Document metadata loaded during fast file open
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DocumentMetadata {
@@ -38,6 +45,11 @@ pub struct DocumentMetadata {
 
     /// File size in bytes
     pub file_size: u64,
+
+    /// Cached page dimensions (page_index -> dimensions)
+    /// This avoids needing to reopen the PDF just to get page sizes
+    #[serde(default)]
+    pub page_dimensions: std::collections::HashMap<u16, PageDimensions>,
 
     /// Scale systems for measurements (per-page)
     #[serde(default)]
@@ -176,6 +188,7 @@ impl Default for DocumentMetadata {
             page_count: 0,
             file_path: PathBuf::new(),
             file_size: 0,
+            page_dimensions: std::collections::HashMap::new(),
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
@@ -490,6 +503,7 @@ mod tests {
             page_count: 10,
             file_path: PathBuf::from("/test/document.pdf"),
             file_size: 1024,
+            page_dimensions: std::collections::HashMap::new(),
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
