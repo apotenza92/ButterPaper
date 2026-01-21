@@ -32,6 +32,8 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 #[allow(deprecated)]
 use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
 
+mod menu;
+
 #[cfg(target_os = "macos")]
 mod text_overlay {
     use metal::{Device, MTLPixelFormat, TextureDescriptor};
@@ -1876,6 +1878,9 @@ fn main() {
         app.setActivationPolicy_(NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular);
         app.activateIgnoringOtherApps_(YES);
     }
+
+    // Set up native macOS menu bar
+    menu::setup_menu_bar();
 
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);

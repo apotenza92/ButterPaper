@@ -227,7 +227,7 @@ For example: Ctrl+S (Windows) → Cmd+S (macOS). Keep Alt as Option.
 ### Phase 2.1: Menu Bar
 The app needs a proper macOS menu bar. Use `cocoa` crate for native menus.
 
-- [ ] Create NSMenu with standard structure
+- [x] Create NSMenu with standard structure
 - [ ] **File menu:**
   - [ ] Open... (Cmd+O) - working
   - [ ] Open Recent → submenu

@@ -9967,3 +9967,106 @@ cargo run --release -- --test-load test.pdf 2>&1 | grep "LOAD:"
 - Uses same `PdfDocument::open()` as the main app for consistent behavior
 - Timing includes full PDF parsing (page count extraction)
 - Exit codes follow Unix convention: 0 for success, 1 for failure
+
+---
+
+## Task: Create NSMenu with standard structure for macOS menu bar
+
+**Date:** 2026-01-21
+
+### Summary
+
+Implemented a native macOS menu bar using the cocoa crate. The menu bar includes all standard menus (PDF Editor, File, Edit, View, Go, Window, Help) with appropriate menu items and keyboard shortcuts.
+
+### Files Created
+
+1. `crates/app/src/menu.rs` - New module containing:
+   - `MenuAction` enum for future action routing
+   - `setup_menu_bar()` function that creates the native menu bar
+   - Helper functions for creating menu items with various configurations
+   - Unit tests for the MenuAction enum
+
+### Files Modified
+
+1. `crates/app/src/main.rs` - Added:
+   - Import for the new `menu` module
+   - Call to `menu::setup_menu_bar()` after NSApp initialization
+
+2. `PRD.md` - Marked "Create NSMenu with standard structure" as complete
+
+### Menu Structure
+
+```
+PDF Editor (App Menu)
+├── About PDF Editor
+├── Hide PDF Editor (Cmd+H)
+├── Hide Others (Cmd+Option+H)
+├── Show All
+├── Quit PDF Editor (Cmd+Q)
+
+File
+├── Open... (Cmd+O)
+├── Open Recent →
+├── Close (Cmd+W)
+├── Save (Cmd+S)
+├── Save As... (Cmd+Shift+S)
+├── Export as PDF... (disabled)
+├── Export as Images... (disabled)
+
+Edit
+├── Undo (Cmd+Z)
+├── Redo (Cmd+Shift+Z)
+├── Cut (Cmd+X)
+├── Copy (Cmd+C)
+├── Paste (Cmd+V)
+├── Select All (Cmd+A)
+├── Find... (Cmd+F)
+
+View
+├── Zoom In (Cmd+=)
+├── Zoom Out (Cmd+-)
+├── Actual Size (Cmd+0)
+├── Fit Page
+├── Fit Width
+├── Show Thumbnails (Cmd+T)
+├── Show Annotations
+
+Go
+├── Next Page
+├── Previous Page
+├── First Page
+├── Last Page
+├── Go to Page... (Cmd+G)
+
+Window
+├── Minimize (Cmd+M)
+├── Zoom
+├── Bring All to Front
+
+Help
+├── PDF Editor Help (Cmd+?)
+```
+
+### Technical Details
+
+- Uses cocoa crate's NSMenu and NSMenuItem APIs
+- Properly handles macOS-specific menu conventions
+- Sets Windows menu and Help menu for proper macOS behavior
+- Uses standard selectors for system actions (hide, quit, minimize, etc.)
+- Disabled menu items for features not yet implemented (Export)
+- Platform-specific code with `#[cfg(target_os = "macos")]`
+
+### Test Results
+
+- All 33 tests pass including 4 new menu tests
+- Clippy passes with no warnings
+
+### Next Steps
+
+Future work for the menu bar (separate tasks):
+- Implement File menu items (Open, Save, Export)
+- Implement Edit menu items (Undo/Redo, Copy, etc.)
+- Implement View menu actions (zoom, thumbnails)
+- Implement Go menu navigation
+- Wire menu actions to app handlers via custom responders
+
