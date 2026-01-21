@@ -374,7 +374,7 @@ Wire up existing measurement system.
 - [x] Test with 100MB+ PDFs
 - [x] Ensure no UI freezes
 - [x] Progressive page loading
-- [ ] Memory usage stays bounded
+- [x] Memory usage stays bounded
 
 ### Phase 4.3: Polish
 - [ ] Consistent visual style

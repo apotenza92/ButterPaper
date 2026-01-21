@@ -12288,3 +12288,52 @@ pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_
 - `LoadingStage`
 - `ProgressiveLoadState`
 - `ProgressivePageLoader`
+
+### Task: Implement bounded memory usage (Phase 4.2)
+
+**Status:** Complete
+
+**Changes:**
+- Created new `memory_budget.rs` module in `crates/cache/src/` implementing unified memory budget tracking
+- Added `MemoryPressure` enum with levels: Low, Moderate, High, Critical
+- Added `MemoryBudgetConfig` for configurable thresholds (warning at 75%, critical at 90%, target at 70%)
+- Added `MemoryBudget` struct for tracking total memory usage across RAM and GPU caches
+  - Thread-safe with AtomicUsize for current usage tracking
+  - `can_allocate()` - check if allocation fits within budget
+  - `would_trigger_pressure()` - check if allocation would cause memory pressure
+  - `bytes_to_evict()` - calculate how much to evict to reach target utilization
+  - `check_allocation()` - comprehensive allocation check with eviction recommendations
+- Added `AggregatedCacheStats` for unified view of all cache statistics
+  - Combines RAM, GPU, and Disk cache stats
+  - `total_memory_used()` / `total_memory_limit()` - combined RAM + GPU
+  - `memory_utilization()` / `overall_hit_rate()` - aggregate metrics
+- Added `CacheMonitor` for real-time cache health monitoring
+  - `aggregate_stats()` - collect stats from all cache tiers
+  - `recommend_eviction()` - proportional eviction recommendations for RAM/GPU
+- Updated `lib.rs` to export new module and types
+- Added comprehensive tests including:
+  - Memory pressure level detection
+  - Eviction calculation accuracy
+  - Bounded memory for 500-page PDF simulation
+  - Bounded memory for 100MB+ PDF simulation (1000 pages)
+  - Concurrent memory tracking with 4 threads
+  - Memory pressure triggering eviction
+
+**Files Created:**
+- crates/cache/src/memory_budget.rs (540 lines)
+
+**Files Modified:**
+- crates/cache/src/lib.rs (added module export and documentation)
+- PRD.md (marked task as complete)
+
+**Test Results:**
+- 16 new tests for memory_budget module all pass
+- All 90 tests in pdf-editor-cache crate pass
+- No clippy warnings
+
+**Architecture Notes:**
+- Memory budget tracks RAM + GPU usage (disk cache excluded as it uses persistent storage)
+- Configurable thresholds allow tuning based on system resources
+- Thread-safe design supports concurrent cache operations
+- Proactive eviction recommendations prevent hard failures
+- `CacheMonitor` provides a unified view for the application to query cache health
