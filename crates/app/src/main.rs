@@ -171,15 +171,28 @@ mod text_overlay {
             '7' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
             '8' => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
             '9' => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+            // Uppercase letters
+            'D' => [0b11100, 0b10010, 0b10001, 0b10001, 0b10001, 0b10010, 0b11100],
+            'E' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+            'F' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000],
+            'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
             'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+            // Lowercase letters
             'a' => [0b00000, 0b00000, 0b01110, 0b00001, 0b01111, 0b10001, 0b01111],
-            'g' => [0b00000, 0b00000, 0b01111, 0b10001, 0b01111, 0b00001, 0b01110],
+            'd' => [0b00001, 0b00001, 0b01111, 0b10001, 0b10001, 0b10001, 0b01111],
             'e' => [0b00000, 0b00000, 0b01110, 0b10001, 0b11111, 0b10000, 0b01110],
-            'o' => [0b00000, 0b00000, 0b01110, 0b10001, 0b10001, 0b10001, 0b01110],
             'f' => [0b00110, 0b01001, 0b01000, 0b11110, 0b01000, 0b01000, 0b01000],
+            'g' => [0b00000, 0b00000, 0b01111, 0b10001, 0b01111, 0b00001, 0b01110],
+            'i' => [0b00100, 0b00000, 0b01100, 0b00100, 0b00100, 0b00100, 0b01110],
+            'n' => [0b00000, 0b00000, 0b10110, 0b11001, 0b10001, 0b10001, 0b10001],
+            'o' => [0b00000, 0b00000, 0b01110, 0b10001, 0b10001, 0b10001, 0b01110],
+            'r' => [0b00000, 0b00000, 0b10110, 0b11001, 0b10000, 0b10000, 0b10000],
+            't' => [0b01000, 0b01000, 0b11110, 0b01000, 0b01000, 0b01001, 0b00110],
+            // Punctuation and symbols
             ' ' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
             '|' => [0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
             '%' => [0b11001, 0b11010, 0b00100, 0b01000, 0b10110, 0b10011, 0b00000],
+            '.' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100],
             _ => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000], // unknown char
         }
     }
@@ -342,6 +355,150 @@ mod text_overlay {
                                 pixels[idx + 1] = 255; // G
                                 pixels[idx + 2] = 255; // R
                                 pixels[idx + 3] = 255; // A
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Splash screen texture for cold start
+    pub struct SplashTexture {
+        pub texture: metal::Texture,
+        pub width: u32,
+        pub height: u32,
+    }
+
+    /// Render a splash screen with app title and optional loading indicator
+    pub fn render_splash_screen(device: &Device, scale: u32) -> Option<SplashTexture> {
+        let title = "PDF Editor";
+        let subtitle = "Loading...";
+
+        let char_width = 5u32 * scale;
+        let char_height = 7u32 * scale;
+        let char_spacing = scale;
+
+        // Calculate sizes
+        let title_width = title.len() as u32 * (char_width + char_spacing);
+        let subtitle_width = subtitle.len() as u32 * (char_width + char_spacing);
+        let text_width = title_width.max(subtitle_width);
+
+        let vertical_spacing = char_height; // Space between title and subtitle
+        let text_height = char_height * 2 + vertical_spacing;
+
+        let padding = 24u32 * scale;
+        let tex_width = text_width + padding * 2;
+        let tex_height = text_height + padding * 2;
+
+        // Create BGRA pixel buffer
+        let mut pixels = vec![0u8; (tex_width * tex_height * 4) as usize];
+
+        // Fill background with rounded semi-transparent dark color
+        let corner_radius = 12.0f32 * scale as f32;
+        for y in 0..tex_height {
+            for x in 0..tex_width {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                let is_corner = is_outside_rounded_rect(
+                    x as f32,
+                    y as f32,
+                    tex_width as f32,
+                    tex_height as f32,
+                    corner_radius,
+                );
+
+                if is_corner {
+                    // Transparent
+                    pixels[idx] = 0;
+                    pixels[idx + 1] = 0;
+                    pixels[idx + 2] = 0;
+                    pixels[idx + 3] = 0;
+                } else {
+                    // Semi-transparent dark background
+                    pixels[idx] = 30;      // B
+                    pixels[idx + 1] = 30;  // G
+                    pixels[idx + 2] = 30;  // R
+                    pixels[idx + 3] = 230; // A (about 90% opaque)
+                }
+            }
+        }
+
+        // Draw title (centered)
+        let title_x_start = padding + (text_width - title_width) / 2;
+        let title_y_start = padding;
+        for (i, c) in title.chars().enumerate() {
+            let bitmap = get_char_bitmap(c);
+            let x = title_x_start + i as u32 * (char_width + char_spacing);
+            draw_char_scaled(&mut pixels, tex_width, x, title_y_start, &bitmap, scale);
+        }
+
+        // Draw subtitle (centered, below title)
+        let subtitle_x_start = padding + (text_width - subtitle_width) / 2;
+        let subtitle_y_start = padding + char_height + vertical_spacing;
+        for (i, c) in subtitle.chars().enumerate() {
+            let bitmap = get_char_bitmap(c);
+            let x = subtitle_x_start + i as u32 * (char_width + char_spacing);
+            // Draw subtitle in slightly dimmer color (gray instead of white)
+            draw_char_scaled_color(&mut pixels, tex_width, x, subtitle_y_start, &bitmap, scale, [180, 180, 180, 255]);
+        }
+
+        // Create Metal texture
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(tex_width as u64);
+        texture_desc.set_height(tex_height as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: tex_width as u64,
+                height: tex_height as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            pixels.as_ptr() as *const _,
+            (tex_width * 4) as u64,
+        );
+
+        Some(SplashTexture {
+            texture,
+            width: tex_width,
+            height: tex_height,
+        })
+    }
+
+    /// Draw a scaled character bitmap with custom color (BGRA format)
+    fn draw_char_scaled_color(
+        pixels: &mut [u8],
+        tex_width: u32,
+        x_start: u32,
+        y_start: u32,
+        bitmap: &[u8; 7],
+        scale: u32,
+        color: [u8; 4], // BGRA
+    ) {
+        for (row_idx, &row_bits) in bitmap.iter().enumerate() {
+            for col in 0..5u32 {
+                let bit = (row_bits >> (4 - col)) & 1;
+                if bit == 1 {
+                    for sy in 0..scale {
+                        for sx in 0..scale {
+                            let px = x_start + col * scale + sx;
+                            let py = y_start + row_idx as u32 * scale + sy;
+                            let idx = ((py * tex_width + px) * 4) as usize;
+                            if idx + 3 < pixels.len() {
+                                pixels[idx] = color[0];     // B
+                                pixels[idx + 1] = color[1]; // G
+                                pixels[idx + 2] = color[2]; // R
+                                pixels[idx + 3] = color[3]; // A
                             }
                         }
                     }
@@ -518,6 +675,62 @@ mod text_overlay {
             // Frame 0 dot is near top (low y), Frame 4 dot is near bottom (high y)
             assert!(y0 < center, "Frame 0 brightest dot should be in top half");
             assert!(y4 > center, "Frame 4 brightest dot should be in bottom half");
+        }
+
+        #[test]
+        fn test_get_char_bitmap_uppercase_letters() {
+            // Test uppercase letters used in "PDF Editor"
+            let test_chars = ['D', 'E', 'F', 'L', 'P'];
+            for c in test_chars {
+                let bitmap = get_char_bitmap(c);
+                let non_zero = bitmap.iter().any(|&b| b != 0);
+                assert!(non_zero, "Uppercase '{}' should have non-zero bitmap", c);
+            }
+        }
+
+        #[test]
+        fn test_get_char_bitmap_lowercase_letters() {
+            // Test lowercase letters used in "PDF Editor" and "Loading..."
+            let test_chars = ['a', 'd', 'e', 'f', 'g', 'i', 'n', 'o', 'r', 't'];
+            for c in test_chars {
+                let bitmap = get_char_bitmap(c);
+                let non_zero = bitmap.iter().any(|&b| b != 0);
+                assert!(non_zero, "Lowercase '{}' should have non-zero bitmap", c);
+            }
+        }
+
+        #[test]
+        fn test_get_char_bitmap_period() {
+            // Period should have bottom-right corner dots
+            let period = get_char_bitmap('.');
+            // Should have dots only in the last two rows
+            assert!(period[0..5].iter().all(|&b| b == 0), "Period should have empty top rows");
+            assert!(period[5] != 0 || period[6] != 0, "Period should have dots in bottom rows");
+        }
+
+        #[test]
+        fn test_draw_char_scaled_color() {
+            // Test that drawing with custom color works
+            let tex_width = 20u32;
+            let tex_height = 20u32;
+            let mut pixels = vec![0u8; (tex_width * tex_height * 4) as usize];
+
+            // Draw the digit '1' at position (2, 2) with custom gray color
+            let bitmap = get_char_bitmap('1');
+            let custom_color: [u8; 4] = [128, 128, 128, 200]; // Gray BGRA
+            draw_char_scaled_color(&mut pixels, tex_width, 2, 2, &bitmap, 1, custom_color);
+
+            // Check that some pixels were set to the custom color
+            let colored_pixels: usize = pixels
+                .chunks_exact(4)
+                .filter(|p| p[0] == 128 && p[1] == 128 && p[2] == 128 && p[3] == 200)
+                .count();
+
+            assert!(colored_pixels > 0, "Should have drawn some colored pixels");
+
+            // The digit '1' has a specific pattern - count the set bits
+            let expected_bits: u32 = bitmap.iter().map(|&b| b.count_ones()).sum();
+            assert_eq!(colored_pixels, expected_bits as usize, "Colored pixel count should match bitmap bits");
         }
     }
 }
@@ -1289,7 +1502,9 @@ mod texture_storage_mode_tests {
         // - PDF page textures (main rendering)
         // - Text overlay textures (page info display)
         // - Spinner textures (loading indicator)
-        assert!(true, "Storage mode documentation test");
+        // - Splash screen textures (cold start display)
+        //
+        // This test passes if it compiles - it documents the fix.
     }
 }
 
@@ -1629,6 +1844,11 @@ struct App {
     calibration_page: u16,
     /// Startup profiler for tracking startup performance
     startup_profiler: startup_profiler::StartupProfiler,
+    /// Splash screen texture shown during cold start
+    #[cfg(target_os = "macos")]
+    splash_texture: Option<text_overlay::SplashTexture>,
+    /// Whether to show the splash screen (true until first frame after startup completes)
+    show_splash: bool,
 }
 
 impl App {
@@ -1725,6 +1945,9 @@ impl App {
             calibration_first_point: None,
             calibration_page: 0,
             startup_profiler,
+            #[cfg(target_os = "macos")]
+            splash_texture: None,
+            show_splash: true, // Show splash on cold start
         }
     }
 
@@ -5071,6 +5294,9 @@ impl App {
         self.selection_highlight_renderer = selection_renderer;
         self.stroke_renderer = stroke_renderer_instance;
 
+        // Initialize splash screen texture (shown during cold start)
+        self.splash_texture = text_overlay::render_splash_screen(&device, 3);
+
         // Initialize toolbar texture
         self.update_toolbar_texture();
 
@@ -5094,6 +5320,15 @@ impl App {
                     self.startup_profiler
                         .mark_phase(startup_profiler::StartupPhase::FirstFrameRendered);
                     self.startup_profiler.print_summary();
+                }
+
+                // Hide splash screen after startup completes (show for at least 300ms)
+                // or immediately when a PDF is loaded
+                if self.show_splash {
+                    let elapsed = Instant::now().duration_since(self.app_start);
+                    if self.document.is_some() || elapsed >= Duration::from_millis(500) {
+                        self.show_splash = false;
+                    }
                 }
 
                 if let (Some(gpu_context), Some(renderer)) =
@@ -5688,6 +5923,42 @@ impl App {
 
                             blit_encoder.copy_from_texture(
                                 spinner_tex,
+                                0,
+                                0,
+                                src_origin,
+                                src_size,
+                                drawable.texture(),
+                                0,
+                                0,
+                                dest_origin,
+                            );
+
+                            blit_encoder.end_encoding();
+                        }
+                    }
+
+                    // Render splash screen in the center if showing and no document loaded
+                    if self.show_splash && self.document.is_none() {
+                        if let Some(splash_tex) = &self.splash_texture {
+                            let dest_x = (drawable_width.saturating_sub(splash_tex.width as u64)) / 2;
+                            let dest_y = (drawable_height.saturating_sub(splash_tex.height as u64)) / 2;
+
+                            let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                            let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                            let src_size = metal::MTLSize {
+                                width: splash_tex.width as u64,
+                                height: splash_tex.height as u64,
+                                depth: 1,
+                            };
+                            let dest_origin = metal::MTLOrigin {
+                                x: dest_x,
+                                y: dest_y,
+                                z: 0,
+                            };
+
+                            blit_encoder.copy_from_texture(
+                                &splash_tex.texture,
                                 0,
                                 0,
                                 src_origin,

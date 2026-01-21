@@ -11940,3 +11940,29 @@ The lazy loading pattern uses the existing `has_layer()` method in TextLayerMana
 - Thread-safe operation (TextLayerManager uses RwLock internally)
 - Minimal code changes (leverages existing infrastructure)
 
+
+### Task: Show splash/loading on cold start (Phase 4.1)
+
+**Status:** Complete
+
+**Changes:**
+- Added splash screen rendering functionality to display "PDF Editor" title with "Loading..." subtitle during cold start
+- Extended the bitmap font with additional characters (D, E, F, L, d, e, f, g, i, n, o, r, t, period) required for splash screen text
+- Implemented `SplashTexture` struct and `render_splash_screen()` function in the text_overlay module
+- Added `draw_char_scaled_color()` helper function for rendering text with custom colors
+- Added `splash_texture` and `show_splash` fields to App struct to manage splash screen state
+- Splash screen is initialized during Metal setup and displayed centered on the window
+- Splash screen automatically hides after 500ms or immediately when a PDF is loaded
+- Added unit tests for new character bitmaps and the draw_char_scaled_color function
+- Fixed existing test that used `assert!(true)` to avoid clippy warnings
+
+**Files Modified:**
+- crates/app/src/main.rs (added splash screen implementation, font characters, and tests)
+- PRD.md (marked task as complete)
+
+**Technical Details:**
+- Splash screen uses scale factor of 3 for readable text on retina displays
+- Background is a rounded rectangle with semi-transparent dark gray (90% opacity)
+- Title "PDF Editor" rendered in white, subtitle "Loading..." in lighter gray
+- Splash screen dimensions calculated dynamically based on text content
+- Uses same Metal texture pattern as other overlays (BGRA8Unorm_sRGB, Managed storage)

@@ -365,7 +365,7 @@ Wire up existing measurement system.
 ### Phase 4.1: Startup Optimization
 - [x] Profile startup time
 - [x] Lazy load subsystems
-- [ ] Show splash/loading on cold start
+- [x] Show splash/loading on cold start
 - [ ] Target: <200ms to first frame
 - [ ] Target: <500ms to first PDF page visible
 
