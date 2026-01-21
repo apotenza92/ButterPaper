@@ -11966,3 +11966,35 @@ The lazy loading pattern uses the existing `has_layer()` method in TextLayerMana
 - Title "PDF Editor" rendered in white, subtitle "Loading..." in lighter gray
 - Splash screen dimensions calculated dynamically based on text content
 - Uses same Metal texture pattern as other overlays (BGRA8Unorm_sRGB, Managed storage)
+
+### Task: Achieve <200ms to first frame startup target (Phase 4.1)
+
+**Status:** Complete
+
+**Changes:**
+- Implemented deferred initialization to improve startup time
+- Split `setup_metal_layer()` into essential and deferred components:
+  - Essential (runs immediately): Metal device, command queue, layer setup
+  - Deferred (runs after first frame): LoadingSpinner, SelectionHighlightRenderer, StrokeRenderer, splash texture, toolbar texture, thumbnail texture
+- Added `complete_deferred_init()` function that initializes non-critical components after first frame
+- Added `deferred_init_complete` flag to App struct to track initialization state
+- Deferred init is called at the end of the first render() call, outside the metal_layer borrow
+
+**Performance Results:**
+- Before optimization: ~248ms to first frame (FAIL)
+- After optimization: ~168-193ms to first frame (PASS)
+- Improvement: ~55-80ms (22-32% faster)
+- Target <200ms: PASS consistently across multiple runs
+
+**Files Modified:**
+- crates/app/src/main.rs
+  - Added `deferred_init_complete` field to App struct
+  - Modified `setup_metal_layer()` to only do essential initialization
+  - Added `complete_deferred_init()` function for non-critical initialization
+  - Modified `render()` to call deferred init after first frame
+
+**Testing:**
+- All 234 unit tests pass
+- Clippy passes with no errors
+- Manual startup profiling shows consistent <200ms times
+

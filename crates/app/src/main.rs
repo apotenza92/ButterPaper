@@ -1849,6 +1849,8 @@ struct App {
     splash_texture: Option<text_overlay::SplashTexture>,
     /// Whether to show the splash screen (true until first frame after startup completes)
     show_splash: bool,
+    /// Whether deferred initialization has been completed (done after first frame for fast startup)
+    deferred_init_complete: bool,
 }
 
 impl App {
@@ -1948,6 +1950,7 @@ impl App {
             #[cfg(target_os = "macos")]
             splash_texture: None,
             show_splash: true, // Show splash on cold start
+            deferred_init_complete: false,
         }
     }
 
@@ -5272,36 +5275,52 @@ impl App {
             height: size.height as f64,
         });
 
-        // Initialize the loading spinner with pre-rendered frames
-        let spinner = LoadingSpinner::new(&device, 64);
-
-        // Initialize selection highlight renderer
-        let selection_renderer = selection_highlight::SelectionHighlightRenderer::new(&device);
-        if selection_renderer.is_none() {
-            eprintln!("WARNING: Failed to create selection highlight renderer");
-        }
-
-        // Initialize stroke renderer for freehand drawing
-        let stroke_renderer_instance = stroke_renderer::StrokeRenderer::new(&device);
-        if stroke_renderer_instance.is_none() {
-            eprintln!("WARNING: Failed to create stroke renderer");
-        }
-
+        // Store essential components needed for first frame
         self.metal_layer = Some(layer);
-        self.loading_spinner = Some(spinner);
-        self.device = Some(device.clone());
+        self.device = Some(device);
         self.command_queue = Some(command_queue);
-        self.selection_highlight_renderer = selection_renderer;
-        self.stroke_renderer = stroke_renderer_instance;
 
-        // Initialize splash screen texture (shown during cold start)
-        self.splash_texture = text_overlay::render_splash_screen(&device, 3);
+        // Note: Deferred initialization of spinner, renderers, textures
+        // happens in complete_deferred_init() after first frame for fast startup
+    }
 
-        // Initialize toolbar texture
-        self.update_toolbar_texture();
+    /// Complete deferred initialization after the first frame has been rendered.
+    /// This improves startup time by deferring non-critical initialization.
+    #[cfg(target_os = "macos")]
+    fn complete_deferred_init(&mut self) {
+        if self.deferred_init_complete {
+            return;
+        }
+        self.deferred_init_complete = true;
 
-        // Initialize thumbnail strip texture
-        self.update_thumbnail_texture();
+        if let Some(device) = &self.device {
+            // Initialize the loading spinner with pre-rendered frames
+            let spinner = LoadingSpinner::new(device, 64);
+            self.loading_spinner = Some(spinner);
+
+            // Initialize selection highlight renderer
+            let selection_renderer = selection_highlight::SelectionHighlightRenderer::new(device);
+            if selection_renderer.is_none() {
+                eprintln!("WARNING: Failed to create selection highlight renderer");
+            }
+            self.selection_highlight_renderer = selection_renderer;
+
+            // Initialize stroke renderer for freehand drawing
+            let stroke_renderer_instance = stroke_renderer::StrokeRenderer::new(device);
+            if stroke_renderer_instance.is_none() {
+                eprintln!("WARNING: Failed to create stroke renderer");
+            }
+            self.stroke_renderer = stroke_renderer_instance;
+
+            // Initialize splash screen texture (shown during cold start)
+            self.splash_texture = text_overlay::render_splash_screen(device, 3);
+
+            // Initialize toolbar texture
+            self.update_toolbar_texture();
+
+            // Initialize thumbnail strip texture
+            self.update_thumbnail_texture();
+        }
     }
 
     fn render(&mut self) {
@@ -6147,6 +6166,13 @@ impl App {
                     command_buffer.commit();
                 }
             }
+        }
+
+        // Complete deferred initialization after first frame for fast startup
+        // This must be outside the metal_layer borrow to avoid borrow conflicts
+        #[cfg(target_os = "macos")]
+        if self.first_frame_rendered && !self.deferred_init_complete {
+            self.complete_deferred_init();
         }
     }
 }

@@ -366,7 +366,7 @@ Wire up existing measurement system.
 - [x] Profile startup time
 - [x] Lazy load subsystems
 - [x] Show splash/loading on cold start
-- [ ] Target: <200ms to first frame
+- [x] Target: <200ms to first frame
 - [ ] Target: <500ms to first PDF page visible
 
 ### Phase 4.2: Large PDF Handling
