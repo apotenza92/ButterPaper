@@ -53,6 +53,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
 
 mod clipboard;
+mod display_info;
 mod menu;
 mod recent_files;
 mod startup_profiler;
@@ -1660,8 +1661,9 @@ startxref
     }
 }
 
-const TARGET_FPS: u64 = 120;
-const TARGET_FRAME_TIME: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
+// Default fallback values - actual values come from display_info detection
+const DEFAULT_REFRESH_RATE: u32 = 60;
+const MIN_FRAME_TIME: Duration = Duration::from_micros(1_000_000 / 240); // Cap at 240Hz
 
 struct PageTexture {
     texture: metal::Texture,
@@ -1924,6 +1926,8 @@ struct App {
     deferred_init_complete: bool,
     /// Whether the theme has changed and UI needs rebuilding
     theme_changed: bool,
+    /// Display information for Retina and ProMotion support
+    display_info: display_info::DisplayInfo,
 }
 
 impl App {
@@ -2025,6 +2029,7 @@ impl App {
             show_splash: true, // Show splash on cold start
             deferred_init_complete: false,
             theme_changed: false,
+            display_info: display_info::DisplayInfo::default(),
         }
     }
 
@@ -5377,6 +5382,10 @@ impl App {
         layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm_sRGB);
         layer.set_presents_with_transaction(false);
 
+        // Enable contents scale for Retina displays
+        let scale_factor = window.scale_factor();
+        layer.set_contents_scale(scale_factor);
+
         unsafe {
             let view = handle.ns_view.as_ptr() as cocoa_id;
             use cocoa::appkit::NSView as _;
@@ -5384,11 +5393,34 @@ impl App {
             view.setLayer(layer.as_ref() as *const _ as _);
         }
 
-        let size = window.inner_size();
+        // Use physical pixels (logical size * scale factor) for Retina displays
+        let logical_size = window.inner_size();
+        let physical_width = logical_size.width as f64;
+        let physical_height = logical_size.height as f64;
         layer.set_drawable_size(CGSize {
-            width: size.width as f64,
-            height: size.height as f64,
+            width: physical_width,
+            height: physical_height,
         });
+
+        // Detect display refresh rate for ProMotion support
+        let refresh_rate = window
+            .current_monitor()
+            .as_ref()
+            .map(display_info::get_monitor_refresh_rate)
+            .unwrap_or_else(display_info::get_main_display_refresh_rate);
+
+        // Update display info with detected values
+        self.display_info = display_info::DisplayInfo::new(scale_factor, refresh_rate);
+
+        if self.display_info.is_retina() || self.display_info.is_high_refresh_rate() {
+            println!(
+                "DISPLAY: Retina={} scale={:.1}x refresh={}Hz frame_time={:.2}ms",
+                self.display_info.is_retina(),
+                self.display_info.scale_factor,
+                self.display_info.refresh_rate_hz,
+                self.display_info.target_frame_time.as_secs_f64() * 1000.0
+            );
+        }
 
         // Store essential components needed for first frame
         self.metal_layer = Some(layer);
@@ -6349,6 +6381,9 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 #[cfg(target_os = "macos")]
                 if let Some(layer) = &self.metal_layer {
+                    // Update contents scale for Retina support
+                    layer.set_contents_scale(self.display_info.scale_factor);
+                    // Use physical pixel size for drawable
                     layer.set_drawable_size(CGSize {
                         width: size.width as f64,
                         height: size.height as f64,
@@ -6366,6 +6401,39 @@ impl ApplicationHandler for App {
                 self.update_note_popup_texture();
                 self.update_thumbnail_texture();
 
+                if self.document.is_some() {
+                    if let Some(doc) = &mut self.document {
+                        doc.page_textures.clear();
+                    }
+                    self.render_current_page();
+                }
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // Handle display change (e.g., moving window between Retina and non-Retina displays)
+                self.display_info.set_scale_factor(scale_factor);
+
+                #[cfg(target_os = "macos")]
+                if let Some(layer) = &self.metal_layer {
+                    layer.set_contents_scale(scale_factor);
+                }
+
+                // Update refresh rate for new display
+                if let Some(window) = &self.window {
+                    let refresh_rate = window
+                        .current_monitor()
+                        .as_ref()
+                        .map(display_info::get_monitor_refresh_rate)
+                        .unwrap_or_else(display_info::get_main_display_refresh_rate);
+                    self.display_info.set_refresh_rate(refresh_rate);
+                }
+
+                println!(
+                    "DISPLAY: Scale factor changed to {:.1}x, refresh={}Hz",
+                    self.display_info.scale_factor,
+                    self.display_info.refresh_rate_hz
+                );
+
+                // Re-render at new scale
                 if self.document.is_some() {
                     if let Some(doc) = &mut self.document {
                         doc.page_textures.clear();
@@ -7007,9 +7075,11 @@ impl ApplicationHandler for App {
                 window.request_redraw();
             }
 
+            // Use dynamic target frame time based on detected display refresh rate
+            let target_frame_time = self.display_info.target_frame_time.max(MIN_FRAME_TIME);
             let frame_time = Instant::now().duration_since(self.last_update);
-            if frame_time < TARGET_FRAME_TIME {
-                std::thread::sleep(TARGET_FRAME_TIME - frame_time);
+            if frame_time < target_frame_time {
+                std::thread::sleep(target_frame_time - frame_time);
             }
 
             event_loop.set_control_flow(ControlFlow::Poll);

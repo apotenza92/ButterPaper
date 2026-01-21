@@ -12448,3 +12448,53 @@ pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_
 - UI components rebuild their scene graphs when config changes
 - Generation counter enables efficient dirty checking without full theme comparison
 - Light and dark themes have properly inverted backgrounds and text colors
+
+
+### Task: Add Retina display support with ProMotion 120Hz (Phase 4.3)
+
+**Status:** Complete
+
+**Changes:**
+- Created new `display_info` module (`crates/app/src/display_info.rs`) with:
+  - `DisplayInfo` struct tracking scale_factor, refresh_rate_hz, and target_frame_time
+  - `get_main_display_refresh_rate()` function using Core Graphics FFI to detect display refresh rate
+  - `get_monitor_refresh_rate()` function to get refresh rate from winit MonitorHandle
+  - Helper methods: `is_retina()`, `is_high_refresh_rate()`, `set_scale_factor()`, `set_refresh_rate()`
+  - Comprehensive test suite (8 tests)
+
+- Updated Metal layer setup in main.rs:
+  - Added `layer.set_contents_scale(scale_factor)` for proper Retina rendering
+  - Detect scale factor from window on startup
+  - Query display refresh rate using winit's `current_monitor()` or Core Graphics fallback
+  - Store DisplayInfo in App struct for runtime use
+
+- Added dynamic frame timing:
+  - Replaced hardcoded `TARGET_FPS=120` with display-detected refresh rate
+  - Frame timing adapts to actual display: 60Hz (16.67ms), 120Hz (8.33ms), etc.
+  - ProMotion displays (reporting 0Hz for variable rate) default to 120Hz
+
+- Added `WindowEvent::ScaleFactorChanged` handler:
+  - Updates display_info when window moves between displays
+  - Re-queries refresh rate for new display
+  - Clears page textures and re-renders at new scale
+  - Updates Metal layer contents_scale
+
+**Files Created:**
+- crates/app/src/display_info.rs
+
+**Files Modified:**
+- crates/app/src/main.rs (added display_info module, DisplayInfo field, scale/refresh detection)
+- PRD.md (marked task complete)
+
+**Test Results:**
+- 8 new display_info tests pass (test_display_info_default, test_display_info_new_120hz, test_display_info_clamps_refresh_rate, test_is_retina, test_is_high_refresh_rate, test_set_refresh_rate, test_set_scale_factor, test_frame_time_calculation)
+- All 96 pdf-editor tests pass
+- All 786+ workspace tests pass
+- Clippy passes (only pre-existing objc macro warnings)
+
+**Technical Details:**
+- Scale factor clamped to 1.0-4.0 range
+- Refresh rate clamped to 30-240Hz range
+- Core Graphics FFI used to query CGDisplayCopyDisplayMode and CGDisplayModeGetRefreshRate
+- ProMotion displays report 0Hz refresh rate (variable), handled by defaulting to 120Hz
+- Contents scale on CAMetalLayer ensures proper pixel density on Retina displays
