@@ -70,7 +70,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Create job scheduler with priority queue
 - [x] Implement cancellation tokens for jobs
 - [x] Build render worker pool (separate from UI thread)
-- [ ] Build IO thread for file operations
+- [x] Build IO thread for file operations
 - [ ] Implement job priority ordering (visible tiles > margin > adjacent > thumbnails > OCR)
 - [ ] Add aggressive cancellation for off-screen content
 

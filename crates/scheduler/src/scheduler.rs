@@ -40,12 +40,13 @@ impl SchedulerStats {
 ///
 /// ```
 /// use pdf_editor_scheduler::{JobScheduler, JobPriority, JobType};
+/// use std::path::PathBuf;
 ///
 /// let scheduler = JobScheduler::new();
 ///
 /// // Submit a high-priority job
 /// let (job_id, token) = scheduler.submit(JobPriority::Visible, JobType::LoadFile {
-///     path: "document.pdf".to_string()
+///     path: PathBuf::from("document.pdf")
 /// });
 ///
 /// // Get the next job to execute
@@ -272,6 +273,7 @@ impl Default for JobScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_scheduler_basic() {
@@ -283,7 +285,7 @@ mod tests {
         let (job_id, token) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
 
@@ -319,7 +321,7 @@ mod tests {
         scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
 
@@ -343,7 +345,7 @@ mod tests {
         let (job_id, token) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
 
@@ -422,7 +424,7 @@ mod tests {
         scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
         scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
@@ -448,7 +450,7 @@ mod tests {
         scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
         scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
@@ -473,7 +475,7 @@ mod tests {
         let (job_id, _token) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
 
@@ -491,7 +493,7 @@ mod tests {
         scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
         scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
@@ -533,7 +535,7 @@ mod tests {
         scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
         scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
@@ -549,7 +551,7 @@ mod tests {
         let (job_id, token) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
 
@@ -570,7 +572,7 @@ mod tests {
         let (job_id, token) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
 
@@ -597,7 +599,7 @@ mod tests {
         let (job_id, token1) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
 
@@ -656,7 +658,7 @@ mod tests {
         let (_id1, token1) = scheduler.submit(
             JobPriority::Visible,
             JobType::LoadFile {
-                path: "test.pdf".to_string(),
+                path: PathBuf::from("test.pdf"),
             },
         );
         let (_id2, token2) = scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });

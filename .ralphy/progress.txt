@@ -1200,3 +1200,109 @@ Scheduler integration tests:
 - Fast document loading (parallel tile rendering)
 
 
+- Fast document loading (parallel tile rendering)
+
+
+### Task: Build IO thread for file operations
+
+**Status:** Complete
+
+**Changes:**
+- Created comprehensive IO thread system in crates/scheduler/src/io.rs
+- Implemented IoThread struct with dedicated thread for file operations
+- Created IoThreadConfig for configuring poll interval
+- Implemented IoExecutor callback type for executing IO jobs
+- Added specialized job filtering: only processes LoadFile jobs
+- Implemented peek-before-take pattern to avoid blocking render workers
+- Updated JobType::LoadFile to use PathBuf instead of String for proper file path handling
+- Integrated IO thread into scheduler public API
+- Added 7 comprehensive unit tests for IO thread functionality
+- All 58 unit tests pass successfully
+- All 6 doctests pass successfully
+- Linting passes with cargo clippy -- -D warnings (no warnings)
+
+**Files Created:**
+- crates/scheduler/src/io.rs (IO thread implementation)
+
+**Files Modified:**
+- crates/scheduler/src/lib.rs (added io module and exports)
+- crates/scheduler/src/priority.rs (changed LoadFile path from String to PathBuf)
+- crates/scheduler/src/scheduler.rs (added PathBuf import for tests, updated doctest)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- IO thread runs on separate thread from render worker pool
+- Specialized for IO-bound operations (file loading, disk cache reads)
+- Only processes jobs of type LoadFile (ignores all other job types)
+- Uses peek_next_job() to check job type before removing from queue
+- Non-IO jobs remain in queue for render workers to process
+- Thread-safe design using Arc and atomic shutdown flag
+- Cooperative cancellation support via CancellationToken
+- Configurable poll interval (default: 100ms) for idle polling
+- Graceful shutdown mechanism waits for current job to complete
+- Named thread "pdf-io-thread" for debugging visibility
+
+**Technical Details:**
+- IoThreadConfig: configurable poll_interval (default 100ms)
+- IoExecutor type: Arc<dyn Fn(&Job, &CancellationToken) + Send + Sync>
+- Thread naming: "pdf-io-thread" for debugging
+- Shutdown flag: Arc<AtomicBool> for lock-free signaling
+- Job filtering: matches!(job.job_type, JobType::LoadFile { .. })
+- Peek-before-take pattern prevents blocking on non-IO jobs
+- PathBuf usage: proper file path representation (cross-platform)
+- Comprehensive test coverage: creation, execution, ignoring non-IO jobs, cancellation, priority, shutdown
+
+**Test Coverage:**
+1. test_io_thread_config_default - Default configuration values
+2. test_io_thread_config_new - New configuration creation
+3. test_io_thread_config_builder - Builder pattern with poll_interval
+4. test_io_thread_creation - Thread creation and shutdown
+5. test_io_thread_executes_load_file_jobs - Executes LoadFile jobs
+6. test_io_thread_ignores_non_io_jobs - Ignores non-IO jobs (leaves in queue)
+7. test_io_thread_respects_cancellation - Honors cancellation tokens
+8. test_io_thread_priority_ordering - Respects job priority ordering
+9. test_io_thread_shutdown - Graceful shutdown mechanism
+
+**Integration Points:**
+- Ready for Phase 5: Document loading (IO thread handles PDF file loading)
+- Ready for Phase 3: Disk cache (IO thread can handle disk cache reads)
+- Separates IO-bound work from CPU-bound rendering work
+- Prevents render workers from blocking on file I/O
+- JobScheduler provides jobs in priority order (respects scheduler priority)
+- Cancellation tokens enable responsive UI (cancel file loading on navigation)
+- Thread separation improves parallelism and responsiveness
+
+**Design Decisions:**
+- Separate thread instead of async/await for simplicity and consistency with worker pool
+- Peek-before-take pattern avoids blocking render workers on non-IO jobs
+- Only processes LoadFile jobs (clear separation of concerns)
+- PathBuf instead of String for proper cross-platform file path handling
+- Cooperative cancellation safer than forced thread termination
+- Poll interval (100ms) balances responsiveness vs CPU usage when idle
+- Graceful shutdown ensures current job completes before exiting
+- Thread naming enables debugging visibility in profilers and crash reports
+- Atomic shutdown flag allows lock-free shutdown signaling
+
+**Performance Characteristics:**
+- Single thread dedicated to IO operations (IO-bound, not CPU-bound)
+- Poll interval (100ms default) balances responsiveness vs CPU usage when idle
+- Lock-free cancellation checks (AtomicBool) during job execution
+- No contention with render workers (separate job types)
+- Peek operation is O(1) (no queue modification)
+- Separates IO latency from rendering latency
+
+**User Experience Benefits:**
+- Render workers never block on file I/O
+- File loading operations don't compete with rendering for CPU
+- Responsive UI during file loading operations
+- Cancellation works for long file loads (e.g., large PDFs)
+- Priority ordering ensures high-priority files load first
+- Graceful shutdown prevents data corruption
+
+**Why PathBuf Instead of String:**
+- Cross-platform file path handling (Windows, macOS, Linux)
+- Type-safe file path representation
+- Better integration with std::fs APIs
+- Prevents string encoding issues with non-UTF8 paths
+- Idiomatic Rust for file paths
+

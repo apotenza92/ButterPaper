@@ -40,10 +40,14 @@
 //! ```
 
 mod cancel;
+mod io;
 mod priority;
 mod scheduler;
+mod worker;
 
 // Re-export public API
 pub use cancel::{CancellationRegistry, CancellationToken};
+pub use io::{IoExecutor, IoThread, IoThreadConfig};
 pub use priority::{Job, JobId, JobPriority, JobType};
 pub use scheduler::{JobScheduler, SchedulerStats};
+pub use worker::{JobExecutor, WorkerPool, WorkerPoolConfig};
