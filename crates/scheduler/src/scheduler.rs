@@ -448,10 +448,7 @@ mod tests {
         );
 
         // Should get jobs in priority order
-        assert_eq!(
-            scheduler.next_job().unwrap().priority,
-            JobPriority::Visible
-        );
+        assert_eq!(scheduler.next_job().unwrap().priority, JobPriority::Visible);
         assert_eq!(
             scheduler.next_job().unwrap().priority,
             JobPriority::Thumbnails
@@ -555,8 +552,7 @@ mod tests {
         assert_eq!(scheduler.pending_jobs(), 3);
 
         // Cancel all except visible priority jobs
-        let cancelled =
-            scheduler.cancel_all_except(|job| job.priority == JobPriority::Visible);
+        let cancelled = scheduler.cancel_all_except(|job| job.priority == JobPriority::Visible);
         assert_eq!(cancelled, 2);
         assert_eq!(scheduler.pending_jobs(), 1);
 
@@ -1134,5 +1130,375 @@ mod tests {
 
         // Distant page thumbnail should be cancelled
         assert!(token3.is_cancelled());
+    }
+
+    // ============================================================================
+    // Large PDF Handling Tests (Phase 4.2)
+    // ============================================================================
+
+    #[test]
+    fn test_scheduler_handles_500_page_job_submission() {
+        let scheduler = JobScheduler::new();
+
+        // Submit tile render jobs for 500 pages (12 tiles each)
+        let page_count = 500;
+        let tiles_per_page = 12;
+
+        for page_index in 0..page_count {
+            for tile_y in 0..4 {
+                for tile_x in 0..3 {
+                    scheduler.submit(
+                        JobPriority::Thumbnails,
+                        JobType::RenderTile {
+                            page_index: page_index as u16,
+                            tile_x,
+                            tile_y,
+                            zoom_level: 100,
+                            rotation: 0,
+                            is_preview: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        let expected_jobs = page_count * tiles_per_page;
+        assert_eq!(
+            scheduler.pending_jobs(),
+            expected_jobs,
+            "Not all jobs were queued"
+        );
+
+        let stats = scheduler.stats();
+        assert_eq!(stats.jobs_submitted, expected_jobs as u64);
+    }
+
+    #[test]
+    fn test_scheduler_priority_ordering_with_many_jobs() {
+        let scheduler = JobScheduler::new();
+
+        // Submit jobs at different priorities
+        // Simulate 100 pages worth of jobs
+        for page_index in 0..100_u16 {
+            // Low priority: thumbnails
+            scheduler.submit(
+                JobPriority::Thumbnails,
+                JobType::GenerateThumbnail {
+                    page_index,
+                    width: 100,
+                    height: 100,
+                },
+            );
+
+            // Medium priority: adjacent page tiles
+            scheduler.submit(
+                JobPriority::Adjacent,
+                JobType::RenderTile {
+                    page_index,
+                    tile_x: 0,
+                    tile_y: 0,
+                    zoom_level: 100,
+                    rotation: 0,
+                    is_preview: true,
+                },
+            );
+
+            // High priority: visible tiles
+            scheduler.submit(
+                JobPriority::Visible,
+                JobType::RenderTile {
+                    page_index,
+                    tile_x: 0,
+                    tile_y: 0,
+                    zoom_level: 100,
+                    rotation: 0,
+                    is_preview: false,
+                },
+            );
+        }
+
+        assert_eq!(scheduler.pending_jobs(), 300);
+
+        // First 100 jobs should all be Visible priority
+        for _ in 0..100 {
+            let job = scheduler.next_job().unwrap();
+            assert_eq!(
+                job.priority,
+                JobPriority::Visible,
+                "Expected Visible priority job first"
+            );
+        }
+
+        // Next 100 jobs should all be Adjacent priority
+        for _ in 0..100 {
+            let job = scheduler.next_job().unwrap();
+            assert_eq!(
+                job.priority,
+                JobPriority::Adjacent,
+                "Expected Adjacent priority job"
+            );
+        }
+
+        // Last 100 jobs should all be Thumbnails priority
+        for _ in 0..100 {
+            let job = scheduler.next_job().unwrap();
+            assert_eq!(
+                job.priority,
+                JobPriority::Thumbnails,
+                "Expected Thumbnails priority job"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cancel_page_jobs_for_large_pdf() {
+        let scheduler = JobScheduler::new();
+
+        // Submit jobs for 500 pages
+        for page_index in 0..500_u16 {
+            scheduler.submit(
+                JobPriority::Thumbnails,
+                JobType::RenderTile {
+                    page_index,
+                    tile_x: 0,
+                    tile_y: 0,
+                    zoom_level: 100,
+                    rotation: 0,
+                    is_preview: true,
+                },
+            );
+            scheduler.submit(
+                JobPriority::Ocr,
+                JobType::RunOcr { page_index },
+            );
+        }
+
+        assert_eq!(scheduler.pending_jobs(), 1000);
+
+        // Cancel all jobs for page 250
+        let cancelled = scheduler.cancel_page_jobs(250);
+        assert_eq!(cancelled, 2);
+        assert_eq!(scheduler.pending_jobs(), 998);
+
+        // Cancel all jobs for pages 0-99
+        let mut total_cancelled = 0;
+        for page in 0..100_u16 {
+            total_cancelled += scheduler.cancel_page_jobs(page);
+        }
+        assert_eq!(total_cancelled, 200);
+        assert_eq!(scheduler.pending_jobs(), 798);
+    }
+
+    #[test]
+    fn test_clear_scheduler_with_many_jobs() {
+        use std::time::Instant;
+
+        let scheduler = JobScheduler::new();
+
+        // Submit 6000 jobs (500 pages * 12 tiles)
+        for page_index in 0..500_u16 {
+            for tile_y in 0..4 {
+                for tile_x in 0..3 {
+                    scheduler.submit(
+                        JobPriority::Thumbnails,
+                        JobType::RenderTile {
+                            page_index,
+                            tile_x,
+                            tile_y,
+                            zoom_level: 100,
+                            rotation: 0,
+                            is_preview: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        assert_eq!(scheduler.pending_jobs(), 6000);
+
+        let start = Instant::now();
+        scheduler.clear();
+        let elapsed = start.elapsed();
+
+        assert_eq!(scheduler.pending_jobs(), 0);
+
+        // Clear should be fast (under 1 second for 6000 jobs)
+        assert!(
+            elapsed.as_secs() < 1,
+            "Clear took too long: {:?}",
+            elapsed
+        );
+
+        let stats = scheduler.stats();
+        assert_eq!(stats.jobs_cancelled, 6000);
+    }
+
+    #[test]
+    fn test_viewport_based_cancellation_for_large_pdf() {
+        use crate::viewport::Viewport;
+
+        let scheduler = JobScheduler::new();
+
+        // Submit tile jobs for 500 pages
+        for page_index in 0..500_u16 {
+            scheduler.submit(
+                JobPriority::Thumbnails,
+                JobType::RenderTile {
+                    page_index,
+                    tile_x: 0,
+                    tile_y: 0,
+                    zoom_level: 100,
+                    rotation: 0,
+                    is_preview: true,
+                },
+            );
+        }
+
+        assert_eq!(scheduler.pending_jobs(), 500);
+
+        // Viewport shows page 250
+        let viewport = Viewport::new(250, 0.0, 0.0, 800.0, 600.0, 100);
+
+        // Cancel off-screen jobs
+        let cancelled = scheduler.cancel_offscreen_jobs(&viewport, 256);
+
+        // Most jobs should be cancelled (all except pages near 250)
+        assert!(
+            cancelled > 480,
+            "Expected most jobs to be cancelled, got {}",
+            cancelled
+        );
+
+        // Some jobs should remain (visible + margin + adjacent)
+        assert!(
+            scheduler.pending_jobs() < 20,
+            "Too many jobs remaining: {}",
+            scheduler.pending_jobs()
+        );
+    }
+
+    #[test]
+    fn test_job_submission_performance() {
+        use std::time::Instant;
+
+        let scheduler = JobScheduler::new();
+
+        let start = Instant::now();
+
+        // Submit 6000 jobs
+        for page_index in 0..500_u16 {
+            for tile_y in 0..4 {
+                for tile_x in 0..3 {
+                    scheduler.submit(
+                        JobPriority::Thumbnails,
+                        JobType::RenderTile {
+                            page_index,
+                            tile_x,
+                            tile_y,
+                            zoom_level: 100,
+                            rotation: 0,
+                            is_preview: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        let submit_time = start.elapsed();
+
+        // 6000 submissions should complete in under 1 second
+        assert!(
+            submit_time.as_secs() < 1,
+            "Job submission too slow: {:?}",
+            submit_time
+        );
+
+        // Processing 1000 jobs
+        let process_start = Instant::now();
+        for _ in 0..1000 {
+            if let Some(job) = scheduler.next_job() {
+                scheduler.complete_job(job.id);
+            }
+        }
+        let process_time = process_start.elapsed();
+
+        // Processing should be fast
+        assert!(
+            process_time.as_millis() < 500,
+            "Job processing too slow: {:?}",
+            process_time
+        );
+    }
+
+    #[test]
+    fn test_statistics_tracking_for_large_workload() {
+        let scheduler = JobScheduler::new();
+
+        // Submit 1000 jobs
+        for i in 0..1000_u16 {
+            scheduler.submit(
+                JobPriority::Thumbnails,
+                JobType::RenderTile {
+                    page_index: i,
+                    tile_x: 0,
+                    tile_y: 0,
+                    zoom_level: 100,
+                    rotation: 0,
+                    is_preview: true,
+                },
+            );
+        }
+
+        // Complete 300 jobs
+        for _ in 0..300 {
+            if let Some(job) = scheduler.next_job() {
+                scheduler.complete_job(job.id);
+            }
+        }
+
+        // Cancel 200 jobs
+        let mut cancelled = 0;
+        for page in 300..500_u16 {
+            cancelled += scheduler.cancel_page_jobs(page);
+        }
+        assert_eq!(cancelled, 200);
+
+        let stats = scheduler.stats();
+        assert_eq!(stats.jobs_submitted, 1000);
+        assert_eq!(stats.jobs_completed, 300);
+        assert_eq!(stats.jobs_cancelled, 200);
+        assert_eq!(stats.queue_size, 500);
+        assert_eq!(stats.pending_jobs(), 500);
+    }
+
+    #[test]
+    fn test_fifo_order_within_same_priority() {
+        let scheduler = JobScheduler::new();
+
+        // Submit jobs with same priority
+        let mut expected_order = Vec::new();
+        for page_index in 0..100_u16 {
+            let (job_id, _) = scheduler.submit(
+                JobPriority::Visible,
+                JobType::RenderTile {
+                    page_index,
+                    tile_x: 0,
+                    tile_y: 0,
+                    zoom_level: 100,
+                    rotation: 0,
+                    is_preview: true,
+                },
+            );
+            expected_order.push(job_id);
+        }
+
+        // Jobs should come out in FIFO order
+        for expected_id in expected_order {
+            let job = scheduler.next_job().unwrap();
+            assert_eq!(
+                job.id, expected_id,
+                "Jobs not returned in FIFO order within same priority"
+            );
+        }
     }
 }

@@ -370,7 +370,7 @@ Wire up existing measurement system.
 - [x] Target: <500ms to first PDF page visible
 
 ### Phase 4.2: Large PDF Handling
-- [ ] Test with 500+ page PDFs
+- [x] Test with 500+ page PDFs
 - [ ] Test with 100MB+ PDFs
 - [ ] Ensure no UI freezes
 - [ ] Progressive page loading

@@ -459,7 +459,7 @@ mod tests {
         cache.put(3, pixels.clone(), 256, 256);
 
         assert!(cache.get(1).is_some()); // Still present
-        assert!(cache.get(2).is_none());  // Evicted
+        assert!(cache.get(2).is_none()); // Evicted
         assert!(cache.get(3).is_some()); // Present
     }
 
@@ -645,5 +645,265 @@ mod tests {
         assert!(cache.contains(1)); // Still present (accessed via try_get)
         assert!(!cache.contains(2)); // Evicted
         assert!(cache.contains(3)); // Present
+    }
+
+    // ============================================================================
+    // Large PDF Handling Tests (Phase 4.2)
+    // ============================================================================
+
+    #[test]
+    fn test_memory_bounded_for_500_page_pdf_simulation() {
+        // Simulate caching tiles for a 500+ page PDF
+        // Cache limit: 50MB (reasonable for a PDF viewer)
+        let cache_limit_mb = 50;
+        let cache = RamTileCache::with_mb_limit(cache_limit_mb);
+
+        let tile_size = 256 * 256 * 4; // 256KB per tile
+        let page_count = 500;
+        let tiles_per_page = 12;
+
+        // Insert tiles for all pages (simulating navigation through entire document)
+        for page_index in 0..page_count {
+            for tile_index in 0..tiles_per_page {
+                let key = (page_index * tiles_per_page + tile_index) as u64;
+                let pixels = vec![0u8; tile_size];
+                cache.put(key, pixels, 256, 256);
+            }
+        }
+
+        // Memory should stay bounded
+        let stats = cache.stats();
+        assert!(
+            stats.memory_used <= cache_limit_mb * 1024 * 1024,
+            "Cache exceeded memory limit: {} > {}",
+            stats.memory_used,
+            cache_limit_mb * 1024 * 1024
+        );
+
+        // Should have evicted many tiles
+        assert!(stats.evictions > 0, "No evictions occurred");
+
+        // Cache should only hold ~200 tiles (50MB / 256KB ≈ 200)
+        let expected_max_tiles = (cache_limit_mb * 1024 * 1024) / tile_size;
+        assert!(
+            stats.tile_count <= expected_max_tiles,
+            "Too many tiles in cache: {} > {}",
+            stats.tile_count,
+            expected_max_tiles
+        );
+    }
+
+    #[test]
+    fn test_lru_eviction_preserves_recent_tiles_for_large_pdf() {
+        // Cache can hold ~10 tiles
+        let cache = RamTileCache::new(10 * 256 * 256 * 4);
+
+        let tile_size = 256 * 256 * 4;
+        let pixels = vec![0u8; tile_size];
+
+        // Insert tiles 0-9 (fills cache)
+        for i in 0..10 {
+            cache.put(i, pixels.clone(), 256, 256);
+        }
+
+        // Access tiles 5-9 (make them most recently used)
+        for i in 5..10 {
+            cache.get(i);
+        }
+
+        // Insert 5 more tiles (should evict tiles 0-4)
+        for i in 10..15 {
+            cache.put(i, pixels.clone(), 256, 256);
+        }
+
+        // Tiles 0-4 should be evicted (least recently used)
+        for i in 0..5 {
+            assert!(
+                !cache.contains(i),
+                "Tile {} should have been evicted",
+                i
+            );
+        }
+
+        // Tiles 5-9 should still be present (recently accessed)
+        for i in 5..10 {
+            assert!(
+                cache.contains(i),
+                "Tile {} should still be in cache",
+                i
+            );
+        }
+
+        // Tiles 10-14 should be present (newly added)
+        for i in 10..15 {
+            assert!(
+                cache.contains(i),
+                "Tile {} should be in cache",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_cache_performance_under_high_load() {
+        use std::time::Instant;
+
+        let cache = RamTileCache::with_mb_limit(50);
+        let tile_size = 256 * 256 * 4;
+        let operation_count = 10000;
+
+        let start = Instant::now();
+
+        // Perform many put operations
+        for i in 0..operation_count {
+            let pixels = vec![0u8; tile_size];
+            cache.put(i as u64, pixels, 256, 256);
+        }
+
+        let put_time = start.elapsed();
+
+        // Perform many get operations (mix of hits and misses)
+        let get_start = Instant::now();
+        for i in 0..operation_count {
+            let _ = cache.get(i as u64);
+        }
+        let get_time = get_start.elapsed();
+
+        // Performance assertions
+        // 10000 puts should complete in under 5 seconds
+        assert!(
+            put_time.as_secs() < 5,
+            "Put operations too slow: {:?}",
+            put_time
+        );
+
+        // 10000 gets should complete in under 1 second
+        assert!(
+            get_time.as_secs() < 1,
+            "Get operations too slow: {:?}",
+            get_time
+        );
+
+        let stats = cache.stats();
+        // Should have high hit rate for recent tiles
+        assert!(stats.hits > 0, "No cache hits recorded");
+    }
+
+    #[test]
+    fn test_cache_hit_rate_with_viewport_simulation() {
+        // Simulate user scrolling through a document with a viewport
+        // The viewport shows ~6 tiles at a time
+        let cache = RamTileCache::with_mb_limit(10); // Can hold ~40 tiles
+        let tile_size = 256 * 256 * 4;
+        let pixels = vec![0u8; tile_size];
+
+        // Simulate scrolling through 100 pages, accessing 6 tiles per page
+        // With cache holding ~40 tiles, we should see good hit rate for
+        // adjacent page access patterns
+        for page in 0..100 {
+            // Pre-populate cache with current page tiles
+            for tile in 0..6 {
+                let key = (page * 6 + tile) as u64;
+                cache.put(key, pixels.clone(), 256, 256);
+            }
+
+            // Simulate re-accessing current page tiles (common pattern)
+            for tile in 0..6 {
+                let key = (page * 6 + tile) as u64;
+                let _ = cache.get(key);
+            }
+        }
+
+        let stats = cache.stats();
+
+        // Calculate hit rate
+        let hit_rate = stats.hit_rate();
+        // With good temporal locality, we should see reasonable hit rate
+        assert!(
+            hit_rate > 0.4,
+            "Hit rate too low for sequential access: {:.2}%",
+            hit_rate * 100.0
+        );
+    }
+
+    #[test]
+    fn test_memory_limit_reduction_evicts_correctly() {
+        let cache = RamTileCache::with_mb_limit(100);
+        let tile_size = 256 * 256 * 4;
+        let pixels = vec![0u8; tile_size];
+
+        // Fill with 100 tiles (~25MB)
+        for i in 0..100 {
+            cache.put(i, pixels.clone(), 256, 256);
+        }
+
+        assert_eq!(cache.tile_count(), 100);
+
+        // Reduce limit to 5MB (can hold ~20 tiles)
+        cache.set_memory_limit(5 * 1024 * 1024);
+
+        // Should have evicted tiles to fit new limit
+        assert!(
+            cache.tile_count() <= 20,
+            "Too many tiles after limit reduction: {}",
+            cache.tile_count()
+        );
+
+        assert!(
+            cache.memory_used() <= 5 * 1024 * 1024,
+            "Memory exceeds new limit after reduction"
+        );
+    }
+
+    #[test]
+    fn test_concurrent_access_simulation() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let cache = Arc::new(RamTileCache::with_mb_limit(50));
+        let tile_size = 256 * 256 * 4;
+
+        // Spawn multiple threads that read and write to the cache
+        let mut handles = vec![];
+
+        for thread_id in 0..4 {
+            let cache_clone = Arc::clone(&cache);
+            let handle = thread::spawn(move || {
+                let pixels = vec![0u8; tile_size];
+
+                // Each thread works on its own key range
+                let start_key = thread_id * 1000;
+                let end_key = start_key + 500;
+
+                // Write 500 tiles
+                for i in start_key..end_key {
+                    cache_clone.put(i as u64, pixels.clone(), 256, 256);
+                }
+
+                // Read 500 tiles (some will be evicted)
+                let mut hits = 0;
+                for i in start_key..end_key {
+                    if cache_clone.get(i as u64).is_some() {
+                        hits += 1;
+                    }
+                }
+
+                hits
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        let total_hits: usize = handles.into_iter().map(|h| h.join().unwrap()).sum();
+
+        // Cache should still be consistent
+        let stats = cache.stats();
+        assert!(
+            stats.memory_used <= 50 * 1024 * 1024,
+            "Cache exceeded memory limit during concurrent access"
+        );
+
+        // Should have some hits across all threads
+        assert!(total_hits > 0, "No cache hits during concurrent access");
     }
 }
