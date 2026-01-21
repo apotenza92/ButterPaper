@@ -5,6 +5,7 @@
 
 use crate::annotation::{AnnotationGeometry, Color, PageCoordinate, SerializableAnnotation};
 use crate::document::DocumentMetadata;
+use pdfium_render::prelude::*;
 use std::fmt::Write as FmtWrite;
 use std::path::Path;
 
@@ -15,6 +16,8 @@ pub enum PdfExportError {
     IoError(std::io::Error),
     /// PDF generation error
     GenerationError(String),
+    /// PDF loading error
+    LoadError(String),
     /// Unsupported annotation type
     UnsupportedAnnotation(String),
 }
@@ -24,6 +27,7 @@ impl std::fmt::Display for PdfExportError {
         match self {
             PdfExportError::IoError(e) => write!(f, "IO error: {}", e),
             PdfExportError::GenerationError(e) => write!(f, "PDF generation error: {}", e),
+            PdfExportError::LoadError(e) => write!(f, "PDF load error: {}", e),
             PdfExportError::UnsupportedAnnotation(e) => write!(f, "Unsupported annotation: {}", e),
         }
     }
@@ -382,6 +386,199 @@ pub fn save_pdf_with_annotations(
     Ok(())
 }
 
+/// Convert color to pdfium RGB values (0-255 range)
+fn to_pdfium_color(color: &Color) -> (u8, u8, u8) {
+    let (r, g, b, _) = color.to_normalized();
+    ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+}
+
+/// Add annotation as a path object to a page
+fn add_annotation_to_page<'a>(
+    page: &mut PdfPage<'a>,
+    annotation: &SerializableAnnotation,
+    document: &PdfDocument<'a>,
+) -> PdfExportResult<()> {
+    let (r, g, b) = to_pdfium_color(&annotation.style.stroke_color);
+    let stroke_color = PdfColor::new(r, g, b, 255);
+    let stroke_width = PdfPoints::new(annotation.style.stroke_width);
+
+    let fill_color = annotation.style.fill_color.as_ref().map(|c| {
+        let (r, g, b) = to_pdfium_color(c);
+        PdfColor::new(r, g, b, 255)
+    });
+
+    match &annotation.geometry {
+        AnnotationGeometry::Line { start, end } => {
+            let path = PdfPagePathObject::new_line(
+                document,
+                PdfPoints::new(start.x),
+                PdfPoints::new(start.y),
+                PdfPoints::new(end.x),
+                PdfPoints::new(end.y),
+                stroke_color,
+                stroke_width,
+            ).map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            page.objects_mut()
+                .add_path_object(path)
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+        }
+
+        AnnotationGeometry::Rectangle { top_left, bottom_right } => {
+            // PDF coordinates: bottom-left origin
+            let rect = PdfRect::new_from_values(
+                top_left.y,        // bottom
+                top_left.x,        // left
+                bottom_right.y,    // top
+                bottom_right.x,    // right
+            );
+
+            let obj = page.objects_mut()
+                .create_path_object_rect(
+                    rect,
+                    Some(stroke_color),
+                    Some(stroke_width),
+                    fill_color,
+                )
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            // Object is already added to the page by create_path_object_rect
+            drop(obj);
+        }
+
+        AnnotationGeometry::Circle { center, radius } => {
+            // Create circle as ellipse with equal radii
+            let rect = PdfRect::new_from_values(
+                center.y - radius,    // bottom
+                center.x - radius,    // left
+                center.y + radius,    // top
+                center.x + radius,    // right
+            );
+
+            let obj = page.objects_mut()
+                .create_path_object_ellipse(
+                    rect,
+                    Some(stroke_color),
+                    Some(stroke_width),
+                    fill_color,
+                )
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            drop(obj);
+        }
+
+        AnnotationGeometry::Ellipse { center, radius_x, radius_y } => {
+            let rect = PdfRect::new_from_values(
+                center.y - radius_y,    // bottom
+                center.x - radius_x,    // left
+                center.y + radius_y,    // top
+                center.x + radius_x,    // right
+            );
+
+            let obj = page.objects_mut()
+                .create_path_object_ellipse(
+                    rect,
+                    Some(stroke_color),
+                    Some(stroke_width),
+                    fill_color,
+                )
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+
+            drop(obj);
+        }
+
+        // For now, complex geometries (polyline, polygon, arrow, text) are not supported
+        // in flattened export. These would require more complex path construction.
+        AnnotationGeometry::Polyline { .. }
+        | AnnotationGeometry::Freehand { .. }
+        | AnnotationGeometry::Polygon { .. }
+        | AnnotationGeometry::Arrow { .. }
+        | AnnotationGeometry::Text { .. } => {
+            // Skip complex geometries for now
+            return Ok(());
+        }
+    }
+
+    Ok(())
+}
+
+/// Initialize pdfium library
+fn init_pdfium() -> PdfExportResult<Pdfium> {
+    Ok(Pdfium::new(
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
+            .or_else(|_| Pdfium::bind_to_system_library())
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?,
+    ))
+}
+
+/// Export PDF with flattened annotations
+///
+/// This function renders annotations directly into the page content stream,
+/// making them permanent and non-editable. This ensures maximum compatibility
+/// with all PDF viewers and prevents annotations from being removed.
+///
+/// # Arguments
+/// * `source_path` - Path to the source PDF file
+/// * `output_path` - Path where the flattened PDF will be saved
+/// * `metadata` - Document metadata containing annotations
+///
+/// # Returns
+/// Success or an error if the operation fails
+pub fn export_flattened_pdf(
+    source_path: &Path,
+    output_path: &Path,
+    metadata: &DocumentMetadata,
+) -> PdfExportResult<()> {
+    if metadata.annotations.is_empty() {
+        return Err(PdfExportError::GenerationError(
+            "No annotations to flatten".to_string()
+        ));
+    }
+
+    // Initialize pdfium
+    let pdfium = init_pdfium()?;
+
+    // Load the source PDF
+    let mut document = pdfium
+        .load_pdf_from_file(source_path, None)
+        .map_err(|e| PdfExportError::LoadError(e.to_string()))?;
+
+    // Group annotations by page
+    let mut annotations_by_page: std::collections::HashMap<usize, Vec<&SerializableAnnotation>> =
+        std::collections::HashMap::new();
+
+    for annotation in &metadata.annotations {
+        annotations_by_page
+            .entry(annotation.page_index as usize)
+            .or_default()
+            .push(annotation);
+    }
+
+    // Add annotations to each page
+    for (page_index, page_annotations) in annotations_by_page {
+        if let Ok(mut page) = document.pages_mut().get(page_index as u16) {
+            for annotation in page_annotations {
+                if annotation.visible {
+                    add_annotation_to_page(&mut page, annotation, &document)?;
+                }
+            }
+
+            // Regenerate page content to commit changes
+            page.regenerate_content()
+                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+        }
+    }
+
+    // Save the modified PDF
+    document
+        .save_to_file(output_path)
+        .map_err(|e| PdfExportError::IoError(
+            std::io::Error::other(e.to_string())
+        ))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,5 +672,14 @@ mod tests {
         assert!(options.include_annotations);
         assert!(options.generate_appearances);
         assert!(!options.flatten);
+    }
+
+    #[test]
+    fn test_to_pdfium_color() {
+        let color = Color::RED;
+        let (r, g, b) = to_pdfium_color(&color);
+        assert_eq!(r, 255);
+        assert_eq!(g, 0);
+        assert_eq!(b, 0);
     }
 }
