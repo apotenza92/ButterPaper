@@ -11,6 +11,7 @@
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneGraph, SceneNode};
 use pdf_editor_cache::gpu::GpuTextureCache;
 use pdf_editor_core::annotation::{Annotation, AnnotationGeometry, PageCoordinate};
+use pdf_editor_core::manipulation::ManipulationHandle;
 use pdf_editor_render::tile::{TileCoordinate, TileId, TileProfile, TILE_SIZE};
 use pdf_editor_scheduler::Viewport;
 use std::sync::Arc;
@@ -327,6 +328,88 @@ impl ViewportCompositor {
     fn get_layer(&self, layer_index: usize) -> Arc<SceneNode> {
         let root = self.scene_graph.root();
         Arc::clone(&root.children()[layer_index])
+    }
+
+    /// Render selection highlight for an annotation
+    ///
+    /// Adds a highlight border around the selected annotation.
+    pub fn render_selection_highlight(
+        &mut self,
+        annotation: &Annotation,
+        viewport: &Viewport,
+    ) {
+        let (min_x, min_y, max_x, max_y) = annotation.bounding_box();
+
+        // Only render if in viewport
+        if !is_in_viewport(min_x, min_y, max_x, max_y, viewport) {
+            return;
+        }
+
+        // Transform bounding box to screen coordinates
+        let top_left = transform_page_to_screen(&PageCoordinate::new(min_x, min_y), viewport);
+        let bottom_right = transform_page_to_screen(&PageCoordinate::new(max_x, max_y), viewport);
+
+        // Create selection highlight rectangle
+        let highlight = Primitive::Polyline {
+            points: vec![
+                top_left,
+                [bottom_right[0], top_left[1]],
+                bottom_right,
+                [top_left[0], bottom_right[1]],
+            ],
+            width: 2.0,
+            color: Color {
+                r: 0.2,
+                g: 0.6,
+                b: 1.0,
+                a: 1.0,
+            }, // Blue highlight
+            closed: true,
+        };
+
+        self.add_guide(highlight);
+    }
+
+    /// Render manipulation handles for an annotation
+    ///
+    /// Adds visual handles for resizing and manipulating the annotation.
+    pub fn render_manipulation_handles(
+        &mut self,
+        handles: &[ManipulationHandle],
+        viewport: &Viewport,
+    ) {
+        for handle in handles {
+            let screen_pos = transform_page_to_screen(&handle.position, viewport);
+            let zoom_scale = viewport.zoom_level as f32 / 100.0;
+            let screen_size = handle.size * zoom_scale;
+
+            // Render handle as a filled circle with border
+            let handle_fill = Primitive::Circle {
+                center: screen_pos,
+                radius: screen_size,
+                color: Color {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 1.0,
+                }, // White fill
+            };
+
+            let handle_border = Primitive::Circle {
+                center: screen_pos,
+                radius: screen_size + 1.0,
+                color: Color {
+                    r: 0.2,
+                    g: 0.6,
+                    b: 1.0,
+                    a: 1.0,
+                }, // Blue border
+            };
+
+            // Add border first (renders behind fill)
+            self.add_guide(handle_border);
+            self.add_guide(handle_fill);
+        }
     }
 }
 
@@ -648,5 +731,59 @@ mod tests {
         assert_eq!(layers[1].id(), compositor.annotation_layer_id);
         assert_eq!(layers[2].id(), compositor.guide_layer_id);
         assert_eq!(layers[3].id(), compositor.label_layer_id);
+    }
+
+    #[test]
+    fn test_render_selection_highlight() {
+        use pdf_editor_core::annotation::{
+            Annotation, AnnotationGeometry, AnnotationStyle,
+        };
+
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut compositor = ViewportCompositor::new(cache);
+
+        let geometry = AnnotationGeometry::Rectangle {
+            top_left: PageCoordinate::new(50.0, 50.0),
+            bottom_right: PageCoordinate::new(150.0, 150.0),
+        };
+        let annotation = Annotation::new(0, geometry, AnnotationStyle::new());
+
+        let viewport = Viewport::new(0, 0.0, 0.0, 1024.0, 768.0, 100);
+
+        // Render selection highlight
+        compositor.render_selection_highlight(&annotation, &viewport);
+
+        // Verify guide layer has primitives
+        let guide_layer = compositor.get_layer(2);
+        assert!(!guide_layer.primitives().is_empty());
+    }
+
+    #[test]
+    fn test_render_manipulation_handles() {
+        use pdf_editor_core::annotation::{
+            Annotation, AnnotationGeometry, AnnotationStyle,
+        };
+        use pdf_editor_core::manipulation::generate_handles;
+
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut compositor = ViewportCompositor::new(cache);
+
+        let geometry = AnnotationGeometry::Rectangle {
+            top_left: PageCoordinate::new(50.0, 50.0),
+            bottom_right: PageCoordinate::new(150.0, 150.0),
+        };
+        let annotation = Annotation::new(0, geometry, AnnotationStyle::new());
+
+        let handles = generate_handles(&annotation, 6.0);
+        let viewport = Viewport::new(0, 0.0, 0.0, 1024.0, 768.0, 100);
+
+        // Render handles
+        compositor.render_manipulation_handles(&handles, &viewport);
+
+        // Verify guide layer has primitives (2 per handle: border + fill)
+        let guide_layer = compositor.get_layer(2);
+        assert_eq!(guide_layer.primitives().len(), handles.len() * 2);
     }
 }

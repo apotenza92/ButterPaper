@@ -94,7 +94,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Build page-local coordinate system for annotations
 - [x] Render annotations as GPU vector primitives
 - [x] Implement vector-based hit testing
-- [ ] Add annotation selection and manipulation handles
+- [x] Add annotation selection and manipulation handles
 
 ### Phase 8: CAD Measurement Engine
 - [ ] Build measurement geometry storage (page coordinates)

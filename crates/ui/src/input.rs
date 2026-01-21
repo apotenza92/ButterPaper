@@ -14,6 +14,9 @@
 //! between discrete levels.
 
 use pdf_editor_core::annotation::{AnnotationCollection, AnnotationId};
+use pdf_editor_core::manipulation::{
+    generate_handles, ManipulationHandle, ManipulationState,
+};
 use pdf_editor_core::PageCoordinate;
 use pdf_editor_scheduler::Viewport;
 use std::time::Duration;
@@ -61,6 +64,12 @@ pub struct InputHandler {
 
     /// Hit test tolerance in page coordinates (points)
     hit_test_tolerance: f32,
+
+    /// Active manipulation state (if dragging a handle)
+    manipulation_state: Option<ManipulationState>,
+
+    /// Handle size in page coordinates (points)
+    handle_size: f32,
 }
 
 /// Pan state with velocity interpolation
@@ -130,6 +139,8 @@ impl InputHandler {
             viewport_height,
             selected_annotation: None,
             hit_test_tolerance: 5.0, // 5 points in page coordinates
+            manipulation_state: None,
+            handle_size: 6.0, // 6 points in page coordinates
         }
     }
 
@@ -439,6 +450,94 @@ impl InputHandler {
             self.selected_annotation = None;
             false
         }
+    }
+
+    /// Get manipulation handles for the currently selected annotation
+    ///
+    /// Returns None if no annotation is selected.
+    pub fn get_selection_handles(
+        &self,
+        annotations: &AnnotationCollection,
+    ) -> Option<Vec<ManipulationHandle>> {
+        if let Some(annotation_id) = self.selected_annotation {
+            if let Some(annotation) = annotations.get(annotation_id) {
+                return Some(generate_handles(annotation, self.handle_size));
+            }
+        }
+        None
+    }
+
+    /// Start handle manipulation (call on mouse down over a handle)
+    ///
+    /// Returns true if manipulation started, false otherwise.
+    pub fn start_handle_manipulation(
+        &mut self,
+        annotations: &AnnotationCollection,
+    ) -> bool {
+        // Only allow handle manipulation if an annotation is selected
+        if let Some(annotation_id) = self.selected_annotation {
+            if let Some(annotation) = annotations.get(annotation_id) {
+                let handles = generate_handles(annotation, self.handle_size);
+                let page_coord =
+                    self.screen_to_page(self.mouse_position.0, self.mouse_position.1);
+
+                // Check if mouse is over any handle
+                for handle in handles {
+                    if handle.hit_test(&page_coord, self.hit_test_tolerance) {
+                        // Start manipulation
+                        self.manipulation_state = Some(ManipulationState::new(
+                            annotation_id,
+                            handle.handle_type,
+                            annotation.geometry().clone(),
+                            page_coord,
+                        ));
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Update active handle manipulation (call on mouse move while dragging)
+    pub fn update_handle_manipulation(&mut self) {
+        let page_coord = self.screen_to_page(self.mouse_position.0, self.mouse_position.1);
+        if let Some(ref mut state) = self.manipulation_state {
+            state.update_position(page_coord);
+        }
+    }
+
+    /// End handle manipulation (call on mouse up)
+    ///
+    /// Returns the new geometry if manipulation was active, None otherwise.
+    pub fn end_handle_manipulation(
+        &mut self,
+    ) -> Option<(AnnotationId, pdf_editor_core::AnnotationGeometry)> {
+        if let Some(state) = self.manipulation_state.take() {
+            let new_geometry = state.calculate_new_geometry();
+            return Some((state.annotation_id, new_geometry));
+        }
+        None
+    }
+
+    /// Check if currently manipulating a handle
+    pub fn is_manipulating(&self) -> bool {
+        self.manipulation_state.is_some()
+    }
+
+    /// Get the current manipulation state (for preview rendering)
+    pub fn manipulation_state(&self) -> Option<&ManipulationState> {
+        self.manipulation_state.as_ref()
+    }
+
+    /// Set the handle size in page coordinates
+    pub fn set_handle_size(&mut self, size: f32) {
+        self.handle_size = size;
+    }
+
+    /// Get the handle size in page coordinates
+    pub fn handle_size(&self) -> f32 {
+        self.handle_size
     }
 }
 
@@ -925,5 +1024,123 @@ mod tests {
         // Should hit the topmost annotation (layer 2)
         let hit = handler.hit_test_at_mouse(&collection);
         assert_eq!(hit, Some(id2));
+    }
+
+    #[test]
+    fn test_get_selection_handles() {
+        use pdf_editor_core::annotation::{
+            Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle,
+        };
+
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        let mut collection = AnnotationCollection::new();
+
+        // Create a rectangle annotation
+        let geometry = AnnotationGeometry::Rectangle {
+            top_left: PageCoordinate::new(50.0, 50.0),
+            bottom_right: PageCoordinate::new(150.0, 150.0),
+        };
+        let annotation = Annotation::new(0, geometry, AnnotationStyle::new());
+        let annotation_id = annotation.id();
+        collection.add(annotation);
+
+        // No handles when nothing is selected
+        assert!(handler.get_selection_handles(&collection).is_none());
+
+        // Select the annotation
+        handler.set_selected_annotation(Some(annotation_id));
+
+        // Should get handles for rectangle (9 handles: 4 corners + 4 edges + 1 rotation)
+        let handles = handler.get_selection_handles(&collection);
+        assert!(handles.is_some());
+        assert_eq!(handles.unwrap().len(), 9);
+    }
+
+    #[test]
+    fn test_start_handle_manipulation() {
+        use pdf_editor_core::annotation::{
+            Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle,
+        };
+
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        let mut collection = AnnotationCollection::new();
+
+        // Create a line annotation
+        let geometry = AnnotationGeometry::Line {
+            start: PageCoordinate::new(0.0, 0.0),
+            end: PageCoordinate::new(100.0, 100.0),
+        };
+        let annotation = Annotation::new(0, geometry, AnnotationStyle::new());
+        let annotation_id = annotation.id();
+        collection.add(annotation);
+
+        // Select the annotation
+        handler.set_selected_annotation(Some(annotation_id));
+
+        // Position mouse at the end point handle (100, 100)
+        handler.on_mouse_move(100.0, 100.0);
+
+        // Start manipulation
+        let started = handler.start_handle_manipulation(&collection);
+        assert!(started);
+        assert!(handler.is_manipulating());
+    }
+
+    #[test]
+    fn test_handle_manipulation_flow() {
+        use pdf_editor_core::annotation::{
+            Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle,
+        };
+
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        let mut collection = AnnotationCollection::new();
+
+        // Create a rectangle annotation
+        let geometry = AnnotationGeometry::Rectangle {
+            top_left: PageCoordinate::new(50.0, 50.0),
+            bottom_right: PageCoordinate::new(150.0, 150.0),
+        };
+        let annotation = Annotation::new(0, geometry, AnnotationStyle::new());
+        let annotation_id = annotation.id();
+        collection.add(annotation);
+
+        // Select the annotation
+        handler.set_selected_annotation(Some(annotation_id));
+
+        // Position mouse at bottom-right handle (150, 150)
+        handler.on_mouse_move(150.0, 150.0);
+
+        // Start manipulation
+        assert!(handler.start_handle_manipulation(&collection));
+
+        // Drag to (200, 200)
+        handler.on_mouse_move(200.0, 200.0);
+        handler.update_handle_manipulation();
+
+        // End manipulation
+        let result = handler.end_handle_manipulation();
+        assert!(result.is_some());
+
+        let (_, new_geometry) = result.unwrap();
+        if let AnnotationGeometry::Rectangle {
+            top_left: _,
+            bottom_right,
+        } = new_geometry
+        {
+            // Bottom-right should be moved to (200, 200)
+            assert!((bottom_right.x - 200.0).abs() < 0.001);
+            assert!((bottom_right.y - 200.0).abs() < 0.001);
+        } else {
+            panic!("Expected Rectangle geometry");
+        }
+    }
+
+    #[test]
+    fn test_handle_size_configuration() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        assert_eq!(handler.handle_size(), 6.0);
+
+        handler.set_handle_size(8.0);
+        assert_eq!(handler.handle_size(), 8.0);
     }
 }
