@@ -26,6 +26,7 @@ core-graphics-types = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+serial_test = "3.1"
 
 [package.metadata.bundle]
 name = "PDF Editor"

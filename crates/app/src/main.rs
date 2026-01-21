@@ -55,6 +55,7 @@ use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
 mod clipboard;
 mod menu;
 mod recent_files;
+mod startup_profiler;
 
 #[cfg(target_os = "macos")]
 mod text_overlay {
@@ -1626,10 +1627,13 @@ struct App {
     calibration_first_point: Option<PageCoordinate>,
     /// Page index where calibration started
     calibration_page: u16,
+    /// Startup profiler for tracking startup performance
+    startup_profiler: startup_profiler::StartupProfiler,
 }
 
 impl App {
     fn new() -> Self {
+        let mut startup_profiler = startup_profiler::StartupProfiler::new();
         let scene_graph = SceneGraph::new();
         let now = Instant::now();
         let input_handler = InputHandler::new(1200.0, 800.0);
@@ -1647,6 +1651,8 @@ impl App {
             0,
             (1200.0, 800.0),
         );
+
+        startup_profiler.mark_phase(startup_profiler::StartupPhase::AppStructInit);
 
         Self {
             window: None,
@@ -1718,6 +1724,7 @@ impl App {
             is_calibrating: false,
             calibration_first_point: None,
             calibration_page: 0,
+            startup_profiler,
         }
     }
 
@@ -1766,6 +1773,9 @@ impl App {
             Ok(pdf) => {
                 let page_count = pdf.page_count();
                 println!("SUCCESS: Loaded PDF with {} pages", page_count);
+
+                self.startup_profiler
+                    .mark_phase(startup_profiler::StartupPhase::PdfLoading);
 
                 // Add to recent files
                 if let Ok(mut recent) = recent_files::get_recent_files().write() {
@@ -1835,6 +1845,9 @@ impl App {
                         }
                     }
                     println!("TEXT_SELECTION: Initialized text layers for {} pages", text_layer_manager.layer_count());
+
+                    self.startup_profiler
+                        .mark_phase(startup_profiler::StartupPhase::TextExtraction);
                 }
 
                 // Initialize text search manager
@@ -1842,6 +1855,9 @@ impl App {
                 self.text_search_manager = Some(TextSearchManager::new(text_layer_manager));
 
                 self.render_current_page();
+
+                self.startup_profiler
+                    .mark_phase(startup_profiler::StartupPhase::FirstPageRender);
 
                 if let Some(window) = &self.window {
                     let title = path.file_name()
@@ -5031,6 +5047,11 @@ impl App {
                         startup_time.as_secs_f64() * 1000.0
                     );
                     self.first_frame_rendered = true;
+
+                    // Mark and print startup profile summary
+                    self.startup_profiler
+                        .mark_phase(startup_profiler::StartupPhase::FirstFrameRendered);
+                    self.startup_profiler.print_summary();
                 }
 
                 if let (Some(gpu_context), Some(renderer)) =
@@ -5830,12 +5851,22 @@ impl ApplicationHandler for App {
                     .expect("Failed to create window"),
             );
 
+            self.startup_profiler
+                .mark_phase(startup_profiler::StartupPhase::WindowCreation);
+
             #[cfg(target_os = "macos")]
             self.setup_metal_layer(&window);
 
+            self.startup_profiler
+                .mark_phase(startup_profiler::StartupPhase::MetalSetup);
+
             if let Ok(context) = gpu::create_context() {
+                self.startup_profiler
+                    .mark_phase(startup_profiler::StartupPhase::GpuContextCreation);
                 if let Ok(renderer) = SceneRenderer::new(context.as_ref()) {
                     self.renderer = Some(renderer);
+                    self.startup_profiler
+                        .mark_phase(startup_profiler::StartupPhase::SceneRendererCreation);
                 }
                 self.gpu_context = Some(context);
             }
@@ -6704,6 +6735,9 @@ fn run_export_measurements(path: &Path) -> i32 {
 }
 
 fn main() {
+    // Record app start time for profiling
+    let app_start = Instant::now();
+
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
     let mut initial_file: Option<PathBuf> = None;
@@ -6713,6 +6747,7 @@ fn main() {
     let mut list_annotations = false;
     let mut export_measurements = false;
     let mut search_query: Option<String> = None;
+    let mut profile_startup = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -6727,6 +6762,8 @@ fn main() {
             list_annotations = true;
         } else if arg == "--export-measurements" {
             export_measurements = true;
+        } else if arg == "--profile-startup" {
+            profile_startup = true;
         } else if arg == "--search" {
             // Next argument should be the search query
             if i + 1 < args.len() {
@@ -6743,6 +6780,15 @@ fn main() {
             }
         }
         i += 1;
+    }
+
+    // Enable startup profiling if requested
+    if profile_startup {
+        startup_profiler::enable_profiling();
+        println!(
+            "STARTUP_PROFILE: Argument parsing completed at {:.2}ms",
+            app_start.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     // Handle --search mode: search for text in PDF and exit without GUI
@@ -6804,11 +6850,32 @@ fn main() {
         app.activateIgnoringOtherApps_(YES);
     }
 
+    if profile_startup {
+        println!(
+            "STARTUP_PROFILE: Platform setup completed at {:.2}ms",
+            app_start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+
     // Set up native macOS menu bar
     menu::setup_menu_bar();
 
+    if profile_startup {
+        println!(
+            "STARTUP_PROFILE: Menu bar setup completed at {:.2}ms",
+            app_start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
+
+    if profile_startup {
+        println!(
+            "STARTUP_PROFILE: Event loop created at {:.2}ms",
+            app_start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
 
     let mut app = App::new();
     if debug_viewport {

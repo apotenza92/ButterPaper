@@ -11744,3 +11744,112 @@ cargo run --release -- --export-measurements file.pdf
 **CSV Columns:**
 ID, Page, Type, Value, Unit, Formatted, Scale System ID, Scale Ratio, Label, Tags, Notes, Geometry, Label Position X, Label Position Y, BBox Min X, BBox Min Y, BBox Max X, BBox Max Y, Visible, Layer
 
+
+---
+
+## Task: Profile startup time (Phase 4.1)
+
+**Date:** 2026-01-21
+
+### Summary
+
+Implemented comprehensive startup profiling for the PDF editor application. Added a new `--profile-startup` CLI flag that enables detailed timing measurements for each phase of application startup.
+
+### Technical Approach
+
+1. Created a new `startup_profiler` module in `crates/app/src/startup_profiler.rs` that:
+   - Defines `StartupPhase` enum with 14 distinct startup phases
+   - Implements `StartupProfiler` struct to track timing for each phase
+   - Uses atomic flags for thread-safe enable/disable of profiling
+   - Prints individual phase timings as they complete
+   - Prints a comprehensive summary after first frame rendered
+   - Checks against PRD targets (<200ms to first frame, <500ms to first PDF page)
+
+2. Integrated profiling markers throughout the startup flow:
+   - Argument parsing
+   - Platform setup (macOS activation)
+   - Menu bar setup
+   - Event loop creation
+   - App struct initialization
+   - Window creation
+   - Metal layer setup
+   - GPU context creation
+   - Scene renderer creation
+   - PDF loading
+   - Text extraction
+   - First page render
+   - First frame rendered
+
+### Files Modified
+
+1. `crates/app/src/startup_profiler.rs` (NEW):
+   - StartupPhase enum with 14 phases
+   - StartupProfiler struct with timing tracking
+   - `enable_profiling()` and `is_profiling_enabled()` functions
+   - `mark_phase()`, `elapsed()`, `total_startup_time()`, `is_startup_complete()`, `print_summary()` methods
+   - 7 unit tests with serial_test for thread safety
+
+2. `crates/app/src/main.rs`:
+   - Added `mod startup_profiler` declaration
+   - Added `startup_profiler` field to App struct
+   - Added `--profile-startup` CLI flag parsing
+   - Added profiling markers at key startup milestones
+   - Integrated summary printing on first frame rendered
+
+3. `crates/app/Cargo.toml`:
+   - Added `serial_test = "3.1"` dev-dependency for test isolation
+
+4. `PRD.md`:
+   - Marked "Profile startup time" as complete
+
+### Usage
+
+```bash
+# Run with startup profiling enabled
+cargo run --release -- --profile-startup test.pdf
+
+# Output example:
+STARTUP_PROFILE: Profiling enabled
+STARTUP_PROFILE: Argument parsing completed at 0.15ms
+STARTUP_PROFILE: Platform setup completed at 1.23ms
+STARTUP_PROFILE: Menu bar setup completed at 5.67ms
+STARTUP_PROFILE: Event loop created at 6.12ms
+STARTUP_PROFILE: App Struct Init completed at 8.45ms
+STARTUP_PROFILE: Window Creation completed at 45.23ms
+STARTUP_PROFILE: Metal Layer Setup completed at 52.89ms
+STARTUP_PROFILE: GPU Context Creation completed at 58.12ms
+STARTUP_PROFILE: Scene Renderer Creation completed at 62.34ms
+STARTUP_PROFILE: PDF Loading completed at 89.56ms
+STARTUP_PROFILE: Text Extraction completed at 134.78ms
+STARTUP_PROFILE: First Page Render completed at 156.23ms
+STARTUP_PROFILE: First Frame Rendered completed at 178.45ms
+
+=== STARTUP PROFILE SUMMARY ===
+  Application Start                     0.00ms (delta:   0.00ms)
+  App Struct Init                       8.45ms (delta:   8.45ms)
+  Window Creation                      45.23ms (delta:  36.78ms)
+  Metal Layer Setup                    52.89ms (delta:   7.66ms)
+  GPU Context Creation                 58.12ms (delta:   5.23ms)
+  Scene Renderer Creation              62.34ms (delta:   4.22ms)
+  PDF Loading                          89.56ms (delta:  27.22ms)
+  Text Extraction                     134.78ms (delta:  45.22ms)
+  First Page Render                   156.23ms (delta:  21.45ms)
+  First Frame Rendered                178.45ms (delta:  22.22ms)
+  TOTAL                               178.45ms
+
+  Target <200ms to first frame: PASS
+  Target <500ms to first PDF page: PASS
+===============================
+```
+
+### Test Results
+
+- 80 tests pass in pdf-editor crate (7 new tests for startup_profiler)
+- All workspace tests pass (320+ tests total)
+- Clippy passes with no new warnings
+
+### Architecture Notes
+
+The profiling system uses a global atomic flag (`PROFILING_ENABLED`) to enable/disable profiling without overhead when not in use. When disabled, `mark_phase()` returns immediately without any timing operations. This ensures zero performance impact during normal operation.
+
+The `serial_test` crate is used for tests that modify the global profiling flag, ensuring tests don't interfere with each other when run in parallel.

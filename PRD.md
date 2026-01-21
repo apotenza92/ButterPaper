@@ -363,7 +363,7 @@ Wire up existing measurement system.
 ## Priority 4: Performance & Polish
 
 ### Phase 4.1: Startup Optimization
-- [ ] Profile startup time
+- [x] Profile startup time
 - [ ] Lazy load subsystems
 - [ ] Show splash/loading on cold start
 - [ ] Target: <200ms to first frame
