@@ -7,7 +7,7 @@ use pdf_editor_ui::gpu;
 use pdf_editor_ui::input::InputHandler;
 use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::SceneGraph;
-use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT};
+use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT, ZOOM_LEVELS};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1249,6 +1249,9 @@ impl App {
             zoom_percent
         );
 
+        // Update toolbar zoom dropdown display
+        self.toolbar.set_zoom_level(zoom_percent);
+
         // Scale = 2 gives readable text, padding = 8 pixels
         if let Some(overlay) = text_overlay::render_text_overlay(device, &text, 2, 8) {
             doc.page_info_overlay = Some(PageInfoOverlay {
@@ -2379,6 +2382,12 @@ impl ApplicationHandler for App {
                 if let Some(button) = self.toolbar.hit_test(x, y) {
                     self.toolbar.set_button_hover(button, true);
                 }
+
+                // Update zoom dropdown hover state if open
+                if self.toolbar.is_zoom_dropdown_open() {
+                    let hovered_item = self.toolbar.hit_test_zoom_dropdown_item(x, y);
+                    self.toolbar.set_zoom_dropdown_hover(hovered_item);
+                }
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if button == MouseButton::Left {
@@ -2386,10 +2395,27 @@ impl ApplicationHandler for App {
                         ElementState::Pressed => {
                             let (x, y) = self.input_handler.mouse_position();
 
-                            // Check for toolbar button click first
-                            if let Some(button) = self.toolbar.hit_test(x, y) {
+                            // Check for zoom dropdown menu item click first (if open)
+                            if let Some(item_idx) = self.toolbar.hit_test_zoom_dropdown_item(x, y) {
+                                let zoom_level = ZOOM_LEVELS[item_idx];
+                                self.input_handler.set_zoom_level(zoom_level);
+                                self.toolbar.close_zoom_dropdown();
+                                self.update_page_info_overlay();
+                            }
+                            // Check for zoom dropdown display click
+                            else if self.toolbar.hit_test_zoom_dropdown(x, y) {
+                                self.toolbar.toggle_zoom_dropdown();
+                            }
+                            // Check for toolbar button click
+                            else if let Some(button) = self.toolbar.hit_test(x, y) {
+                                // Close dropdown if clicking elsewhere on toolbar
+                                self.toolbar.close_zoom_dropdown();
                                 self.handle_toolbar_button(button);
-                            } else {
+                            }
+                            // Otherwise handle as normal click
+                            else {
+                                // Close dropdown if clicking outside
+                                self.toolbar.close_zoom_dropdown();
                                 self.input_handler.on_mouse_down(x, y);
                             }
                         }

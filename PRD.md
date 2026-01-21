@@ -271,12 +271,12 @@ GPU-rendered toolbar at top of window.
   - [x] Previous page button (◀)
   - [x] Page number input field
   - [x] Next page button (▶)
-- [ ] **Zoom section:**
-  - [ ] Zoom out button (-)
-  - [ ] Zoom dropdown (50%, 75%, 100%, 125%, 150%, 200%)
-  - [ ] Zoom in button (+)
-  - [ ] Fit page button
-  - [ ] Fit width button
+- [x] **Zoom section:**
+  - [x] Zoom out button (-)
+  - [x] Zoom dropdown (50%, 75%, 100%, 125%, 150%, 200%)
+  - [x] Zoom in button (+)
+  - [x] Fit page button
+  - [x] Fit width button
 - [ ] **Tools section:**
   - [ ] Selection tool (arrow)
   - [ ] Hand/pan tool

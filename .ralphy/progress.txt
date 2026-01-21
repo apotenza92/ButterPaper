@@ -10588,3 +10588,54 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 - Text is centered within the input field
 - Hit testing enables future click-to-edit functionality
 - Design allows for easy extension to handle keyboard input for direct page entry
+
+### Task: Implement zoom dropdown in toolbar (Phase 2.2)
+
+**Status:** Complete
+
+**Changes:**
+- Added zoom dropdown constants (`ZOOM_DROPDOWN_WIDTH`, `ZOOM_DROPDOWN_HEIGHT`, `ZOOM_DROPDOWN_ITEM_HEIGHT`)
+- Exported `ZOOM_LEVELS` constant array with 9 zoom levels: 25, 50, 75, 100, 125, 150, 200, 300, 400
+- Created `ZoomDropdownState` struct tracking current zoom, open/closed state, and hovered item
+- Extended `Toolbar` struct with `zoom_dropdown` and `zoom_dropdown_rect` fields
+- Implemented zoom dropdown methods:
+  - `set_zoom_level()` / `zoom_level()` - get/set current zoom percentage
+  - `toggle_zoom_dropdown()` / `close_zoom_dropdown()` / `is_zoom_dropdown_open()`
+  - `hit_test_zoom_dropdown()` - detect clicks on the dropdown display
+  - `hit_test_zoom_dropdown_item()` - detect clicks on menu items when open
+  - `set_zoom_dropdown_hover()` - track hovered menu item
+  - `zoom_dropdown_menu_bounds()` - get combined bounds for click-outside detection
+- Implemented `add_zoom_dropdown()` rendering method:
+  - Dark input field background with border
+  - Current zoom level text (e.g., "100%") using bitmap font
+  - Dropdown arrow indicator (small triangle)
+  - Menu items rendered when dropdown is open with hover highlighting
+- Added `render_zoom_dropdown_menu()` and `render_zoom_menu_item_text()` helper methods
+- Added '%' character to the bitmap font renderer
+- Integrated with main app:
+  - Toolbar zoom level updated from `update_page_info_overlay()`
+  - Mouse click handling for dropdown display, menu items, and click-outside-to-close
+  - Mouse move handling for menu item hover state
+- Added 20 new tests covering:
+  - `ZoomDropdownState` default and clone
+  - Zoom level get/set and rebuild behavior
+  - Dropdown open/close/toggle
+  - Hit testing for dropdown display and menu items
+  - Menu bounds calculation
+  - Scene primitives generation
+
+**Tests:** All 133 workspace tests pass (including 44 toolbar tests)
+**Linting:** Clippy passes (only cocoa deprecation warnings)
+
+**Files Modified:**
+- crates/ui/src/toolbar.rs (added zoom dropdown functionality and 20 new tests)
+- crates/app/src/main.rs (integrated zoom dropdown with mouse event handling)
+- PRD.md (marked zoom section as complete)
+
+**Architecture Notes:**
+- Zoom dropdown follows the same pattern as page number input field
+- Menu items are rendered using the same bitmap font as page numbers
+- Current zoom level is highlighted in the dropdown menu
+- Clicking anywhere outside the dropdown or its menu closes it
+- Hover highlighting provides visual feedback for menu item selection
+- ZOOM_LEVELS constant is shared between toolbar and can be used for discrete zoom stepping

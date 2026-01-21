@@ -14,6 +14,16 @@ const PAGE_INPUT_WIDTH: f32 = 70.0;
 /// Height of the page number input field
 const PAGE_INPUT_HEIGHT: f32 = 24.0;
 
+/// Width of the zoom dropdown display
+const ZOOM_DROPDOWN_WIDTH: f32 = 60.0;
+/// Height of the zoom dropdown display
+const ZOOM_DROPDOWN_HEIGHT: f32 = 24.0;
+/// Height of each item in the dropdown menu
+const ZOOM_DROPDOWN_ITEM_HEIGHT: f32 = 28.0;
+
+/// Available zoom levels for the dropdown
+pub const ZOOM_LEVELS: [u32; 9] = [25, 50, 75, 100, 125, 150, 200, 300, 400];
+
 /// Configuration for toolbar appearance
 #[derive(Debug, Clone)]
 pub struct ToolbarConfig {
@@ -320,6 +330,27 @@ impl Default for PageNumberDisplay {
     }
 }
 
+/// Zoom dropdown display state
+#[derive(Debug, Clone)]
+pub struct ZoomDropdownState {
+    /// Current zoom level as percentage (e.g., 100 for 100%)
+    pub current_zoom: u32,
+    /// Whether the dropdown is open
+    pub is_open: bool,
+    /// Hovered item index (if dropdown is open)
+    pub hovered_item: Option<usize>,
+}
+
+impl Default for ZoomDropdownState {
+    fn default() -> Self {
+        Self {
+            current_zoom: 100,
+            is_open: false,
+            hovered_item: None,
+        }
+    }
+}
+
 /// Toolbar component that displays navigation, zoom, and tool buttons
 pub struct Toolbar {
     /// Configuration for layout and appearance
@@ -345,6 +376,12 @@ pub struct Toolbar {
 
     /// Rectangle bounds for the page input field (for hit testing)
     page_input_rect: Option<Rect>,
+
+    /// Zoom dropdown state
+    zoom_dropdown: ZoomDropdownState,
+
+    /// Rectangle bounds for the zoom dropdown display (for hit testing)
+    zoom_dropdown_rect: Option<Rect>,
 }
 
 impl Toolbar {
@@ -363,6 +400,8 @@ impl Toolbar {
             selected_tool: Some(ToolbarButton::SelectTool),
             page_display: PageNumberDisplay::default(),
             page_input_rect: None,
+            zoom_dropdown: ZoomDropdownState::default(),
+            zoom_dropdown_rect: None,
         };
 
         toolbar.rebuild();
@@ -383,6 +422,8 @@ impl Toolbar {
             selected_tool: Some(ToolbarButton::SelectTool),
             page_display: PageNumberDisplay::default(),
             page_input_rect: None,
+            zoom_dropdown: ZoomDropdownState::default(),
+            zoom_dropdown_rect: None,
         };
 
         toolbar.rebuild();
@@ -479,6 +520,107 @@ impl Toolbar {
         } else {
             false
         }
+    }
+
+    // --- Zoom dropdown methods ---
+
+    /// Set the current zoom level (as percentage, e.g., 100 for 100%)
+    pub fn set_zoom_level(&mut self, zoom: u32) {
+        if self.zoom_dropdown.current_zoom != zoom {
+            self.zoom_dropdown.current_zoom = zoom;
+            self.rebuild();
+        }
+    }
+
+    /// Get the current zoom level
+    pub fn zoom_level(&self) -> u32 {
+        self.zoom_dropdown.current_zoom
+    }
+
+    /// Get the zoom dropdown state
+    pub fn zoom_dropdown(&self) -> &ZoomDropdownState {
+        &self.zoom_dropdown
+    }
+
+    /// Check if a point is within the zoom dropdown display
+    pub fn hit_test_zoom_dropdown(&self, x: f32, y: f32) -> bool {
+        if let Some(rect) = &self.zoom_dropdown_rect {
+            x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
+        } else {
+            false
+        }
+    }
+
+    /// Toggle the zoom dropdown open/closed
+    pub fn toggle_zoom_dropdown(&mut self) {
+        self.zoom_dropdown.is_open = !self.zoom_dropdown.is_open;
+        self.zoom_dropdown.hovered_item = None;
+        self.rebuild();
+    }
+
+    /// Close the zoom dropdown
+    pub fn close_zoom_dropdown(&mut self) {
+        if self.zoom_dropdown.is_open {
+            self.zoom_dropdown.is_open = false;
+            self.zoom_dropdown.hovered_item = None;
+            self.rebuild();
+        }
+    }
+
+    /// Check if the zoom dropdown is open
+    pub fn is_zoom_dropdown_open(&self) -> bool {
+        self.zoom_dropdown.is_open
+    }
+
+    /// Hit test for zoom dropdown menu items when the dropdown is open
+    /// Returns the index of the zoom level if a menu item is hit
+    pub fn hit_test_zoom_dropdown_item(&self, x: f32, y: f32) -> Option<usize> {
+        if !self.zoom_dropdown.is_open {
+            return None;
+        }
+
+        if let Some(rect) = &self.zoom_dropdown_rect {
+            // Check if within the dropdown menu area (below the display)
+            let menu_x = rect.x;
+            let menu_y = rect.y + rect.height;
+            let menu_width = rect.width;
+            let menu_height = ZOOM_LEVELS.len() as f32 * ZOOM_DROPDOWN_ITEM_HEIGHT;
+
+            if x >= menu_x && x <= menu_x + menu_width && y >= menu_y && y <= menu_y + menu_height {
+                let item_index = ((y - menu_y) / ZOOM_DROPDOWN_ITEM_HEIGHT) as usize;
+                if item_index < ZOOM_LEVELS.len() {
+                    return Some(item_index);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Set the hovered item in the zoom dropdown
+    pub fn set_zoom_dropdown_hover(&mut self, item_index: Option<usize>) {
+        if self.zoom_dropdown.hovered_item != item_index {
+            self.zoom_dropdown.hovered_item = item_index;
+            if self.zoom_dropdown.is_open {
+                self.rebuild();
+            }
+        }
+    }
+
+    /// Get the dropdown menu bounds for checking if a click is outside
+    pub fn zoom_dropdown_menu_bounds(&self) -> Option<Rect> {
+        if !self.zoom_dropdown.is_open {
+            return None;
+        }
+
+        self.zoom_dropdown_rect.map(|rect| {
+            Rect::new(
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height + ZOOM_LEVELS.len() as f32 * ZOOM_DROPDOWN_ITEM_HEIGHT,
+            )
+        })
     }
 
     /// Set button hover state
@@ -595,6 +737,7 @@ impl Toolbar {
 
         // Zoom section
         x = self.add_button(&mut new_node, ToolbarButton::ZoomOut, x, button_y);
+        x = self.add_zoom_dropdown(&mut new_node, x, button_y);
         x = self.add_button(&mut new_node, ToolbarButton::ZoomIn, x, button_y);
         x = self.add_button(&mut new_node, ToolbarButton::FitPage, x, button_y);
         x = self.add_button(&mut new_node, ToolbarButton::FitWidth, x, button_y);
@@ -667,6 +810,202 @@ impl Toolbar {
         x + PAGE_INPUT_WIDTH + self.config.button_spacing
     }
 
+    /// Add the zoom dropdown display to the scene node and return the next x position
+    fn add_zoom_dropdown(&mut self, node: &mut SceneNode, x: f32, _button_y: f32) -> f32 {
+        let dropdown_y = (TOOLBAR_HEIGHT - ZOOM_DROPDOWN_HEIGHT) / 2.0;
+        let rect = Rect::new(x, dropdown_y, ZOOM_DROPDOWN_WIDTH, ZOOM_DROPDOWN_HEIGHT);
+
+        // Store the rect for hit testing
+        self.zoom_dropdown_rect = Some(rect);
+
+        // Background - slightly different color when dropdown is open
+        let bg_color = if self.zoom_dropdown.is_open {
+            self.config.button_hover_color
+        } else {
+            Color::rgba(0.15, 0.15, 0.15, 1.0)
+        };
+        node.add_primitive(Primitive::Rectangle {
+            rect,
+            color: bg_color,
+        });
+
+        // Border
+        let border_color = Color::rgba(0.35, 0.35, 0.35, 1.0);
+        // Top border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(x, dropdown_y, ZOOM_DROPDOWN_WIDTH, 1.0),
+            color: border_color,
+        });
+        // Bottom border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(
+                x,
+                dropdown_y + ZOOM_DROPDOWN_HEIGHT - 1.0,
+                ZOOM_DROPDOWN_WIDTH,
+                1.0,
+            ),
+            color: border_color,
+        });
+        // Left border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(x, dropdown_y, 1.0, ZOOM_DROPDOWN_HEIGHT),
+            color: border_color,
+        });
+        // Right border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(
+                x + ZOOM_DROPDOWN_WIDTH - 1.0,
+                dropdown_y,
+                1.0,
+                ZOOM_DROPDOWN_HEIGHT,
+            ),
+            color: border_color,
+        });
+
+        // Render the current zoom level text (e.g., "100%")
+        let zoom_text = format!("{}%", self.zoom_dropdown.current_zoom);
+        Self::render_zoom_text(node, &zoom_text, x, dropdown_y);
+
+        // Dropdown arrow indicator (small triangle on the right side)
+        let arrow_size = 4.0;
+        let arrow_x = x + ZOOM_DROPDOWN_WIDTH - 10.0;
+        let arrow_y = dropdown_y + ZOOM_DROPDOWN_HEIGHT / 2.0;
+        node.add_primitive(Primitive::Polygon {
+            points: vec![
+                [arrow_x - arrow_size / 2.0, arrow_y - arrow_size / 3.0],
+                [arrow_x + arrow_size / 2.0, arrow_y - arrow_size / 3.0],
+                [arrow_x, arrow_y + arrow_size / 2.0],
+            ],
+            fill_color: Some(Color::rgba(0.7, 0.7, 0.7, 1.0)),
+            stroke_color: Color::rgba(0.7, 0.7, 0.7, 1.0),
+            stroke_width: 0.0,
+        });
+
+        // If dropdown is open, render the menu items
+        if self.zoom_dropdown.is_open {
+            self.render_zoom_dropdown_menu(node, x, dropdown_y + ZOOM_DROPDOWN_HEIGHT);
+        }
+
+        x + ZOOM_DROPDOWN_WIDTH + self.config.button_spacing
+    }
+
+    /// Render the dropdown menu for zoom levels
+    fn render_zoom_dropdown_menu(&self, node: &mut SceneNode, menu_x: f32, menu_y: f32) {
+        let menu_width = ZOOM_DROPDOWN_WIDTH;
+        let menu_height = ZOOM_LEVELS.len() as f32 * ZOOM_DROPDOWN_ITEM_HEIGHT;
+
+        // Menu background
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(menu_x, menu_y, menu_width, menu_height),
+            color: Color::rgba(0.2, 0.2, 0.2, 0.98),
+        });
+
+        // Menu border
+        let border_color = Color::rgba(0.35, 0.35, 0.35, 1.0);
+        // Left border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(menu_x, menu_y, 1.0, menu_height),
+            color: border_color,
+        });
+        // Right border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(menu_x + menu_width - 1.0, menu_y, 1.0, menu_height),
+            color: border_color,
+        });
+        // Bottom border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(menu_x, menu_y + menu_height - 1.0, menu_width, 1.0),
+            color: border_color,
+        });
+
+        // Render each menu item
+        for (idx, &zoom_level) in ZOOM_LEVELS.iter().enumerate() {
+            let item_y = menu_y + idx as f32 * ZOOM_DROPDOWN_ITEM_HEIGHT;
+
+            // Highlight background for hovered or current item
+            let is_hovered = self.zoom_dropdown.hovered_item == Some(idx);
+            let is_current = self.zoom_dropdown.current_zoom == zoom_level;
+
+            if is_hovered || is_current {
+                let highlight_color = if is_hovered {
+                    self.config.button_hover_color
+                } else {
+                    Color::rgba(0.25, 0.35, 0.5, 0.5)
+                };
+                node.add_primitive(Primitive::Rectangle {
+                    rect: Rect::new(
+                        menu_x + 1.0,
+                        item_y,
+                        menu_width - 2.0,
+                        ZOOM_DROPDOWN_ITEM_HEIGHT,
+                    ),
+                    color: highlight_color,
+                });
+            }
+
+            // Render the zoom level text
+            let item_text = format!("{}%", zoom_level);
+            Self::render_zoom_menu_item_text(node, &item_text, menu_x, item_y, menu_width);
+        }
+    }
+
+    /// Render zoom text in the dropdown display
+    fn render_zoom_text(node: &mut SceneNode, text: &str, field_x: f32, field_y: f32) {
+        let text_color = Color::rgba(0.85, 0.85, 0.85, 1.0);
+
+        // Character dimensions (simplified 3x5 font at scale 2)
+        let char_width = 6.0_f32;
+        let char_height = 10.0_f32;
+        let char_spacing = 2.0_f32;
+
+        // Calculate total text width
+        let text_width = text.len() as f32 * (char_width + char_spacing) - char_spacing;
+
+        // Center the text in the dropdown (accounting for the arrow on the right)
+        let available_width = ZOOM_DROPDOWN_WIDTH - 16.0; // Leave space for arrow
+        let start_x = field_x + (available_width - text_width) / 2.0;
+        let start_y = field_y + (ZOOM_DROPDOWN_HEIGHT - char_height) / 2.0;
+
+        let mut current_x = start_x;
+
+        for c in text.chars() {
+            let char_rect = Rect::new(current_x, start_y, char_width, char_height);
+            Self::render_char(node, c, char_rect, text_color);
+            current_x += char_width + char_spacing;
+        }
+    }
+
+    /// Render text for a menu item
+    fn render_zoom_menu_item_text(
+        node: &mut SceneNode,
+        text: &str,
+        menu_x: f32,
+        item_y: f32,
+        menu_width: f32,
+    ) {
+        let text_color = Color::rgba(0.85, 0.85, 0.85, 1.0);
+
+        // Character dimensions
+        let char_width = 6.0_f32;
+        let char_height = 10.0_f32;
+        let char_spacing = 2.0_f32;
+
+        // Calculate total text width
+        let text_width = text.len() as f32 * (char_width + char_spacing) - char_spacing;
+
+        // Center the text in the menu item
+        let start_x = menu_x + (menu_width - text_width) / 2.0;
+        let start_y = item_y + (ZOOM_DROPDOWN_ITEM_HEIGHT - char_height) / 2.0;
+
+        let mut current_x = start_x;
+
+        for c in text.chars() {
+            let char_rect = Rect::new(current_x, start_y, char_width, char_height);
+            Self::render_char(node, c, char_rect, text_color);
+            current_x += char_width + char_spacing;
+        }
+    }
+
     /// Render page number text using simple primitives
     /// This is a simplified text renderer - for production, use texture-based text
     fn render_page_text(node: &mut SceneNode, text: &str, field_x: f32, field_y: f32) {
@@ -714,6 +1053,7 @@ impl Toolbar {
             '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
             '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
             '/' => [0b001, 0b001, 0b010, 0b100, 0b100],
+            '%' => [0b101, 0b001, 0b010, 0b100, 0b101],
             ' ' => [0b000, 0b000, 0b000, 0b000, 0b000],
             _ => [0b000, 0b000, 0b000, 0b000, 0b000],
         };
@@ -1100,5 +1440,247 @@ mod tests {
 
         // Scene node should be different (rebuild occurred)
         assert_ne!(Arc::as_ptr(toolbar.scene_node()), node_ptr);
+    }
+
+    // Zoom dropdown tests
+
+    #[test]
+    fn test_zoom_dropdown_state_default() {
+        let state = ZoomDropdownState::default();
+        assert_eq!(state.current_zoom, 100);
+        assert!(!state.is_open);
+        assert!(state.hovered_item.is_none());
+    }
+
+    #[test]
+    fn test_toolbar_zoom_level_default() {
+        let toolbar = Toolbar::new(1200.0);
+        assert_eq!(toolbar.zoom_level(), 100);
+        assert!(!toolbar.is_zoom_dropdown_open());
+    }
+
+    #[test]
+    fn test_toolbar_set_zoom_level() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        toolbar.set_zoom_level(150);
+        assert_eq!(toolbar.zoom_level(), 150);
+
+        toolbar.set_zoom_level(50);
+        assert_eq!(toolbar.zoom_level(), 50);
+    }
+
+    #[test]
+    fn test_toolbar_zoom_dropdown_toggle() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        assert!(!toolbar.is_zoom_dropdown_open());
+
+        toolbar.toggle_zoom_dropdown();
+        assert!(toolbar.is_zoom_dropdown_open());
+
+        toolbar.toggle_zoom_dropdown();
+        assert!(!toolbar.is_zoom_dropdown_open());
+    }
+
+    #[test]
+    fn test_toolbar_zoom_dropdown_close() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        toolbar.toggle_zoom_dropdown();
+        assert!(toolbar.is_zoom_dropdown_open());
+
+        toolbar.close_zoom_dropdown();
+        assert!(!toolbar.is_zoom_dropdown_open());
+    }
+
+    #[test]
+    fn test_toolbar_zoom_dropdown_close_when_already_closed() {
+        let mut toolbar = Toolbar::new(1200.0);
+        let node_ptr = Arc::as_ptr(toolbar.scene_node());
+
+        // Closing when already closed should not rebuild
+        toolbar.close_zoom_dropdown();
+        assert_eq!(Arc::as_ptr(toolbar.scene_node()), node_ptr);
+    }
+
+    #[test]
+    fn test_toolbar_zoom_dropdown_rect_exists() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // The zoom dropdown rect should be set after construction
+        assert!(toolbar.zoom_dropdown_rect.is_some());
+    }
+
+    #[test]
+    fn test_toolbar_hit_test_zoom_dropdown() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // Get the zoom dropdown rect position
+        let rect = toolbar.zoom_dropdown_rect.as_ref().unwrap();
+        let center_x = rect.x + rect.width / 2.0;
+        let center_y = rect.y + rect.height / 2.0;
+
+        // Test hit in center of zoom dropdown
+        assert!(toolbar.hit_test_zoom_dropdown(center_x, center_y));
+
+        // Test miss outside the dropdown
+        assert!(!toolbar.hit_test_zoom_dropdown(1000.0, 100.0));
+    }
+
+    #[test]
+    fn test_toolbar_hit_test_zoom_dropdown_item_when_closed() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // When dropdown is closed, should return None even if coordinates are valid
+        let rect = toolbar.zoom_dropdown_rect.as_ref().unwrap();
+        let x = rect.x + 10.0;
+        let y = rect.y + rect.height + 10.0; // Below the dropdown display
+
+        assert!(toolbar.hit_test_zoom_dropdown_item(x, y).is_none());
+    }
+
+    #[test]
+    fn test_toolbar_hit_test_zoom_dropdown_item_when_open() {
+        let mut toolbar = Toolbar::new(1200.0);
+        toolbar.toggle_zoom_dropdown();
+
+        // When dropdown is open, should detect item hits
+        let rect = toolbar.zoom_dropdown_rect.as_ref().unwrap();
+        let x = rect.x + 10.0;
+        let y = rect.y + rect.height + 5.0; // Just below the dropdown display, in first item
+
+        let result = toolbar.hit_test_zoom_dropdown_item(x, y);
+        assert!(result.is_some());
+        assert_eq!(result, Some(0)); // First zoom level
+    }
+
+    #[test]
+    fn test_toolbar_zoom_dropdown_hover() {
+        let mut toolbar = Toolbar::new(1200.0);
+        toolbar.toggle_zoom_dropdown();
+
+        // Set hover on an item
+        toolbar.set_zoom_dropdown_hover(Some(2));
+        assert_eq!(toolbar.zoom_dropdown().hovered_item, Some(2));
+
+        // Clear hover
+        toolbar.set_zoom_dropdown_hover(None);
+        assert!(toolbar.zoom_dropdown().hovered_item.is_none());
+    }
+
+    #[test]
+    fn test_toolbar_zoom_dropdown_menu_bounds_when_closed() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // When dropdown is closed, menu bounds should be None
+        assert!(toolbar.zoom_dropdown_menu_bounds().is_none());
+    }
+
+    #[test]
+    fn test_toolbar_zoom_dropdown_menu_bounds_when_open() {
+        let mut toolbar = Toolbar::new(1200.0);
+        toolbar.toggle_zoom_dropdown();
+
+        // When dropdown is open, menu bounds should include the menu items
+        let bounds = toolbar.zoom_dropdown_menu_bounds();
+        assert!(bounds.is_some());
+
+        let bounds = bounds.unwrap();
+        let rect = toolbar.zoom_dropdown_rect.as_ref().unwrap();
+
+        // Menu should start at the same x position
+        assert_eq!(bounds.x, rect.x);
+        // Menu should include the display plus the items
+        assert!(bounds.height > rect.height);
+    }
+
+    #[test]
+    fn test_toolbar_zoom_level_no_rebuild_same_value() {
+        let mut toolbar = Toolbar::new(1200.0);
+        toolbar.set_zoom_level(150);
+
+        // Get the scene node pointer
+        let node_ptr = Arc::as_ptr(toolbar.scene_node());
+
+        // Set the same value - should not rebuild
+        toolbar.set_zoom_level(150);
+
+        // Scene node should be the same (no rebuild occurred)
+        assert_eq!(Arc::as_ptr(toolbar.scene_node()), node_ptr);
+    }
+
+    #[test]
+    fn test_toolbar_zoom_level_rebuild_on_change() {
+        let mut toolbar = Toolbar::new(1200.0);
+        toolbar.set_zoom_level(100);
+
+        // Get the scene node pointer
+        let node_ptr = Arc::as_ptr(toolbar.scene_node());
+
+        // Change value - should trigger rebuild
+        toolbar.set_zoom_level(200);
+
+        // Scene node should be different (rebuild occurred)
+        assert_ne!(Arc::as_ptr(toolbar.scene_node()), node_ptr);
+    }
+
+    #[test]
+    fn test_zoom_levels_constant() {
+        // Verify ZOOM_LEVELS contains expected values
+        assert_eq!(ZOOM_LEVELS.len(), 9);
+        assert!(ZOOM_LEVELS.contains(&25));
+        assert!(ZOOM_LEVELS.contains(&50));
+        assert!(ZOOM_LEVELS.contains(&75));
+        assert!(ZOOM_LEVELS.contains(&100));
+        assert!(ZOOM_LEVELS.contains(&125));
+        assert!(ZOOM_LEVELS.contains(&150));
+        assert!(ZOOM_LEVELS.contains(&200));
+        assert!(ZOOM_LEVELS.contains(&300));
+        assert!(ZOOM_LEVELS.contains(&400));
+    }
+
+    #[test]
+    fn test_zoom_dropdown_state_clone() {
+        let state = ZoomDropdownState {
+            current_zoom: 150,
+            is_open: true,
+            hovered_item: Some(3),
+        };
+        let cloned = state.clone();
+
+        assert_eq!(cloned.current_zoom, 150);
+        assert!(cloned.is_open);
+        assert_eq!(cloned.hovered_item, Some(3));
+    }
+
+    #[test]
+    fn test_toolbar_scene_has_zoom_dropdown_primitives() {
+        let mut toolbar = Toolbar::new(1200.0);
+        toolbar.set_zoom_level(200);
+
+        // The scene node should have primitives including those for the zoom dropdown
+        let primitives = toolbar.scene_node().primitives();
+
+        // Should have the dropdown arrow (triangle/polygon)
+        let has_polygon = primitives.iter().any(|p| matches!(p, Primitive::Polygon { .. }));
+        assert!(has_polygon, "Toolbar should have polygon primitives for dropdown arrow");
+    }
+
+    #[test]
+    fn test_toolbar_scene_has_zoom_menu_when_open() {
+        let mut toolbar = Toolbar::new(1200.0);
+        let primitives_closed = toolbar.scene_node().primitives().len();
+
+        toolbar.toggle_zoom_dropdown();
+        let primitives_open = toolbar.scene_node().primitives().len();
+
+        // When dropdown is open, should have more primitives for the menu items
+        assert!(
+            primitives_open > primitives_closed,
+            "Open dropdown should have more primitives (closed: {}, open: {})",
+            primitives_closed,
+            primitives_open
+        );
     }
 }
