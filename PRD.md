@@ -119,7 +119,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Make text edits non-blocking (no sync re-render)
 
 ### Phase 11: Persistence and Export
-- [ ] Implement working state in memory with batched atomic writes
+- [x] Implement working state in memory with batched atomic writes
 - [ ] Add crash-safe checkpoints
 - [ ] Build PDF save with standard annotations and appearance streams
 - [ ] Add flattened PDF export option

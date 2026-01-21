@@ -19,6 +19,7 @@ pub mod snapping;
 pub mod text_edit;
 pub mod text_layer;
 pub mod text_layout;
+pub mod write_coordinator;
 
 pub use annotation::{
     Annotation, AnnotationCollection, AnnotationGeometry, AnnotationId, AnnotationMetadata,
@@ -57,3 +58,4 @@ pub use text_layer::{
 pub use text_layout::{
     LayoutAdjustment, LayoutConfig, LayoutStrategy, TextLayoutAdjuster,
 };
+pub use write_coordinator::{WriteCoordinator, WriteCoordinatorConfig};
