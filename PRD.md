@@ -102,7 +102,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Add measurement labels with real-time value derivation
 - [x] Implement snapping guides for precision
 - [x] Store scale in document metadata
-- [ ] Build scale detection from OCR (suggestion only)
+- [x] Build scale detection from OCR (suggestion only)
 
 ### Phase 9: OCR Subsystem
 - [ ] Integrate local OCR engine (Tesseract or similar)

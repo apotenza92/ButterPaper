@@ -11,6 +11,7 @@ pub mod measurement;
 pub mod page_switch;
 pub mod persistence;
 pub mod preview;
+pub mod scale_detection;
 pub mod snapping;
 
 pub use annotation::{
@@ -36,4 +37,5 @@ pub use persistence::{
     PersistenceError, PersistenceResult,
 };
 pub use preview::{AsyncPreviewRenderer, PreviewRenderer, PreviewHandle, PreviewResult};
+pub use scale_detection::{detect_scales, get_best_scale, DetectedScale};
 pub use snapping::{SnapConfig, SnapEngine, SnapTarget, SnapType};

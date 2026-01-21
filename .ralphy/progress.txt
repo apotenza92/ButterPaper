@@ -5216,3 +5216,146 @@ All scale systems:
 The final task in Phase 8 is:
 - **Build scale detection from OCR**: Implement OCR-based automatic scale detection to suggest scales based on text like "1:100" or "1/4\" = 1'-0\"" found on drawings
 
+## Task: Build scale detection from OCR (suggestion only)
+
+**Date**: 2026-01-21
+**Phase**: Phase 8 - CAD Measurement Engine
+**Status**: ✅ Complete
+
+### Summary
+
+Implemented OCR-based scale detection to automatically suggest scale systems by parsing text on construction drawings and engineering plans. The system detects common scale notations and creates `ScaleSystem` suggestions with confidence scores.
+
+### Implementation
+
+Created a new `scale_detection` module in `crates/core/src/scale_detection.rs` with comprehensive pattern matching for:
+
+1. **Simple Ratio Notation** (e.g., "1:100", "Scale 1:50")
+   - Detects ratios like 1:N where N is a number
+   - Automatically infers units based on typical scale ranges
+   - Higher confidence when "scale" keyword is present
+
+2. **Metric Scales with Units** (e.g., "1:50 meters", "Scale 1:100 millimeters")
+   - Explicit unit detection: meters, centimeters, millimeters
+   - Supports both singular and plural forms
+   - Very high confidence (0.95) when unit is explicit
+
+3. **Imperial Architectural Scales** (e.g., "1/4\" = 1'-0\"", "1/8\" = 1'")
+   - Standard architectural fractions: 1/16", 1/8", 3/16", 1/4", 3/8", 1/2", 3/4", 1", 1-1/2", 3"
+   - Multiple format variants (with/without spaces)
+   - High confidence (0.95) for standard scales
+
+4. **Imperial Engineering Scales** (e.g., "1\" = 20'", "1\"=30'")
+   - Variable foot measurements
+   - Calculates ratio as feet × 12
+   - High confidence (0.9) for recognized patterns
+
+### Key Features
+
+- **Multiple Detection**: Finds all scale notations in text, sorted by confidence
+- **Confidence Scoring**: Each detection has a 0.0-1.0 confidence score
+- **Unit Inference**: Automatically determines measurement units
+- **Case Insensitive**: Works with uppercase/lowercase text
+- **Format Variants**: Handles spacing variations and different notation styles
+- **Integration**: Detected scales convert directly to `ScaleSystem` with `OCRDetected` type
+
+### API
+
+```rust
+// Detect all scales in text
+let scales = detect_scales(ocr_text);
+
+// Get best (highest confidence) scale
+let best = get_best_scale(ocr_text);
+
+// Convert to ScaleSystem for a page
+let scale_system = detected_scale.to_scale_system(page_index);
+```
+
+### Exported Symbols
+
+Added to `crates/core/src/lib.rs`:
+- `detect_scales()` - Find all scale notations
+- `get_best_scale()` - Get highest confidence scale
+- `DetectedScale` - Scale detection result type
+
+### Testing
+
+Comprehensive test suite with 14 tests covering:
+- Simple ratio detection (1:100)
+- Metric scales with units
+- Imperial architectural scales (1/4" = 1'-0")
+- Imperial engineering scales (1" = 20')
+- Multiple scale detection
+- Case insensitivity
+- Unit variations (meters, millimeters, centimeters)
+- Invalid ratio filtering
+- ScaleSystem conversion
+- Format variants
+
+All tests pass:
+```
+test result: ok. 14 passed; 0 failed
+```
+
+### Integration Points
+
+The scale detection integrates with existing measurement infrastructure:
+
+1. **ScaleType::OCRDetected**: Already existed in `measurement.rs` (lines 33-39)
+2. **ScaleSystem::ocr_detected()**: Constructor already implemented (lines 112-124)
+3. **ScaleSystem::is_reliable()**: Considers OCR scales reliable when confidence > 0.8
+4. **Job Scheduler**: OCR jobs run at lowest priority (JobPriority::Ocr)
+
+### Usage Pattern
+
+When OCR completes for a page:
+1. Extract text from OCR results
+2. Call `detect_scales(text)` to find scale notations
+3. Present suggestions to user (sorted by confidence)
+4. User can accept suggestion or manually calibrate
+5. Accepted scales stored in document metadata
+
+### Future Work
+
+The detection is "suggestion only" as specified in PRD:
+- UI integration needed to show detected scales to user
+- User approval/rejection workflow
+- Preference for manual calibration over OCR suggestions
+- Historical learning from user corrections
+
+### Verification
+
+**Linting**:
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+```
+Result: No warnings
+
+**Tests**:
+```bash
+cargo test --package pdf-editor-core scale_detection
+```
+Result: 14 tests passed
+
+### Files Modified
+
+**New Files**:
+- `crates/core/src/scale_detection.rs` (498 lines) - Scale detection logic and tests
+
+**Modified Files**:
+- `crates/core/src/lib.rs` - Exported scale_detection module
+- `PRD.md` - Marked Phase 8 scale detection task as complete
+
+### Phase 8 Status
+
+All tasks in Phase 8 (CAD Measurement Engine) are now complete:
+- ✅ Build measurement geometry storage
+- ✅ Implement scale system (manual, two-point, per-page)
+- ✅ Add measurement labels with real-time derivation
+- ✅ Implement snapping guides for precision
+- ✅ Store scale in document metadata
+- ✅ Build scale detection from OCR (suggestion only)
+
+Next phase: **Phase 9 - OCR Subsystem**
+
