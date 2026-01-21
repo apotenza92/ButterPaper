@@ -327,7 +327,7 @@ Wire up existing TextSearchManager.
 - [x] Highlight current match in orange
 - [x] Scroll to match location
 - [x] Case sensitive toggle
-- [ ] **Terminal test:** `--search "term" file.pdf` outputs matches
+- [x] **Terminal test:** `--search "term" file.pdf` outputs matches
 
 ### Phase 3.3: Annotations
 Wire up existing annotation system.

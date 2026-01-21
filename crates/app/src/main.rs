@@ -4220,6 +4220,66 @@ fn run_test_load(path: &PathBuf) -> i32 {
     }
 }
 
+/// Run --search mode: search for text in PDF and output matches
+fn run_search(path: &PathBuf, query: &str) -> i32 {
+    let start = Instant::now();
+
+    // Open the PDF
+    let pdf = match PdfDocument::open(path) {
+        Ok(pdf) => pdf,
+        Err(e) => {
+            println!("SEARCH: FAILED error={}", e);
+            return 1;
+        }
+    };
+
+    let page_count = pdf.page_count();
+    let mut total_matches = 0;
+    let mut pages_with_matches = Vec::new();
+
+    // Search each page
+    for page_idx in 0..page_count {
+        // Extract text spans from the page
+        let spans = match pdf.extract_text_spans(page_idx) {
+            Ok(spans) => spans,
+            Err(_) => continue, // Skip pages that fail to extract text
+        };
+
+        // Concatenate all text from spans for searching
+        let page_text: String = spans.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+
+        // Count occurrences of the query (case-insensitive)
+        let query_lower = query.to_lowercase();
+        let text_lower = page_text.to_lowercase();
+        let match_count = text_lower.matches(&query_lower).count();
+
+        if match_count > 0 {
+            total_matches += match_count;
+            pages_with_matches.push((page_idx + 1, match_count)); // 1-based page numbers for output
+        }
+    }
+
+    let elapsed = start.elapsed();
+
+    if total_matches > 0 {
+        // Output primary result line matching expected format from PRD
+        println!("FOUND: page={} count={}", pages_with_matches[0].0, total_matches);
+
+        // Output detailed results for each page with matches
+        for (page_num, count) in &pages_with_matches {
+            println!("  page {} matches={}", page_num, count);
+        }
+
+        println!("SEARCH: OK total_matches={} pages_with_matches={} time={}ms",
+                 total_matches, pages_with_matches.len(), elapsed.as_millis());
+        0
+    } else {
+        println!("FOUND: page=0 count=0");
+        println!("SEARCH: OK total_matches=0 pages_with_matches=0 time={}ms", elapsed.as_millis());
+        0
+    }
+}
+
 fn main() {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -4227,19 +4287,43 @@ fn main() {
     let mut debug_viewport = false;
     let mut debug_texture = false;
     let mut test_load = false;
+    let mut search_query: Option<String> = None;
 
-    for arg in args.iter().skip(1) {
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
         if arg == "--debug-viewport" {
             debug_viewport = true;
         } else if arg == "--debug-texture" {
             debug_texture = true;
         } else if arg == "--test-load" {
             test_load = true;
+        } else if arg == "--search" {
+            // Next argument should be the search query
+            if i + 1 < args.len() {
+                i += 1;
+                search_query = Some(args[i].clone());
+            } else {
+                println!("SEARCH: FAILED error=no search term specified");
+                std::process::exit(1);
+            }
         } else if !arg.starts_with('-') {
             let path = PathBuf::from(arg);
             if path.exists() && path.extension().map(|e| e == "pdf").unwrap_or(false) {
                 initial_file = Some(path);
             }
+        }
+        i += 1;
+    }
+
+    // Handle --search mode: search for text in PDF and exit without GUI
+    if let Some(query) = search_query {
+        if let Some(path) = initial_file {
+            let exit_code = run_search(&path, &query);
+            std::process::exit(exit_code);
+        } else {
+            println!("SEARCH: FAILED error=no PDF file specified");
+            std::process::exit(1);
         }
     }
 

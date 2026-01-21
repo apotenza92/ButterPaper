@@ -11166,3 +11166,46 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 - All 476+ tests pass
 - Clippy linting passes with no warnings
 
+
+### Task: Implement --search CLI terminal test (Phase 3.2)
+
+**Status:** Complete
+
+**Changes:**
+- Added `run_search()` function in `crates/app/src/main.rs` that:
+  - Opens the specified PDF file
+  - Iterates through all pages extracting text spans using `extract_text_spans()`
+  - Searches each page's text for the query (case-insensitive)
+  - Counts and reports matches
+  - Outputs in format: `FOUND: page=X count=Y` matching PRD specification
+  - Also outputs detailed per-page matches and timing info
+- Updated CLI argument parsing in `main()` to handle `--search "term"` flag:
+  - Uses indexed loop to handle flag+value pairs
+  - Proper error handling for missing search term
+  - Proper error handling for missing PDF file
+
+**Output Format:**
+```
+FOUND: page=3 count=5
+  page 3 matches=3
+  page 7 matches=2
+SEARCH: OK total_matches=5 pages_with_matches=2 time=50ms
+```
+
+**Test Script:**
+- Created `scripts/test-search.sh` that:
+  - Creates a searchable PDF with known text content
+  - Tests search for existing text (case variations)
+  - Tests search for non-existent text
+  - Tests error handling (missing PDF, missing search term)
+  - All 9 tests pass
+
+**Files Modified:**
+- `crates/app/src/main.rs` - Added run_search() function and --search CLI handling
+- `scripts/test-search.sh` - New test script for search functionality (9 tests)
+- `PRD.md` - Marked task as complete
+
+**Test Results:**
+- All 195 unit tests pass
+- All 9 search CLI tests pass
+- Clippy linting passes (no new warnings)
