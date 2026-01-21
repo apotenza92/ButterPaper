@@ -3,12 +3,13 @@
 //! Main application entry point with GPU-rendered UI shell.
 
 use pdf_editor_ui::gpu;
+use pdf_editor_ui::input::InputHandler;
 use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::{Color, Primitive, Rect, SceneGraph};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
@@ -38,6 +39,7 @@ struct App {
     gpu_context: Option<Box<dyn gpu::GpuContext>>,
     scene_graph: SceneGraph,
     renderer: Option<SceneRenderer>,
+    input_handler: InputHandler,
     // Frame loop timing
     last_update: Instant,
     delta_time: Duration,
@@ -72,6 +74,8 @@ impl App {
         });
 
         let now = Instant::now();
+        let input_handler = InputHandler::new(1200.0, 800.0); // Default window size
+
         Self {
             window: None,
             #[cfg(target_os = "macos")]
@@ -81,6 +85,7 @@ impl App {
             gpu_context: None,
             scene_graph,
             renderer: None,
+            input_handler,
             last_update: now,
             delta_time: Duration::ZERO,
             frame_count: 0,
@@ -106,12 +111,20 @@ impl App {
             self.fps_update_time = now;
 
             // Log FPS for debugging
+            let viewport = self.input_handler.viewport();
             println!(
-                "FPS: {:.1} | Frame time: {:.2}ms",
+                "FPS: {:.1} | Frame time: {:.2}ms | Zoom: {}% | Pos: ({:.0}, {:.0}) | Page: {}",
                 self.current_fps,
-                self.delta_time.as_secs_f64() * 1000.0
+                self.delta_time.as_secs_f64() * 1000.0,
+                viewport.zoom_level,
+                viewport.x,
+                viewport.y,
+                viewport.page_index
             );
         }
+
+        // Update input handler (smooth pan/zoom animations)
+        let _viewport_changed = self.input_handler.update(self.delta_time);
 
         // Future: Update scene graph animations, physics, etc.
         // For now, this is where frame-by-frame updates will happen
@@ -254,9 +267,61 @@ impl ApplicationHandler for App {
                         height: size.height as f64,
                     });
                 }
+
+                // Update input handler viewport dimensions
+                self.input_handler
+                    .set_viewport_dimensions(size.width as f32, size.height as f32);
             }
             WindowEvent::RedrawRequested => {
                 self.render();
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input_handler
+                    .on_mouse_move(position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if button == MouseButton::Left {
+                    match state {
+                        ElementState::Pressed => {
+                            let (x, y) = self.input_handler.mouse_position();
+                            self.input_handler.on_mouse_down(x, y);
+                        }
+                        ElementState::Released => {
+                            self.input_handler.on_mouse_up();
+                        }
+                    }
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll_amount = match delta {
+                    MouseScrollDelta::LineDelta(_x, y) => y,
+                    MouseScrollDelta::PixelDelta(pos) => (pos.y / 100.0) as f32,
+                };
+                self.input_handler.on_mouse_wheel(scroll_amount);
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                use winit::keyboard::{KeyCode, PhysicalKey};
+
+                if event.state == ElementState::Pressed {
+                    match event.physical_key {
+                        PhysicalKey::Code(KeyCode::Equal) | PhysicalKey::Code(KeyCode::NumpadAdd) => {
+                            self.input_handler.zoom_in();
+                        }
+                        PhysicalKey::Code(KeyCode::Minus) | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
+                            self.input_handler.zoom_out();
+                        }
+                        PhysicalKey::Code(KeyCode::Digit0) | PhysicalKey::Code(KeyCode::Numpad0) => {
+                            self.input_handler.zoom_reset();
+                        }
+                        PhysicalKey::Code(KeyCode::PageDown) | PhysicalKey::Code(KeyCode::ArrowDown) => {
+                            self.input_handler.next_page();
+                        }
+                        PhysicalKey::Code(KeyCode::PageUp) | PhysicalKey::Code(KeyCode::ArrowUp) => {
+                            self.input_handler.prev_page();
+                        }
+                        _ => {}
+                    }
+                }
             }
             _ => {}
         }

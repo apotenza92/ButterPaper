@@ -4,5 +4,6 @@
 
 pub mod compositor;
 pub mod gpu;
+pub mod input;
 pub mod renderer;
 pub mod scene;

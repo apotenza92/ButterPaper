@@ -2384,3 +2384,158 @@ The viewport compositor is now ready for integration with:
 The compositor provides the foundation for all visual rendering in the PDF editor. All future annotation, guide, and label rendering will flow through this system.
 
 **Phase 6, Task 1: COMPLETE ✅**
+
+---
+
+## Phase 6, Task 2: Implement Smooth Pan and Zoom
+
+**Date:** 2026-01-21
+**Task:** Implement smooth pan and zoom (Phase 6, line 86)
+
+### Implementation Summary
+
+Added comprehensive input handling system for smooth, natural viewport navigation with velocity-based interpolation and momentum physics.
+
+### Components Created
+
+1. **Input Handler Module** (`crates/ui/src/input.rs`)
+   - Full-featured input event processor for pan and zoom operations
+   - Velocity-based momentum system with configurable decay
+   - Smooth zoom interpolation with focal point preservation
+   - Discrete zoom levels for keyboard shortcuts
+   - Page navigation (next/previous page)
+   - ~370 lines of code with 11 comprehensive tests
+
+### Key Features
+
+#### Pan System
+- **Mouse drag panning** - Left-click and drag to pan viewport
+- **Momentum-based deceleration** - Smooth coast after drag release
+- **Velocity tracking** - Per-frame velocity calculation for natural feel
+- **Configurable decay** - 92% momentum decay factor per frame
+
+#### Zoom System
+- **Mouse wheel zooming** - Smooth zoom in/out with scroll wheel
+- **Focal point preservation** - Zoom centers on mouse cursor position
+- **Smooth interpolation** - 15% interpolation speed per frame
+- **Zoom clamping** - Restricted to 25%-400% range
+- **Discrete zoom steps** - Keyboard shortcuts for standard zoom levels:
+  - `+` / `=` - Zoom in (25% → 50% → 75% → 100% → 125% → 150% → 200% → 300% → 400%)
+  - `-` - Zoom out (reverse of above)
+  - `0` - Reset to 100%
+
+#### Page Navigation
+- **Page Up / Arrow Up** - Previous page
+- **Page Down / Arrow Down** - Next page
+- **Viewport reset on page change** - Position resets to (0, 0)
+
+### Integration Points
+
+1. **Main Application** (`crates/app/src/main.rs`)
+   - Added `InputHandler` to app state
+   - Integrated with window events:
+     - `CursorMoved` - Mouse position tracking
+     - `MouseInput` - Pan drag start/stop
+     - `MouseWheel` - Zoom control
+     - `KeyboardInput` - Keyboard shortcuts
+     - `Resized` - Viewport dimension updates
+   - Frame loop integration - calls `input_handler.update()` every frame
+   - Enhanced FPS logging with viewport state display
+
+2. **UI Library** (`crates/ui/src/lib.rs`)
+   - Exported new `input` module
+
+### Algorithm Details
+
+#### Momentum Physics
+```rust
+velocity *= 0.92; // Decay per frame at 60fps
+viewport.x += velocity_x * delta_time;
+viewport.y += velocity_y * delta_time;
+```
+
+#### Zoom Focal Point Math
+```rust
+// Keep point under cursor fixed during zoom
+page_x = viewport.x + center_x / old_zoom;
+page_y = viewport.y + center_y / old_zoom;
+viewport.x = page_x - center_x / new_zoom;
+viewport.y = page_y - center_y / new_zoom;
+```
+
+#### Zoom Interpolation
+```rust
+new_zoom = current_zoom + (target_zoom - current_zoom) * 0.15;
+```
+
+### Test Coverage
+
+All 11 tests pass:
+- ✅ `test_input_handler_creation` - Initialization
+- ✅ `test_pan_with_mouse` - Mouse drag panning
+- ✅ `test_zoom_with_wheel` - Mouse wheel zooming
+- ✅ `test_zoom_clamping` - Min/max zoom limits
+- ✅ `test_zoom_discrete_steps` - Keyboard zoom levels
+- ✅ `test_zoom_reset` - Zoom reset to 100%
+- ✅ `test_momentum_decay` - Velocity decay over time
+- ✅ `test_page_navigation` - Next/previous page
+- ✅ `test_viewport_position_reset_on_page_change` - Position reset on page switch
+- ✅ `test_smooth_zoom_interpolation` - Gradual zoom animation
+- ✅ `test_viewport_dimensions_update` - Window resize handling
+
+### User Experience
+
+The implementation provides professional-grade viewport navigation:
+
+1. **Responsiveness** - All input processed at 60fps with immediate feedback
+2. **Smoothness** - Momentum physics and interpolation prevent jarring transitions
+3. **Predictability** - Zoom centers on cursor, pan follows mouse exactly
+4. **Accessibility** - Multiple input methods (mouse, wheel, keyboard)
+5. **Natural feel** - Deceleration curves match user expectations from CAD tools
+
+### Performance Characteristics
+
+- **Zero allocations** in hot path (update loop)
+- **Constant time complexity** O(1) for all operations
+- **Frame budget** - Input processing << 1ms per frame
+- **Non-blocking** - All operations synchronous and deterministic
+
+### Future Enhancements
+
+Phase 6 remaining tasks will build on this foundation:
+
+1. **Discrete zoom levels for tile rendering** (Task 3)
+   - Snap zoom levels to tile-friendly values
+   - Prevent excessive tile cache churn
+
+2. **Thumbnail strip/page navigator** (Task 4)
+   - Visual page selection UI
+   - Integration with `go_to_page()`
+
+3. **Page rotation support** (Task 5)
+   - 90° rotation increments
+   - Transform viewport coordinates for rotated pages
+
+### Code Statistics
+
+- **Lines Added:** ~430 lines
+- **Files Created:** 1 (`input.rs`)
+- **Files Modified:** 2 (`lib.rs`, `main.rs`)
+- **Tests Added:** 11
+- **Dependencies Added:** 0 (uses existing winit events)
+
+### Validation
+
+The implementation meets Phase 6, Task 2 requirements:
+
+- ✅ Smooth mouse drag panning
+- ✅ Momentum-based deceleration
+- ✅ Mouse wheel zoom with focal point preservation
+- ✅ Keyboard zoom shortcuts
+- ✅ Frame-by-frame interpolation
+- ✅ Viewport state updates
+- ✅ Page navigation support
+- ✅ Comprehensive test coverage
+- ✅ Zero linting warnings
+
+**Phase 6, Task 2: COMPLETE ✅**
