@@ -10,6 +10,7 @@
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneNode};
 use pdf_editor_cache::gpu::GpuTextureCache;
 use pdf_editor_render::tile::{TileCoordinate, TileId, TileProfile};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -129,6 +130,10 @@ pub struct ThumbnailStrip {
 
     /// Smooth scroll state
     scroll_state: ScrollState,
+
+    /// Set of page indices for which thumbnail rendering has been requested
+    /// but not yet completed. Used to avoid duplicate render requests.
+    pending_requests: HashSet<u16>,
 }
 
 impl ThumbnailStrip {
@@ -156,6 +161,7 @@ impl ThumbnailStrip {
             node_id,
             viewport_size,
             scroll_state: ScrollState::default(),
+            pending_requests: HashSet::new(),
         };
 
         strip.rebuild();
@@ -181,6 +187,7 @@ impl ThumbnailStrip {
             node_id,
             viewport_size,
             scroll_state: ScrollState::default(),
+            pending_requests: HashSet::new(),
         };
 
         strip.rebuild();
@@ -580,6 +587,253 @@ impl ThumbnailStrip {
             TileProfile::Preview,
         )
     }
+
+    // =========================================================================
+    // Lazy Loading API
+    // =========================================================================
+
+    /// Get a list of page indices for thumbnails that need to be rendered.
+    ///
+    /// This implements the "visible first" lazy loading strategy:
+    /// 1. Returns only thumbnails that are currently visible in the viewport
+    /// 2. Excludes thumbnails that are already cached
+    /// 3. Excludes thumbnails that have already been requested (pending)
+    /// 4. Orders results by distance from current page (closest first)
+    ///
+    /// The caller should use this list to submit rendering jobs to the scheduler
+    /// with `JobPriority::Thumbnails`, then call `mark_thumbnail_requested()`
+    /// for each submitted job.
+    ///
+    /// # Returns
+    /// A vector of page indices that need thumbnail rendering, ordered by priority
+    /// (closest to current page first).
+    pub fn get_needed_thumbnails(&self) -> Vec<u16> {
+        if !self.config.visible || self.page_count == 0 {
+            return Vec::new();
+        }
+
+        let strip_rect = self.calculate_strip_bounds();
+        let mut needed: Vec<u16> = Vec::new();
+
+        // Calculate thumbnail positions
+        let (start_x, start_y, dx, dy) = match self.config.position {
+            StripPosition::Left | StripPosition::Right => {
+                let x = strip_rect.x + self.config.spacing;
+                let y = strip_rect.y + self.config.spacing - self.scroll_state.offset;
+                (
+                    x,
+                    y,
+                    0.0,
+                    self.config.thumbnail_height + self.config.spacing,
+                )
+            }
+            StripPosition::Top | StripPosition::Bottom => {
+                let x = strip_rect.x + self.config.spacing - self.scroll_state.offset;
+                let y = strip_rect.y + self.config.spacing;
+                (x, y, self.config.thumbnail_width + self.config.spacing, 0.0)
+            }
+        };
+
+        // Find visible thumbnails that need rendering
+        for page_index in 0..self.page_count {
+            let thumb_x = start_x + dx * page_index as f32;
+            let thumb_y = start_y + dy * page_index as f32;
+
+            // Skip if not visible
+            if !self.is_thumbnail_visible(thumb_x, thumb_y, &strip_rect) {
+                continue;
+            }
+
+            // Skip if already in cache
+            let tile_id = self.create_thumbnail_tile_id(page_index);
+            if self.texture_cache.try_get(tile_id.cache_key()).is_some() {
+                continue;
+            }
+
+            // Skip if already requested
+            if self.pending_requests.contains(&page_index) {
+                continue;
+            }
+
+            needed.push(page_index);
+        }
+
+        // Sort by distance from current page (closest first)
+        let current = self.current_page;
+        needed.sort_by_key(|&page| (page as i32 - current as i32).abs());
+
+        needed
+    }
+
+    /// Get thumbnails needed for prefetching (pages adjacent to visible area).
+    ///
+    /// This returns page indices for thumbnails that are just outside the
+    /// visible area but likely to become visible soon during scrolling.
+    /// These should be rendered at a lower priority than visible thumbnails.
+    ///
+    /// # Arguments
+    /// * `prefetch_count` - Number of pages to prefetch above and below visible area
+    ///
+    /// # Returns
+    /// A vector of page indices that should be prefetched, ordered by distance
+    /// from visible area (closest first).
+    pub fn get_prefetch_thumbnails(&self, prefetch_count: u16) -> Vec<u16> {
+        if !self.config.visible || self.page_count == 0 {
+            return Vec::new();
+        }
+
+        let strip_rect = self.calculate_strip_bounds();
+        let mut prefetch: Vec<u16> = Vec::new();
+
+        // Calculate which pages are visible
+        let (first_visible, last_visible) = self.get_visible_page_range(&strip_rect);
+
+        // Get pages just before visible area
+        let prefetch_start = first_visible.saturating_sub(prefetch_count);
+        for page in prefetch_start..first_visible {
+            let tile_id = self.create_thumbnail_tile_id(page);
+            if self.texture_cache.try_get(tile_id.cache_key()).is_none()
+                && !self.pending_requests.contains(&page)
+            {
+                prefetch.push(page);
+            }
+        }
+
+        // Get pages just after visible area
+        let prefetch_end = (last_visible + prefetch_count + 1).min(self.page_count);
+        for page in (last_visible + 1)..prefetch_end {
+            let tile_id = self.create_thumbnail_tile_id(page);
+            if self.texture_cache.try_get(tile_id.cache_key()).is_none()
+                && !self.pending_requests.contains(&page)
+            {
+                prefetch.push(page);
+            }
+        }
+
+        // Sort by distance from visible area
+        let mid_visible = (first_visible + last_visible) / 2;
+        prefetch.sort_by_key(|&page| (page as i32 - mid_visible as i32).abs());
+
+        prefetch
+    }
+
+    /// Get the range of visible page indices.
+    ///
+    /// # Returns
+    /// Tuple of (first_visible_page, last_visible_page)
+    fn get_visible_page_range(&self, strip_rect: &Rect) -> (u16, u16) {
+        let thumbnail_size = match self.config.position {
+            StripPosition::Left | StripPosition::Right => {
+                self.config.thumbnail_height + self.config.spacing
+            }
+            StripPosition::Top | StripPosition::Bottom => {
+                self.config.thumbnail_width + self.config.spacing
+            }
+        };
+
+        let visible_size = match self.config.position {
+            StripPosition::Left | StripPosition::Right => strip_rect.height,
+            StripPosition::Top | StripPosition::Bottom => strip_rect.width,
+        };
+
+        // Calculate first and last visible page based on scroll offset
+        let first_visible = (self.scroll_state.offset / thumbnail_size).floor() as u16;
+        let visible_count = (visible_size / thumbnail_size).ceil() as u16 + 1;
+        let last_visible = (first_visible + visible_count).min(self.page_count.saturating_sub(1));
+
+        (first_visible.min(self.page_count.saturating_sub(1)), last_visible)
+    }
+
+    /// Mark a thumbnail as having a pending render request.
+    ///
+    /// Call this after submitting a thumbnail render job to the scheduler.
+    /// This prevents duplicate render requests for the same thumbnail.
+    ///
+    /// # Arguments
+    /// * `page_index` - The page index of the thumbnail being rendered
+    pub fn mark_thumbnail_requested(&mut self, page_index: u16) {
+        if page_index < self.page_count {
+            self.pending_requests.insert(page_index);
+        }
+    }
+
+    /// Mark multiple thumbnails as having pending render requests.
+    ///
+    /// Convenience method for marking multiple thumbnails at once.
+    ///
+    /// # Arguments
+    /// * `page_indices` - Iterator of page indices to mark as requested
+    pub fn mark_thumbnails_requested<I>(&mut self, page_indices: I)
+    where
+        I: IntoIterator<Item = u16>,
+    {
+        for page_index in page_indices {
+            self.mark_thumbnail_requested(page_index);
+        }
+    }
+
+    /// Mark a thumbnail render as completed (successfully or not).
+    ///
+    /// Call this when a thumbnail render job completes to clear its pending state.
+    /// The thumbnail will be displayed from the cache if rendering succeeded,
+    /// or can be re-requested if it failed.
+    ///
+    /// # Arguments
+    /// * `page_index` - The page index of the completed thumbnail
+    pub fn mark_thumbnail_loaded(&mut self, page_index: u16) {
+        self.pending_requests.remove(&page_index);
+    }
+
+    /// Clear all pending thumbnail requests.
+    ///
+    /// Call this when the document changes or thumbnails need to be re-rendered.
+    pub fn clear_pending_requests(&mut self) {
+        self.pending_requests.clear();
+    }
+
+    /// Check if a specific thumbnail has a pending render request.
+    ///
+    /// # Arguments
+    /// * `page_index` - The page index to check
+    ///
+    /// # Returns
+    /// `true` if a render request is pending for this thumbnail
+    pub fn is_thumbnail_pending(&self, page_index: u16) -> bool {
+        self.pending_requests.contains(&page_index)
+    }
+
+    /// Get the number of pending thumbnail requests.
+    pub fn pending_count(&self) -> usize {
+        self.pending_requests.len()
+    }
+
+    /// Get the cache key for a thumbnail's tile.
+    ///
+    /// This can be used by the caller to insert rendered thumbnails into the cache.
+    ///
+    /// # Arguments
+    /// * `page_index` - The page index
+    ///
+    /// # Returns
+    /// The cache key for the thumbnail tile
+    pub fn thumbnail_cache_key(&self, page_index: u16) -> u64 {
+        self.create_thumbnail_tile_id(page_index).cache_key()
+    }
+
+    /// Get the zoom level used for thumbnail rendering.
+    ///
+    /// This is useful for the caller to calculate the render dimensions.
+    pub fn thumbnail_zoom_level(&self) -> u32 {
+        25 // 25% zoom for thumbnails
+    }
+
+    /// Get the configured thumbnail dimensions.
+    ///
+    /// # Returns
+    /// Tuple of (width, height) in pixels
+    pub fn thumbnail_dimensions(&self) -> (f32, f32) {
+        (self.config.thumbnail_width, self.config.thumbnail_height)
+    }
 }
 
 #[cfg(test)]
@@ -825,5 +1079,247 @@ mod tests {
         assert_eq!(strip.config.thumbnail_width, 200.0);
         assert_eq!(strip.config.thumbnail_height, 250.0);
         assert_eq!(strip.config.position, StripPosition::Right);
+    }
+
+    // =========================================================================
+    // Lazy Loading Tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_needed_thumbnails_returns_visible_pages() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        // With default config (160px height + 8px spacing), about 4-5 pages fit in 800px viewport
+        let strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        let needed = strip.get_needed_thumbnails();
+
+        // Should return some visible thumbnails (not all 10)
+        assert!(!needed.is_empty());
+        assert!(needed.len() < 10);
+
+        // First few pages should be needed (they're visible)
+        // Note: exact count depends on thumbnail height (160) + spacing (8)
+        // 800 / 168 ≈ 4.76, so roughly 5 pages visible
+        assert!(needed.contains(&0));
+    }
+
+    #[test]
+    fn test_get_needed_thumbnails_empty_when_not_visible() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        strip.set_visible(false);
+        let needed = strip.get_needed_thumbnails();
+
+        assert!(needed.is_empty());
+    }
+
+    #[test]
+    fn test_get_needed_thumbnails_empty_when_no_pages() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let strip = ThumbnailStrip::new(cache, 0, (1200.0, 800.0));
+
+        let needed = strip.get_needed_thumbnails();
+
+        assert!(needed.is_empty());
+    }
+
+    #[test]
+    fn test_mark_thumbnail_requested_prevents_duplicates() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        // Get initial needed thumbnails
+        let needed1 = strip.get_needed_thumbnails();
+        assert!(!needed1.is_empty());
+
+        // Mark all as requested
+        for &page in &needed1 {
+            strip.mark_thumbnail_requested(page);
+        }
+
+        // Now get_needed_thumbnails should return empty (all pending)
+        let needed2 = strip.get_needed_thumbnails();
+        assert!(needed2.is_empty());
+    }
+
+    #[test]
+    fn test_mark_thumbnails_requested_batch() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        // Get needed thumbnails
+        let needed = strip.get_needed_thumbnails();
+        let needed_clone: Vec<u16> = needed.clone();
+
+        // Mark all using batch method
+        strip.mark_thumbnails_requested(needed_clone);
+
+        // Verify all are pending
+        for page in needed {
+            assert!(strip.is_thumbnail_pending(page));
+        }
+    }
+
+    #[test]
+    fn test_mark_thumbnail_loaded_clears_pending() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        // Mark page 0 as requested
+        strip.mark_thumbnail_requested(0);
+        assert!(strip.is_thumbnail_pending(0));
+        assert_eq!(strip.pending_count(), 1);
+
+        // Mark as loaded
+        strip.mark_thumbnail_loaded(0);
+        assert!(!strip.is_thumbnail_pending(0));
+        assert_eq!(strip.pending_count(), 0);
+    }
+
+    #[test]
+    fn test_clear_pending_requests() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        // Mark several as requested
+        strip.mark_thumbnail_requested(0);
+        strip.mark_thumbnail_requested(1);
+        strip.mark_thumbnail_requested(2);
+        assert_eq!(strip.pending_count(), 3);
+
+        // Clear all
+        strip.clear_pending_requests();
+        assert_eq!(strip.pending_count(), 0);
+    }
+
+    #[test]
+    fn test_needed_thumbnails_sorted_by_current_page() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 20, (1200.0, 800.0));
+
+        // Set current page to somewhere in the middle of visible range
+        strip.set_current_page(2);
+
+        let needed = strip.get_needed_thumbnails();
+
+        // Should have multiple pages
+        assert!(needed.len() >= 2);
+
+        // Pages should be sorted by distance from current page (2)
+        // So page 2 should come first (distance 0), then 1 or 3 (distance 1), etc.
+        if !needed.is_empty() {
+            let current = strip.current_page();
+            let mut prev_distance = 0i32;
+            for &page in &needed {
+                let distance = (page as i32 - current as i32).abs();
+                assert!(
+                    distance >= prev_distance,
+                    "Pages should be sorted by distance from current. Got page {} (distance {}) after page with distance {}",
+                    page, distance, prev_distance
+                );
+                prev_distance = distance;
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_prefetch_thumbnails() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 50, (1200.0, 800.0));
+
+        // Scroll to middle-ish
+        strip.scroll_immediate(500.0);
+
+        let prefetch = strip.get_prefetch_thumbnails(3);
+
+        // Prefetch should not include currently visible pages
+        let needed = strip.get_needed_thumbnails();
+        for page in &prefetch {
+            assert!(
+                !needed.contains(page),
+                "Prefetch should not include visible pages"
+            );
+        }
+    }
+
+    #[test]
+    fn test_thumbnail_cache_key() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        let key0 = strip.thumbnail_cache_key(0);
+        let key1 = strip.thumbnail_cache_key(1);
+
+        // Keys should be different for different pages
+        assert_ne!(key0, key1);
+
+        // Key should match the tile ID's cache key
+        let tile_id = strip.create_thumbnail_tile_id(0);
+        assert_eq!(key0, tile_id.cache_key());
+    }
+
+    #[test]
+    fn test_thumbnail_dimensions() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        let (width, height) = strip.thumbnail_dimensions();
+
+        assert_eq!(width, 120.0); // Default width
+        assert_eq!(height, 160.0); // Default height
+    }
+
+    #[test]
+    fn test_thumbnail_zoom_level() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        assert_eq!(strip.thumbnail_zoom_level(), 25);
+    }
+
+    #[test]
+    fn test_mark_thumbnail_requested_ignores_invalid_index() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        // Try to mark invalid page
+        strip.mark_thumbnail_requested(100);
+
+        // Should not be tracked
+        assert!(!strip.is_thumbnail_pending(100));
+        assert_eq!(strip.pending_count(), 0);
+    }
+
+    #[test]
+    fn test_pending_requests_cleared_on_document_change_scenario() {
+        let config = CacheConfig::default();
+        let cache = Arc::new(GpuTextureCache::new(config.gpu_cache_size));
+        let mut strip = ThumbnailStrip::new(cache, 10, (1200.0, 800.0));
+
+        // Mark some pages as pending
+        strip.mark_thumbnail_requested(0);
+        strip.mark_thumbnail_requested(1);
+        assert_eq!(strip.pending_count(), 2);
+
+        // Simulate document change by clearing pending
+        strip.clear_pending_requests();
+
+        // Should be able to request again
+        let needed = strip.get_needed_thumbnails();
+        assert!(needed.contains(&0) || !strip.is_thumbnail_pending(0));
     }
 }

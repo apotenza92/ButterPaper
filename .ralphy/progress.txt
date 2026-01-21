@@ -10757,3 +10757,56 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 
 **Tests:** All 14 thumbnail tests pass
 **Linting:** No new warnings (pre-existing warnings unrelated to this change)
+
+### Task: Implement lazy load thumbnails (visible first) for sidebar (Phase 2.3)
+
+**Status:** Complete
+
+**Changes:**
+- Added lazy loading API to ThumbnailStrip component
+- Implemented `get_needed_thumbnails()` method that returns visible thumbnails not yet in cache or pending
+- Implemented `get_prefetch_thumbnails()` method for loading adjacent thumbnails at lower priority
+- Added pending request tracking with `HashSet<u16>` to avoid duplicate render requests
+- Added methods for managing pending state:
+  - `mark_thumbnail_requested()` - marks a single thumbnail as having a pending request
+  - `mark_thumbnails_requested()` - batch method for marking multiple thumbnails
+  - `mark_thumbnail_loaded()` - clears pending state when render completes
+  - `clear_pending_requests()` - clears all pending requests (e.g., on document change)
+  - `is_thumbnail_pending()` - checks if a specific thumbnail has a pending request
+  - `pending_count()` - returns number of pending requests
+- Added helper methods for callers:
+  - `thumbnail_cache_key()` - gets cache key for a thumbnail's tile
+  - `thumbnail_zoom_level()` - returns the zoom level used for thumbnails (25%)
+  - `thumbnail_dimensions()` - returns configured thumbnail (width, height)
+- Thumbnails are sorted by distance from current page (closest first)
+- Fixed clippy warnings for unnecessary let bindings in sort closures
+
+**Files Modified:**
+- crates/ui/src/thumbnail.rs (added lazy loading API and tests)
+- PRD.md (marked task complete)
+
+**Algorithm:**
+1. `get_needed_thumbnails()` iterates through all pages
+2. For each page, checks if thumbnail is visible in current viewport
+3. Skips thumbnails already in GPU cache (`texture_cache.try_get()`)
+4. Skips thumbnails with pending render requests
+5. Returns remaining visible pages sorted by distance from current page
+
+**Tests Added:**
+- `test_get_needed_thumbnails_returns_visible_pages` - verifies visible pages are returned
+- `test_get_needed_thumbnails_empty_when_not_visible` - verifies empty when strip hidden
+- `test_get_needed_thumbnails_empty_when_no_pages` - verifies empty for empty document
+- `test_mark_thumbnail_requested_prevents_duplicates` - verifies pending tracking
+- `test_mark_thumbnails_requested_batch` - tests batch marking
+- `test_mark_thumbnail_loaded_clears_pending` - tests clearing pending state
+- `test_clear_pending_requests` - tests clearing all pending
+- `test_needed_thumbnails_sorted_by_current_page` - verifies priority ordering
+- `test_get_prefetch_thumbnails` - tests prefetch doesn't include visible pages
+- `test_thumbnail_cache_key` - verifies cache key generation
+- `test_thumbnail_dimensions` - verifies dimension accessor
+- `test_thumbnail_zoom_level` - verifies zoom level accessor
+- `test_mark_thumbnail_requested_ignores_invalid_index` - tests bounds checking
+- `test_pending_requests_cleared_on_document_change_scenario` - tests reset behavior
+
+**Tests:** All 28 thumbnail tests pass
+**Linting:** No new warnings
