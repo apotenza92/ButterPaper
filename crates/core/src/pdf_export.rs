@@ -84,8 +84,7 @@ pub fn generate_appearance_stream(annotation: &SerializableAnnotation) -> PdfExp
 
     // Set dash pattern if present
     if !style.dash_pattern.is_empty() {
-        write!(&mut stream, "[")
-            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+        write!(&mut stream, "[").map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
         for dash in &style.dash_pattern {
             write!(&mut stream, "{} ", dash)
                 .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
@@ -155,7 +154,10 @@ pub fn generate_appearance_stream(annotation: &SerializableAnnotation) -> PdfExp
             }
         }
 
-        AnnotationGeometry::Rectangle { top_left, bottom_right } => {
+        AnnotationGeometry::Rectangle {
+            top_left,
+            bottom_right,
+        } => {
             let (x, y) = to_pdf_coord(top_left);
             let width = bottom_right.x - top_left.x;
             let height = bottom_right.y - top_left.y;
@@ -184,24 +186,56 @@ pub fn generate_appearance_stream(annotation: &SerializableAnnotation) -> PdfExp
                 .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             // Top right curve
-            writeln!(&mut stream, "{} {} {} {} {} {} c",
-                cx + r, cy + k, cx + k, cy + r, cx, cy + r)
-                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            writeln!(
+                &mut stream,
+                "{} {} {} {} {} {} c",
+                cx + r,
+                cy + k,
+                cx + k,
+                cy + r,
+                cx,
+                cy + r
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             // Top left curve
-            writeln!(&mut stream, "{} {} {} {} {} {} c",
-                cx - k, cy + r, cx - r, cy + k, cx - r, cy)
-                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            writeln!(
+                &mut stream,
+                "{} {} {} {} {} {} c",
+                cx - k,
+                cy + r,
+                cx - r,
+                cy + k,
+                cx - r,
+                cy
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             // Bottom left curve
-            writeln!(&mut stream, "{} {} {} {} {} {} c",
-                cx - r, cy - k, cx - k, cy - r, cx, cy - r)
-                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            writeln!(
+                &mut stream,
+                "{} {} {} {} {} {} c",
+                cx - r,
+                cy - k,
+                cx - k,
+                cy - r,
+                cx,
+                cy - r
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             // Bottom right curve
-            writeln!(&mut stream, "{} {} {} {} {} {} c",
-                cx + k, cy - r, cx + r, cy - k, cx + r, cy)
-                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            writeln!(
+                &mut stream,
+                "{} {} {} {} {} {} c",
+                cx + k,
+                cy - r,
+                cx + r,
+                cy - k,
+                cx + r,
+                cy
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             if style.fill_color.is_some() {
                 writeln!(&mut stream, "b") // Close, fill, and stroke
@@ -212,7 +246,11 @@ pub fn generate_appearance_stream(annotation: &SerializableAnnotation) -> PdfExp
             }
         }
 
-        AnnotationGeometry::Ellipse { center, radius_x, radius_y } => {
+        AnnotationGeometry::Ellipse {
+            center,
+            radius_x,
+            radius_y,
+        } => {
             // Approximate ellipse with Bezier curves
             let kappa = 0.552_284_8;
             let (cx, cy) = to_pdf_coord(center);
@@ -226,24 +264,56 @@ pub fn generate_appearance_stream(annotation: &SerializableAnnotation) -> PdfExp
                 .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             // Top right curve
-            writeln!(&mut stream, "{} {} {} {} {} {} c",
-                cx + rx, cy + ky, cx + kx, cy + ry, cx, cy + ry)
-                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            writeln!(
+                &mut stream,
+                "{} {} {} {} {} {} c",
+                cx + rx,
+                cy + ky,
+                cx + kx,
+                cy + ry,
+                cx,
+                cy + ry
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             // Top left curve
-            writeln!(&mut stream, "{} {} {} {} {} {} c",
-                cx - kx, cy + ry, cx - rx, cy + ky, cx - rx, cy)
-                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            writeln!(
+                &mut stream,
+                "{} {} {} {} {} {} c",
+                cx - kx,
+                cy + ry,
+                cx - rx,
+                cy + ky,
+                cx - rx,
+                cy
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             // Bottom left curve
-            writeln!(&mut stream, "{} {} {} {} {} {} c",
-                cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry)
-                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            writeln!(
+                &mut stream,
+                "{} {} {} {} {} {} c",
+                cx - rx,
+                cy - ky,
+                cx - kx,
+                cy - ry,
+                cx,
+                cy - ry
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             // Bottom right curve
-            writeln!(&mut stream, "{} {} {} {} {} {} c",
-                cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy)
-                .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            writeln!(
+                &mut stream,
+                "{} {} {} {} {} {} c",
+                cx + kx,
+                cy - ry,
+                cx + rx,
+                cy - ky,
+                cx + rx,
+                cy
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             if style.fill_color.is_some() {
                 writeln!(&mut stream, "b") // Close, fill, and stroke
@@ -289,7 +359,10 @@ pub fn generate_appearance_stream(annotation: &SerializableAnnotation) -> PdfExp
                 .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
         }
 
-        AnnotationGeometry::Text { position, max_width: _ } => {
+        AnnotationGeometry::Text {
+            position,
+            max_width: _,
+        } => {
             // For text annotations, we'll create a simple text appearance
             let (x, y) = to_pdf_coord(position);
             writeln!(&mut stream, "BT")
@@ -302,7 +375,8 @@ pub fn generate_appearance_stream(annotation: &SerializableAnnotation) -> PdfExp
             // Use label from metadata if available
             if let Some(label) = &annotation.metadata.label {
                 // Escape special characters in PDF strings
-                let escaped = label.replace('\\', "\\\\")
+                let escaped = label
+                    .replace('\\', "\\\\")
                     .replace('(', "\\(")
                     .replace(')', "\\)");
                 writeln!(&mut stream, "({}) Tj", escaped)
@@ -360,7 +434,7 @@ pub fn save_pdf_with_annotations(
 ) -> PdfExportResult<()> {
     if !options.include_annotations || metadata.annotations.is_empty() {
         return Err(PdfExportError::GenerationError(
-            "No annotations to export or annotations disabled".to_string()
+            "No annotations to export or annotations disabled".to_string(),
         ));
     }
 
@@ -417,29 +491,29 @@ fn add_annotation_to_page<'a>(
                 PdfPoints::new(end.y),
                 stroke_color,
                 stroke_width,
-            ).map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
+            )
+            .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             page.objects_mut()
                 .add_path_object(path)
                 .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
         }
 
-        AnnotationGeometry::Rectangle { top_left, bottom_right } => {
+        AnnotationGeometry::Rectangle {
+            top_left,
+            bottom_right,
+        } => {
             // PDF coordinates: bottom-left origin
             let rect = PdfRect::new_from_values(
-                top_left.y,        // bottom
-                top_left.x,        // left
-                bottom_right.y,    // top
-                bottom_right.x,    // right
+                top_left.y,     // bottom
+                top_left.x,     // left
+                bottom_right.y, // top
+                bottom_right.x, // right
             );
 
-            let obj = page.objects_mut()
-                .create_path_object_rect(
-                    rect,
-                    Some(stroke_color),
-                    Some(stroke_width),
-                    fill_color,
-                )
+            let obj = page
+                .objects_mut()
+                .create_path_object_rect(rect, Some(stroke_color), Some(stroke_width), fill_color)
                 .map_err(|e| PdfExportError::GenerationError(e.to_string()))?;
 
             // Object is already added to the page by create_path_object_rect
@@ -449,13 +523,14 @@ fn add_annotation_to_page<'a>(
         AnnotationGeometry::Circle { center, radius } => {
             // Create circle as ellipse with equal radii
             let rect = PdfRect::new_from_values(
-                center.y - radius,    // bottom
-                center.x - radius,    // left
-                center.y + radius,    // top
-                center.x + radius,    // right
+                center.y - radius, // bottom
+                center.x - radius, // left
+                center.y + radius, // top
+                center.x + radius, // right
             );
 
-            let obj = page.objects_mut()
+            let obj = page
+                .objects_mut()
                 .create_path_object_ellipse(
                     rect,
                     Some(stroke_color),
@@ -467,15 +542,20 @@ fn add_annotation_to_page<'a>(
             drop(obj);
         }
 
-        AnnotationGeometry::Ellipse { center, radius_x, radius_y } => {
+        AnnotationGeometry::Ellipse {
+            center,
+            radius_x,
+            radius_y,
+        } => {
             let rect = PdfRect::new_from_values(
-                center.y - radius_y,    // bottom
-                center.x - radius_x,    // left
-                center.y + radius_y,    // top
-                center.x + radius_x,    // right
+                center.y - radius_y, // bottom
+                center.x - radius_x, // left
+                center.y + radius_y, // top
+                center.x + radius_x, // right
             );
 
-            let obj = page.objects_mut()
+            let obj = page
+                .objects_mut()
                 .create_path_object_ellipse(
                     rect,
                     Some(stroke_color),
@@ -503,7 +583,27 @@ fn add_annotation_to_page<'a>(
 }
 
 /// Initialize pdfium library
+///
+/// Search order:
+/// 1. Executable's directory (for app bundles: .app/Contents/MacOS/)
+/// 2. Current working directory
+/// 3. System library paths
 fn init_pdfium() -> PdfExportResult<Pdfium> {
+    // Get the executable's directory for app bundle support
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+    // Try executable directory first (app bundle support)
+    if let Some(ref dir) = exe_dir {
+        if let Ok(bindings) =
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dir))
+        {
+            return Ok(Pdfium::new(bindings));
+        }
+    }
+
+    // Fall back to current directory and system library
     Ok(Pdfium::new(
         Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
             .or_else(|_| Pdfium::bind_to_system_library())
@@ -531,7 +631,7 @@ pub fn export_flattened_pdf(
 ) -> PdfExportResult<()> {
     if metadata.annotations.is_empty() {
         return Err(PdfExportError::GenerationError(
-            "No annotations to flatten".to_string()
+            "No annotations to flatten".to_string(),
         ));
     }
 
@@ -572,9 +672,7 @@ pub fn export_flattened_pdf(
     // Save the modified PDF
     document
         .save_to_file(output_path)
-        .map_err(|e| PdfExportError::IoError(
-            std::io::Error::other(e.to_string())
-        ))?;
+        .map_err(|e| PdfExportError::IoError(std::io::Error::other(e.to_string())))?;
 
     Ok(())
 }
@@ -582,7 +680,9 @@ pub fn export_flattened_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::annotation::{AnnotationGeometry, AnnotationMetadata, AnnotationStyle, Color, PageCoordinate};
+    use crate::annotation::{
+        AnnotationGeometry, AnnotationMetadata, AnnotationStyle, Color, PageCoordinate,
+    };
 
     fn create_test_annotation(geometry: AnnotationGeometry) -> SerializableAnnotation {
         SerializableAnnotation {

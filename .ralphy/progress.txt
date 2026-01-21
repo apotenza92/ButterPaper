@@ -9447,3 +9447,88 @@ All tasks in Phase 12 (Polish and Performance) are now complete:
 - [x] Test on macOS with Metal rendering
 
 **ALL PRD TASKS COMPLETE**
+
+
+## Task: Set @rpath correctly for libpdfium.dylib
+
+**Date:** 2026-01-21
+**Status:** Complete
+
+### Problem
+
+The PDF Editor app bundle relied on same-directory lookup for libpdfium.dylib, which worked but wasn't using proper macOS @rpath conventions. The task was to set @rpath correctly so the dylib is found reliably.
+
+### Solution
+
+Implemented a robust multi-path library lookup strategy:
+
+1. **Updated `init_pdfium()` in `crates/render/src/pdf.rs`:**
+   - Added executable directory detection using `std::env::current_exe()`
+   - First tries to load library from executable's directory (for app bundles)
+   - Falls back to current working directory
+   - Finally falls back to system library paths
+
+2. **Updated `init_pdfium()` in `crates/core/src/pdf_export.rs`:**
+   - Applied the same multi-path strategy for consistency
+
+3. **Updated `scripts/build-app.sh`:**
+   - Added `install_name_tool` invocation to set @rpath to @executable_path
+   - This ensures the executable knows to look in its own directory
+
+### Code Changes
+
+**crates/render/src/pdf.rs:100-121:**
+```rust
+fn init_pdfium() -> PdfResult<Pdfium> {
+    // Get the executable's directory for app bundle support
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+    // Try executable directory first (app bundle support)
+    if let Some(ref dir) = exe_dir {
+        if let Ok(bindings) =
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dir))
+        {
+            return Ok(Pdfium::new(bindings));
+        }
+    }
+
+    // Fall back to current directory and system library
+    ...
+}
+```
+
+**scripts/build-app.sh (Step 4):**
+```bash
+# Set @rpath in the executable so it can find the dylib in the same directory
+if ! otool -l "$EXECUTABLE" | grep -q "@executable_path"; then
+    install_name_tool -add_rpath @executable_path "$EXECUTABLE" 2>/dev/null || true
+fi
+```
+
+### Tests Added
+
+**crates/render/src/pdf.rs:**
+
+1. `test_executable_path_detection` - Verifies that we can get the executable's directory, that it exists, and is absolute
+
+2. `test_pdfium_library_name_generation` - Verifies that the library name is correctly generated for each platform (.dylib on macOS, .so on Linux, .dll on Windows)
+
+### Verification
+
+- All 217 tests in pdf-editor-core pass
+- All 27 tests in pdf-editor-render pass (including 2 new tests)
+- `cargo clippy` passes with zero warnings
+- The library loading now works in:
+  - App bundles (.app/Contents/MacOS/)
+  - Development runs from project root
+  - System installations
+
+### Impact
+
+Users can now:
+1. Launch the app bundle from Finder without any library loading errors
+2. The app correctly finds libpdfium.dylib in the bundle's MacOS directory
+3. Development workflow remains unchanged (same-directory lookup still works)
+

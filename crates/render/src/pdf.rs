@@ -97,7 +97,27 @@ pub struct PdfDocument {
 
 impl PdfDocument {
     /// Initialize PDFium library (helper function)
+    ///
+    /// Search order:
+    /// 1. Executable's directory (for app bundles: .app/Contents/MacOS/)
+    /// 2. Current working directory
+    /// 3. System library paths
     fn init_pdfium() -> PdfResult<Pdfium> {
+        // Get the executable's directory for app bundle support
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+        // Try executable directory first (app bundle support)
+        if let Some(ref dir) = exe_dir {
+            if let Ok(bindings) =
+                Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dir))
+            {
+                return Ok(Pdfium::new(bindings));
+            }
+        }
+
+        // Fall back to current directory and system library
         Ok(Pdfium::new(
             Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
                 .or_else(|_| Pdfium::bind_to_system_library())
@@ -170,15 +190,20 @@ impl PdfDocument {
         let meta = self.document.metadata();
 
         PdfMetadata {
-            title: meta.get(PdfDocumentMetadataTagType::Title)
+            title: meta
+                .get(PdfDocumentMetadataTagType::Title)
                 .map(|v| v.value().to_string()),
-            author: meta.get(PdfDocumentMetadataTagType::Author)
+            author: meta
+                .get(PdfDocumentMetadataTagType::Author)
                 .map(|v| v.value().to_string()),
-            subject: meta.get(PdfDocumentMetadataTagType::Subject)
+            subject: meta
+                .get(PdfDocumentMetadataTagType::Subject)
                 .map(|v| v.value().to_string()),
-            creator: meta.get(PdfDocumentMetadataTagType::Creator)
+            creator: meta
+                .get(PdfDocumentMetadataTagType::Creator)
                 .map(|v| v.value().to_string()),
-            producer: meta.get(PdfDocumentMetadataTagType::Producer)
+            producer: meta
+                .get(PdfDocumentMetadataTagType::Producer)
                 .map(|v| v.value().to_string()),
         }
     }
@@ -219,6 +244,65 @@ impl PdfDocument {
     pub fn page_has_text(&self, page_index: u16) -> PdfResult<bool> {
         let text = self.extract_page_text(page_index)?;
         Ok(!detect_needs_ocr(&text))
+    }
+
+    /// Render a page to RGBA pixel data
+    ///
+    /// # Arguments
+    /// * `page_index` - Zero-based page index
+    /// * `width` - Target width in pixels
+    /// * `height` - Target height in pixels
+    ///
+    /// # Returns
+    /// RGBA pixel data (4 bytes per pixel) or an error
+    pub fn render_page_rgba(
+        &self,
+        page_index: u16,
+        width: u32,
+        height: u32,
+    ) -> PdfResult<Vec<u8>> {
+        let page = self.get_page(page_index)?;
+
+        let config = PdfRenderConfig::new()
+            .set_target_width(width as i32)
+            .set_target_height(height as i32);
+
+        let bitmap = page
+            .render_with_config(&config)
+            .map_err(|e| PdfError::RenderError(e.to_string()))?;
+
+        Ok(bitmap.as_rgba_bytes().to_vec())
+    }
+
+    /// Render a page to RGBA pixel data, scaling to fit within max dimensions
+    /// while maintaining aspect ratio.
+    ///
+    /// # Arguments
+    /// * `page_index` - Zero-based page index
+    /// * `max_width` - Maximum width in pixels
+    /// * `max_height` - Maximum height in pixels
+    ///
+    /// # Returns
+    /// Tuple of (rgba_data, actual_width, actual_height) or an error
+    pub fn render_page_scaled(
+        &self,
+        page_index: u16,
+        max_width: u32,
+        max_height: u32,
+    ) -> PdfResult<(Vec<u8>, u32, u32)> {
+        let page = self.get_page(page_index)?;
+        let page_width = page.width().value;
+        let page_height = page.height().value;
+
+        let scale = (max_width as f32 / page_width)
+            .min(max_height as f32 / page_height)
+            .max(0.1);
+
+        let render_width = (page_width * scale) as u32;
+        let render_height = (page_height * scale) as u32;
+
+        let rgba = self.render_page_rgba(page_index, render_width, render_height)?;
+        Ok((rgba, render_width, render_height))
     }
 }
 
@@ -289,7 +373,9 @@ mod tests {
         assert!(detect_needs_ocr("This is a short sentence."));
 
         // 9 words - should need OCR
-        assert!(detect_needs_ocr("one two three four five six seven eight nine"));
+        assert!(detect_needs_ocr(
+            "one two three four five six seven eight nine"
+        ));
     }
 
     #[test]
@@ -319,7 +405,8 @@ mod tests {
         assert!(!detect_needs_ocr(exactly_threshold));
 
         // Exactly 10 words with sufficient characters
-        let ten_words = "Documentation contains multiple words with sufficient character count here now okay";
+        let ten_words =
+            "Documentation contains multiple words with sufficient character count here now okay";
         assert!(!detect_needs_ocr(ten_words));
 
         // Non-alphanumeric content doesn't count as words
@@ -334,7 +421,8 @@ mod tests {
         assert!(detect_needs_ocr(&fifty_one_word));
 
         // 9 words with 50+ chars - needs OCR (not enough words)
-        let nine_words = "supercalifragilisticexpialidocious word three four five six seven eight nine";
+        let nine_words =
+            "supercalifragilisticexpialidocious word three four five six seven eight nine";
         assert!(detect_needs_ocr(nine_words));
     }
 
@@ -342,7 +430,8 @@ mod tests {
     fn test_detect_needs_ocr_unicode() {
         // Unicode with Latin alphanumeric characters should work
         // Note: Rust's is_alphanumeric() primarily recognizes Latin/ASCII alphanumerics
-        let mixed_script = "Engineering Document contains sufficient text content for OCR detection purposes here";
+        let mixed_script =
+            "Engineering Document contains sufficient text content for OCR detection purposes here";
         assert!(!detect_needs_ocr(mixed_script));
 
         // Unicode-only text without Latin characters would need OCR by our current logic
@@ -374,5 +463,68 @@ mod tests {
                            SCALE: 1/4\" = 1'-0\"\n\
                            DATE: 2024-01-15";
         assert!(!detect_needs_ocr(content_page));
+    }
+
+    #[test]
+    fn test_executable_path_detection() {
+        // Verify that we can get the executable's directory
+        // This is used to find libpdfium.dylib in app bundles
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+        // Should always be able to get the executable directory
+        assert!(exe_dir.is_some(), "Failed to get executable directory");
+
+        // The directory should exist
+        let dir = exe_dir.unwrap();
+        assert!(dir.exists(), "Executable directory does not exist");
+
+        // The directory should be absolute
+        assert!(dir.is_absolute(), "Executable directory should be absolute");
+    }
+
+    #[test]
+    fn test_pdfium_library_name_generation() {
+        // Test that the library name is generated correctly for the platform
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+        if let Some(dir) = exe_dir {
+            let lib_path = Pdfium::pdfium_platform_library_name_at_path(&dir);
+            let lib_name = lib_path.to_string_lossy();
+
+            // On macOS, should end with .dylib
+            #[cfg(target_os = "macos")]
+            assert!(
+                lib_name.ends_with(".dylib"),
+                "Expected .dylib extension on macOS, got: {}",
+                lib_name
+            );
+
+            // On Linux, should end with .so
+            #[cfg(target_os = "linux")]
+            assert!(
+                lib_name.ends_with(".so"),
+                "Expected .so extension on Linux, got: {}",
+                lib_name
+            );
+
+            // On Windows, should end with .dll
+            #[cfg(target_os = "windows")]
+            assert!(
+                lib_name.ends_with(".dll"),
+                "Expected .dll extension on Windows, got: {}",
+                lib_name
+            );
+
+            // Should contain "pdfium"
+            assert!(
+                lib_name.to_lowercase().contains("pdfium"),
+                "Library name should contain 'pdfium', got: {}",
+                lib_name
+            );
+        }
     }
 }
