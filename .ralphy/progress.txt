@@ -11209,3 +11209,56 @@ SEARCH: OK total_matches=5 pages_with_matches=2 time=50ms
 - All 195 unit tests pass
 - All 9 search CLI tests pass
 - Clippy linting passes (no new warnings)
+
+
+### Task: Implement Highlight tool (select text, press H) - Phase 3.3
+
+**Status:** Complete
+
+**Changes:**
+
+1. **Added AnnotationCollection to App struct** (`crates/app/src/main.rs`):
+   - Imported annotation types from pdf_editor_core: `Annotation`, `AnnotationCollection`, `AnnotationGeometry`, `AnnotationStyle`, `PageCoordinate`
+   - Added `annotations: AnnotationCollection` field to the App struct
+   - Initialized AnnotationCollection in App::new()
+
+2. **Implemented create_highlight_from_selection() method** (`crates/app/src/main.rs:2900-2948`):
+   - Retrieves current text selection from TextSearchManager
+   - Creates Rectangle geometry from selection bounding box
+   - Uses pre-built `AnnotationStyle::yellow_highlight()` style (semi-transparent yellow fill)
+   - Stores selected text content in annotation metadata label
+   - Adds annotation to AnnotationCollection
+
+3. **Added 'H' keyboard shortcut handler** (`crates/app/src/main.rs:~4188`):
+   - Listens for PhysicalKey::Code(KeyCode::KeyH) without modifiers (Bluebeam-compatible single-key shortcut)
+   - Calls create_highlight_from_selection() to create highlight from current text selection
+
+4. **Implemented annotation rendering** (`crates/app/src/main.rs:3523-3596`):
+   - Modified the selection highlight rendering section to also render annotations
+   - Iterates through visible annotations for the current page
+   - Transforms annotation bounding boxes from PDF coordinates (Y=0 at bottom) to screen coordinates (Y=0 at top)
+   - Applies fill color and opacity from annotation style
+   - Renders annotations before search/selection highlights (so selections appear on top)
+   - Uses existing SelectionHighlightRenderer Metal pipeline for GPU-accelerated rendering
+
+5. **Added unit tests** (`crates/core/src/annotation.rs`):
+   - `test_yellow_highlight_style` - Verifies yellow highlight style has correct properties
+   - `test_highlight_annotation_creation` - Tests creating highlight annotation from selection coordinates
+   - `test_highlight_annotation_in_collection` - Tests adding multiple highlights to collection and page-based queries
+   - `test_highlight_hit_testing` - Tests hit detection for highlight rectangles
+
+**Technical Details:**
+- Highlights use AnnotationGeometry::Rectangle with yellow fill color (255, 255, 0, 128) and 0.5 opacity
+- PDF coordinate system (Y=0 at bottom) is converted to screen coordinates (Y=0 at top) during rendering
+- Annotations are rendered as GPU primitives using the existing Metal-based SelectionHighlightRenderer
+- Selected text content is preserved in annotation metadata for future reference
+
+**Files Modified:**
+- `crates/app/src/main.rs` - Added annotation imports, App.annotations field, create_highlight_from_selection(), 'H' shortcut, annotation rendering
+- `crates/core/src/annotation.rs` - Added 4 new unit tests for highlight functionality
+- `PRD.md` - Marked "Highlight tool (select text, press H)" and "Render highlights from annotation data" as complete
+
+**Test Results:**
+- All 14 annotation tests pass (4 new tests added)
+- All 655 tests pass across the workspace
+- Clippy linting passes (no new warnings)

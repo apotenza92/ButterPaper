@@ -3,6 +3,9 @@
 //! Main application entry point with GPU-rendered UI shell.
 
 use pdf_editor_cache::GpuTextureCache;
+use pdf_editor_core::annotation::{
+    Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle, PageCoordinate,
+};
 use pdf_editor_core::text_layer::{PageTextLayer, TextBoundingBox, TextLayerManager, TextSpan};
 use pdf_editor_render::PdfDocument;
 use pdf_editor_ui::gpu;
@@ -1257,6 +1260,8 @@ struct App {
     /// Search bar texture for rendering
     #[cfg(target_os = "macos")]
     search_bar_texture: Option<SearchBarTexture>,
+    /// Annotation collection for the current document
+    annotations: AnnotationCollection,
 }
 
 impl App {
@@ -1325,6 +1330,7 @@ impl App {
             search_bar,
             #[cfg(target_os = "macos")]
             search_bar_texture: None,
+            annotations: AnnotationCollection::new(),
         }
     }
 
@@ -2893,6 +2899,54 @@ impl App {
         }
     }
 
+    /// Create a highlight annotation from the current text selection
+    ///
+    /// This is called when the user presses 'H' with text selected.
+    /// It converts the text selection rectangle into a permanent highlight annotation.
+    fn create_highlight_from_selection(&mut self) {
+        if let Some(ref search_manager) = self.text_search_manager {
+            if let Some(selection) = search_manager.get_selection() {
+                // Only create highlight if there's actual content selected
+                if selection.is_empty() || selection.text.is_empty() {
+                    println!("No text selected to highlight");
+                    return;
+                }
+
+                let page_index = selection.page_index;
+                let rect = &selection.selection_rect;
+
+                // Create Rectangle geometry from the selection bounding box
+                // Note: selection_rect uses (x, y) as bottom-left and (width, height) as dimensions
+                let geometry = AnnotationGeometry::Rectangle {
+                    top_left: PageCoordinate::new(rect.x, rect.y + rect.height),
+                    bottom_right: PageCoordinate::new(rect.x + rect.width, rect.y),
+                };
+
+                // Use the pre-built yellow highlight style
+                let style = AnnotationStyle::yellow_highlight();
+
+                // Create the annotation
+                let mut annotation = Annotation::new(page_index, geometry, style);
+
+                // Store the selected text in the annotation metadata for reference
+                annotation.metadata_mut().label = Some(selection.text.clone());
+
+                // Add to the collection
+                self.annotations.add(annotation);
+
+                println!(
+                    "Created highlight annotation on page {} ({} characters)",
+                    page_index + 1,
+                    selection.text.len()
+                );
+            } else {
+                println!("No text selected to highlight");
+            }
+        } else {
+            println!("Text selection not available (no document loaded)");
+        }
+    }
+
     /// Perform search based on current search bar text
     fn perform_search(&mut self) {
         let query = self.search_bar.search_text().to_string();
@@ -3466,25 +3520,61 @@ impl App {
                         }
                     }
 
-                    // Render selection highlights (after page texture, before overlays)
+                    // Render selection highlights and annotations (after page texture, before overlays)
                     // This requires borrowing text_search_manager and selection_highlight_renderer separately
                     let page_index = self.document.as_ref().map(|d| d.current_page).unwrap_or(0);
-                    let highlights_data: Vec<([f32; 4], [f32; 4])> = if let Some(ref search_manager) = self.text_search_manager {
-                        let highlights = search_manager.get_highlights_for_page(page_index);
 
-                        // Get the page texture dimensions and position for coordinate transformation
-                        if let Some(doc) = &self.document {
-                            if let Some(page_tex) = doc.page_textures.get(&doc.current_page) {
-                                // Calculate page position on screen (same as blit calculation)
-                                let center_x = (drawable_width as f32 - page_tex.width as f32) / 2.0;
-                                let center_y = (drawable_height as f32 - page_tex.height as f32) / 2.0;
-                                let pan_x = center_x - viewport_x;
-                                let pan_y = center_y - viewport_y;
+                    // Collect all highlight data: search highlights, text selection, and annotations
+                    let mut highlights_data: Vec<([f32; 4], [f32; 4])> = Vec::new();
 
-                                // Get zoom scale for coordinate transformation
-                                let zoom_scale = self.input_handler.viewport().zoom_level as f32 / 100.0;
+                    // Get page rendering parameters for coordinate transformation
+                    if let Some(doc) = &self.document {
+                        if let Some(page_tex) = doc.page_textures.get(&doc.current_page) {
+                            // Calculate page position on screen (same as blit calculation)
+                            let center_x = (drawable_width as f32 - page_tex.width as f32) / 2.0;
+                            let center_y = (drawable_height as f32 - page_tex.height as f32) / 2.0;
+                            let pan_x = center_x - viewport_x;
+                            let pan_y = center_y - viewport_y;
 
-                                highlights.iter().map(|h| {
+                            // Get zoom scale for coordinate transformation
+                            let zoom_scale = self.input_handler.viewport().zoom_level as f32 / 100.0;
+
+                            // Helper to get page height for Y-coordinate flipping
+                            let page_height = page_tex.height as f32 / zoom_scale;
+
+                            // 1. Add annotation highlights (render first, below search/selection highlights)
+                            for annotation in self.annotations.get_page_annotations(page_index) {
+                                if !annotation.is_visible() {
+                                    continue;
+                                }
+
+                                // Get the bounding box from the annotation geometry
+                                let (min_x, min_y, max_x, max_y) = annotation.bounding_box();
+
+                                // PDF coordinates have Y=0 at bottom, screen has Y=0 at top
+                                // Transform: screen_y = page_height - pdf_y (flipped)
+                                let screen_x = pan_x + min_x * zoom_scale;
+                                let screen_y = pan_y + (page_height - max_y) * zoom_scale;
+                                let screen_w = (max_x - min_x) * zoom_scale;
+                                let screen_h = (max_y - min_y) * zoom_scale;
+
+                                // Get color from annotation style
+                                let style = annotation.style();
+                                if let Some(fill_color) = &style.fill_color {
+                                    let (r, g, b, a) = fill_color.to_normalized();
+                                    // Apply style opacity
+                                    let final_alpha = a * style.opacity;
+                                    highlights_data.push(
+                                        ([screen_x, screen_y, screen_w, screen_h], [r, g, b, final_alpha])
+                                    );
+                                }
+                            }
+
+                            // 2. Add search and selection highlights (render on top)
+                            if let Some(ref search_manager) = self.text_search_manager {
+                                let highlights = search_manager.get_highlights_for_page(page_index);
+
+                                for h in highlights {
                                     // Transform page coordinates to screen coordinates
                                     let bbox = &h.bbox;
                                     let screen_x = pan_x + bbox.x * zoom_scale;
@@ -3495,17 +3585,11 @@ impl App {
                                     // Get color based on highlight type
                                     let (r, g, b, a) = h.highlight_type.color();
 
-                                    ([screen_x, screen_y, screen_w, screen_h], [r, g, b, a])
-                                }).collect()
-                            } else {
-                                Vec::new()
+                                    highlights_data.push(([screen_x, screen_y, screen_w, screen_h], [r, g, b, a]));
+                                }
                             }
-                        } else {
-                            Vec::new()
                         }
-                    } else {
-                        Vec::new()
-                    };
+                    }
 
                     if !highlights_data.is_empty() {
                         if let (Some(device), Some(ref mut renderer)) = (&self.device, &mut self.selection_highlight_renderer) {
@@ -4123,6 +4207,11 @@ impl ApplicationHandler for App {
                         }
                         PhysicalKey::Code(KeyCode::KeyC) if is_cmd => {
                             self.copy_selected_text_to_clipboard();
+                        }
+                        // Single-key shortcuts for tools (Bluebeam-compatible)
+                        PhysicalKey::Code(KeyCode::KeyH) if !is_cmd && !is_shift => {
+                            // H = Highlight tool (create highlight from text selection)
+                            self.create_highlight_from_selection();
                         }
                         _ => {}
                     }

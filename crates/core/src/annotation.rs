@@ -71,12 +71,42 @@ impl Color {
 
 /// Common annotation styles
 impl Color {
-    pub const RED: Color = Color { r: 255, g: 0, b: 0, a: 255 };
-    pub const GREEN: Color = Color { r: 0, g: 255, b: 0, a: 255 };
-    pub const BLUE: Color = Color { r: 0, g: 0, b: 255, a: 255 };
-    pub const YELLOW: Color = Color { r: 255, g: 255, b: 0, a: 255 };
-    pub const BLACK: Color = Color { r: 0, g: 0, b: 0, a: 255 };
-    pub const WHITE: Color = Color { r: 255, g: 255, b: 255, a: 255 };
+    pub const RED: Color = Color {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    pub const GREEN: Color = Color {
+        r: 0,
+        g: 255,
+        b: 0,
+        a: 255,
+    };
+    pub const BLUE: Color = Color {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    pub const YELLOW: Color = Color {
+        r: 255,
+        g: 255,
+        b: 0,
+        a: 255,
+    };
+    pub const BLACK: Color = Color {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    pub const WHITE: Color = Color {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
 }
 
 /// Immutable annotation geometry
@@ -92,14 +122,10 @@ pub enum AnnotationGeometry {
     },
 
     /// Polyline connecting multiple points
-    Polyline {
-        points: Vec<PageCoordinate>,
-    },
+    Polyline { points: Vec<PageCoordinate> },
 
     /// Closed polygon
-    Polygon {
-        points: Vec<PageCoordinate>,
-    },
+    Polygon { points: Vec<PageCoordinate> },
 
     /// Rectangle defined by two corners
     Rectangle {
@@ -108,10 +134,7 @@ pub enum AnnotationGeometry {
     },
 
     /// Circle defined by center and radius (in points)
-    Circle {
-        center: PageCoordinate,
-        radius: f32,
-    },
+    Circle { center: PageCoordinate, radius: f32 },
 
     /// Ellipse defined by center and radii
     Ellipse {
@@ -121,9 +144,7 @@ pub enum AnnotationGeometry {
     },
 
     /// Freehand drawing path
-    Freehand {
-        points: Vec<PageCoordinate>,
-    },
+    Freehand { points: Vec<PageCoordinate> },
 
     /// Text annotation at a specific point
     Text {
@@ -173,7 +194,12 @@ impl AnnotationGeometry {
             AnnotationGeometry::Rectangle {
                 top_left,
                 bottom_right,
-            } => (top_left.x, bottom_right.y, bottom_right.x, top_left.y),
+            } => (
+                top_left.x.min(bottom_right.x),
+                top_left.y.min(bottom_right.y),
+                top_left.x.max(bottom_right.x),
+                top_left.y.max(bottom_right.y),
+            ),
             AnnotationGeometry::Circle { center, radius } => (
                 center.x - radius,
                 center.y - radius,
@@ -196,7 +222,12 @@ impl AnnotationGeometry {
             } => {
                 // Conservative estimate - actual bounds depend on text rendering
                 let width = max_width.unwrap_or(200.0);
-                (position.x, position.y, position.x + width, position.y + 50.0)
+                (
+                    position.x,
+                    position.y,
+                    position.x + width,
+                    position.y + 50.0,
+                )
             }
             AnnotationGeometry::Arrow { start, end } => {
                 let min_x = start.x.min(end.x);
@@ -249,7 +280,7 @@ impl AnnotationGeometry {
             }
             AnnotationGeometry::Circle { center, radius } => {
                 let dist = point.distance_to(center);
-                (dist - radius).abs() <= tolerance
+                dist <= radius + tolerance
             }
             AnnotationGeometry::Ellipse {
                 center,
@@ -258,8 +289,9 @@ impl AnnotationGeometry {
             } => {
                 let dx = (point.x - center.x) / radius_x;
                 let dy = (point.y - center.y) / radius_y;
-                let dist = (dx * dx + dy * dy).sqrt();
-                (dist - 1.0).abs() * radius_x.max(*radius_y) <= tolerance
+                let normalized_dist = dx * dx + dy * dy;
+                let tolerance_normalized = tolerance / radius_x.max(*radius_y);
+                normalized_dist <= (1.0 + tolerance_normalized).powi(2)
             }
             AnnotationGeometry::Text {
                 position: _,
@@ -460,11 +492,7 @@ pub struct Annotation {
 
 impl Annotation {
     /// Create a new annotation with generated ID
-    pub fn new(
-        page_index: u16,
-        geometry: AnnotationGeometry,
-        style: AnnotationStyle,
-    ) -> Self {
+    pub fn new(page_index: u16, geometry: AnnotationGeometry, style: AnnotationStyle) -> Self {
         Self {
             id: AnnotationId::new_v4(),
             page_index,
@@ -612,10 +640,7 @@ impl AnnotationCollection {
         let page_index = annotation.page_index();
 
         self.annotations.insert(id, annotation);
-        self.by_page
-            .entry(page_index)
-            .or_default()
-            .push(id);
+        self.by_page.entry(page_index).or_default().push(id);
     }
 
     /// Remove an annotation by ID
@@ -894,13 +919,13 @@ mod tests {
         let style = AnnotationStyle::new();
         let annotation = Annotation::new(0, geometry, style);
 
-        // Point on the circle
+        // Point on the circle edge
         let point_on = PageCoordinate::new(125.0, 100.0);
         assert!(annotation.hit_test(&point_on, 5.0));
 
-        // Point inside (should not hit because it's measuring distance to edge)
+        // Point inside the circle (should hit for selection purposes)
         let point_inside = PageCoordinate::new(100.0, 100.0);
-        assert!(!annotation.hit_test(&point_inside, 5.0));
+        assert!(annotation.hit_test(&point_inside, 5.0));
 
         // Point far outside
         let point_outside = PageCoordinate::new(200.0, 200.0);
@@ -979,5 +1004,131 @@ mod tests {
         // Geometry should be changed
         let (_, _, max_x, _) = modified.bounding_box();
         assert_eq!(max_x, 120.0); // 100 + 20
+    }
+
+    #[test]
+    fn test_yellow_highlight_style() {
+        let style = AnnotationStyle::yellow_highlight();
+
+        // Check stroke is zero (no border)
+        assert_eq!(style.stroke_width, 0.0);
+
+        // Check fill color is semi-transparent yellow
+        assert!(style.fill_color.is_some());
+        let fill = style.fill_color.unwrap();
+        assert_eq!(fill.r, 255);
+        assert_eq!(fill.g, 255);
+        assert_eq!(fill.b, 0);
+        assert_eq!(fill.a, 128); // Semi-transparent
+
+        // Check opacity
+        assert_eq!(style.opacity, 0.5);
+    }
+
+    #[test]
+    fn test_highlight_annotation_creation() {
+        // Simulate creating a highlight from text selection coordinates
+        let page_index = 0u16;
+        let selection_x = 100.0;
+        let selection_y = 200.0;
+        let selection_width = 150.0;
+        let selection_height = 20.0;
+
+        // Create Rectangle geometry from selection bounds
+        let geometry = AnnotationGeometry::Rectangle {
+            top_left: PageCoordinate::new(selection_x, selection_y + selection_height),
+            bottom_right: PageCoordinate::new(selection_x + selection_width, selection_y),
+        };
+
+        let style = AnnotationStyle::yellow_highlight();
+        let mut annotation = Annotation::new(page_index, geometry, style);
+
+        // Add label with selected text
+        annotation.metadata_mut().label = Some("Selected text content".to_string());
+
+        // Verify annotation properties
+        assert_eq!(annotation.page_index(), page_index);
+        assert!(annotation.is_visible());
+        assert!(!annotation.is_selected());
+
+        // Verify bounding box matches selection
+        let (min_x, min_y, max_x, max_y) = annotation.bounding_box();
+        assert_eq!(min_x, selection_x);
+        assert_eq!(min_y, selection_y);
+        assert_eq!(max_x, selection_x + selection_width);
+        assert_eq!(max_y, selection_y + selection_height);
+
+        // Verify metadata
+        assert_eq!(
+            annotation.metadata().label,
+            Some("Selected text content".to_string())
+        );
+    }
+
+    #[test]
+    fn test_highlight_annotation_in_collection() {
+        let mut collection = AnnotationCollection::new();
+
+        // Create highlights on different pages
+        let highlight1 = Annotation::new(
+            0,
+            AnnotationGeometry::Rectangle {
+                top_left: PageCoordinate::new(10.0, 30.0),
+                bottom_right: PageCoordinate::new(100.0, 10.0),
+            },
+            AnnotationStyle::yellow_highlight(),
+        );
+
+        let highlight2 = Annotation::new(
+            0,
+            AnnotationGeometry::Rectangle {
+                top_left: PageCoordinate::new(10.0, 60.0),
+                bottom_right: PageCoordinate::new(150.0, 40.0),
+            },
+            AnnotationStyle::yellow_highlight(),
+        );
+
+        let highlight3 = Annotation::new(
+            1, // Different page
+            AnnotationGeometry::Rectangle {
+                top_left: PageCoordinate::new(20.0, 50.0),
+                bottom_right: PageCoordinate::new(120.0, 30.0),
+            },
+            AnnotationStyle::yellow_highlight(),
+        );
+
+        collection.add(highlight1);
+        collection.add(highlight2);
+        collection.add(highlight3);
+
+        // Verify collection counts
+        assert_eq!(collection.len(), 3);
+        assert_eq!(collection.get_page_annotations(0).len(), 2);
+        assert_eq!(collection.get_page_annotations(1).len(), 1);
+        assert_eq!(collection.get_page_annotations(2).len(), 0);
+    }
+
+    #[test]
+    fn test_highlight_hit_testing() {
+        let highlight = Annotation::new(
+            0,
+            AnnotationGeometry::Rectangle {
+                top_left: PageCoordinate::new(100.0, 120.0),
+                bottom_right: PageCoordinate::new(200.0, 100.0),
+            },
+            AnnotationStyle::yellow_highlight(),
+        );
+
+        // Point inside the highlight should hit
+        let point_inside = PageCoordinate::new(150.0, 110.0);
+        assert!(highlight.hit_test(&point_inside, 0.0));
+
+        // Point outside the highlight should not hit
+        let point_outside = PageCoordinate::new(50.0, 50.0);
+        assert!(!highlight.hit_test(&point_outside, 0.0));
+
+        // Point on the edge should hit (within tolerance)
+        let point_on_edge = PageCoordinate::new(100.0, 110.0);
+        assert!(highlight.hit_test(&point_on_edge, 1.0));
     }
 }

@@ -332,8 +332,8 @@ Wire up existing TextSearchManager.
 ### Phase 3.3: Annotations
 Wire up existing annotation system.
 
-- [ ] Highlight tool (select text, press H)
-- [ ] Render highlights from annotation data
+- [x] Highlight tool (select text, press H)
+- [x] Render highlights from annotation data
 - [ ] Comment/note tool (click to place)
 - [ ] Render note icons
 - [ ] Click note to show popup
