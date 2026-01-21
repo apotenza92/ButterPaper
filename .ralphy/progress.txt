@@ -11482,3 +11482,22 @@ Created a GPU-rendered note popup component that displays annotation content whe
 - This approach ensures maximum compatibility with all PDF viewers
 - The fallback mechanism saves without annotations if the annotation export fails
 
+
+## 2026-01-21: Load annotations from PDF (Phase 3.3)
+
+### What was done:
+- Created new `annotation_import.rs` module in `crates/core/src/`
+- Implemented `load_annotations_from_pdf()` function to read PDF annotations using PDFium
+- Implemented `load_annotations_from_page()` for single-page loading
+- Implemented `import_annotations()` for converting to app Annotation format
+- Supports reading: Highlights, Underlines, Strikeouts, Squiggly, Text (sticky notes), FreeText, Square, Circle, Ink
+- Properly extracts: bounds, colors, contents, author, creation/modification dates
+- Added `ImportStats` struct for tracking import statistics by type
+- Added comprehensive error handling with `AnnotationImportError`
+- Exported new types from core lib.rs
+- All 476 tests pass, no new clippy warnings
+
+### Files changed:
+- `crates/core/src/annotation_import.rs` (new)
+- `crates/core/src/lib.rs` (added module export)
+- `PRD.md` (marked task complete)

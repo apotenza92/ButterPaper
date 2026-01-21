@@ -3,6 +3,7 @@
 //! Document core and state model for the PDF editor.
 
 pub mod annotation;
+pub mod annotation_import;
 pub mod checkpoint;
 pub mod csv_export;
 pub mod deferred;
@@ -65,3 +66,7 @@ pub use text_layer::{
 };
 pub use text_layout::{LayoutAdjustment, LayoutConfig, LayoutStrategy, TextLayoutAdjuster};
 pub use write_coordinator::{WriteCoordinator, WriteCoordinatorConfig};
+pub use annotation_import::{
+    import_annotations, load_annotations_from_page, load_annotations_from_pdf,
+    AnnotationImportError, AnnotationImportResult, ImportStats,
+};
