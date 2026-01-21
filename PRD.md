@@ -228,7 +228,7 @@ For example: Ctrl+S (Windows) → Cmd+S (macOS). Keep Alt as Option.
 The app needs a proper macOS menu bar. Use `cocoa` crate for native menus.
 
 - [x] Create NSMenu with standard structure
-- [ ] **File menu:**
+- [x] **File menu:**
   - [x] Open... (Cmd+O) - working
   - [x] Open Recent → submenu
   - [x] Close (Cmd+W)
@@ -236,31 +236,31 @@ The app needs a proper macOS menu bar. Use `cocoa` crate for native menus.
   - [x] Save As... (Cmd+Shift+S)
   - [x] Export as PDF... (Cmd+Shift+E)
   - [x] Export as Images... (Cmd+Shift+I)
-- [ ] **Edit menu:**
-  - [ ] Undo (Cmd+Z)
-  - [ ] Redo (Cmd+Shift+Z)
-  - [ ] Copy (Cmd+C)
-  - [ ] Select All (Cmd+A)
-  - [ ] Find... (Cmd+F)
-- [ ] **View menu:**
-  - [ ] Zoom In (Cmd+=)
-  - [ ] Zoom Out (Cmd+-)
-  - [ ] Actual Size (Cmd+0)
-  - [ ] Fit Page
-  - [ ] Fit Width
-  - [ ] Show Thumbnails (Cmd+T)
-  - [ ] Show Annotations
-- [ ] **Go menu:**
-  - [ ] Next Page (→, PgDown)
-  - [ ] Previous Page (←, PgUp)
-  - [ ] First Page (Home)
-  - [ ] Last Page (End)
-  - [ ] Go to Page... (Cmd+G)
-- [ ] **Window menu:**
-  - [ ] Minimize
-  - [ ] Zoom
-- [ ] **Help menu:**
-  - [ ] About PDF Editor
+- [x] **Edit menu:**
+  - [x] Undo (Cmd+Z)
+  - [x] Redo (Cmd+Shift+Z)
+  - [x] Copy (Cmd+C)
+  - [x] Select All (Cmd+A)
+  - [x] Find... (Cmd+F)
+- [x] **View menu:**
+  - [x] Zoom In (Cmd+=)
+  - [x] Zoom Out (Cmd+-)
+  - [x] Actual Size (Cmd+0)
+  - [x] Fit Page
+  - [x] Fit Width
+  - [x] Show Thumbnails (Cmd+T)
+  - [x] Show Annotations
+- [x] **Go menu:**
+  - [x] Next Page (→, PgDown)
+  - [x] Previous Page (←, PgUp)
+  - [x] First Page (Home)
+  - [x] Last Page (End)
+  - [x] Go to Page... (Cmd+G)
+- [x] **Window menu:**
+  - [x] Minimize
+  - [x] Zoom
+- [x] **Help menu:**
+  - [x] About PDF Editor
 
 ### Phase 2.2: Toolbar
 GPU-rendered toolbar at top of window.

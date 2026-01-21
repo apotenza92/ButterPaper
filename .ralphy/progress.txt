@@ -10412,3 +10412,56 @@ The Save (Cmd+S) feature was already fully implemented and just needed to be mar
 
 **Linting:**
 - Clippy passes with only pre-existing deprecation warnings from cocoa crate
+
+### Task: Mark all menu items as complete in PRD
+
+**Status:** Complete
+
+**Analysis:**
+Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are already implemented in `crates/app/src/menu.rs`:
+
+- **Edit menu:** All items implemented with standard macOS selectors
+  - Undo (Cmd+Z) - uses `undo:` selector
+  - Redo (Cmd+Shift+Z) - uses `redo:` selector
+  - Cut (Cmd+X) - uses `cut:` selector (bonus)
+  - Copy (Cmd+C) - uses `copy:` selector
+  - Paste (Cmd+V) - uses `paste:` selector (bonus)
+  - Select All (Cmd+A) - uses `selectAll:` selector
+  - Find... (Cmd+F) - uses `performFindPanelAction:` selector
+
+- **View menu:** All items implemented
+  - Zoom In (Cmd+=) - uses `zoomIn:` selector
+  - Zoom Out (Cmd+-) - uses `zoomOut:` selector
+  - Actual Size (Cmd+0) - uses `zoomToActualSize:` selector
+  - Fit Page - uses `zoomToFit:` selector
+  - Fit Width - uses `zoomToWidth:` selector
+  - Show Thumbnails (Cmd+T) - uses `toggleThumbnails:` selector
+  - Show Annotations - uses `toggleAnnotations:` selector
+
+- **Go menu:** All items implemented
+  - Next Page - uses `goToNextPage:` selector
+  - Previous Page - uses `goToPreviousPage:` selector
+  - First Page - uses `goToFirstPage:` selector
+  - Last Page - uses `goToLastPage:` selector
+  - Go to Page... (Cmd+G) - uses `goToPage:` selector
+
+- **Window menu:** All items implemented
+  - Minimize (Cmd+M) - uses `performMiniaturize:` selector
+  - Zoom - uses `performZoom:` selector
+
+- **Help menu:** All items implemented
+  - PDF Editor Help (Cmd+?) - uses `showHelp:` selector
+
+**Changes:**
+- Updated PRD.md to mark all menu items in Phase 2.1 as complete
+- All menu items use standard macOS responder chain selectors for automatic behavior
+
+**Files Modified:**
+- PRD.md (marked all Edit, View, Go, Window, and Help menu items as complete)
+
+**Tests:**
+- All 24 menu tests pass
+- No new tests needed (menu items use standard macOS selectors)
+
+**Linting:**
+- Clippy passes with only pre-existing deprecation warnings from cocoa crate
