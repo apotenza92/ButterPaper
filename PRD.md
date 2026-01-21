@@ -73,10 +73,10 @@ All unit tests now pass after fixing:
 - [ ] **Terminal test:** `cargo run --release -- test.pdf 2>&1 | grep "SUCCESS\|FAILED"`
 
 ### Phase 1.2: Page Info Overlay
-- [ ] Show "Page X of Y" in bottom-right corner
-- [ ] Show current zoom level (e.g., "100%")
+- [x] Show "Page X of Y" in bottom-right corner
+- [x] Show current zoom level (e.g., "100%")
 - [ ] Show loading spinner while rendering
-- [ ] Use scene graph primitives (Rect + text texture)
+- [x] Use scene graph primitives (Rect + text texture)
 
 ### Phase 1.3: Connect Zoom/Pan to Display
 - [ ] Make scroll wheel zoom update the visible page

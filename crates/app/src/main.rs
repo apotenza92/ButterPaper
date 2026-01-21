@@ -2,15 +2,19 @@
 //!
 //! Main application entry point with GPU-rendered UI shell.
 
+use pdf_editor_render::PdfDocument;
 use pdf_editor_ui::gpu;
 use pdf_editor_ui::input::InputHandler;
 use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::SceneGraph;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
 #[cfg(target_os = "macos")]
@@ -19,17 +23,339 @@ use cocoa::base::id as cocoa_id;
 #[cfg(target_os = "macos")]
 use core_graphics_types::geometry::CGSize;
 #[cfg(target_os = "macos")]
-use metal::{CommandQueue, Device, MetalLayer};
+use metal::{CommandQueue, Device, MetalLayer, MTLPixelFormat, TextureDescriptor};
 #[cfg(target_os = "macos")]
 use objc::runtime::YES;
 #[cfg(target_os = "macos")]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
 
-/// Target frame rate (60 FPS)
-const TARGET_FPS: u64 = 60;
+#[cfg(target_os = "macos")]
+mod text_overlay {
+    use metal::{Device, MTLPixelFormat, TextureDescriptor};
+
+    /// Overlay texture holding rendered text
+    pub struct OverlayTexture {
+        pub texture: metal::Texture,
+        pub width: u32,
+        pub height: u32,
+    }
+
+    /// Simple 5x7 bitmap font for basic ASCII characters (0-9, A-Z, a-z, space, punctuation)
+    /// Each character is represented as a 5-wide by 7-tall bitmap, stored as a [u8; 7] where
+    /// each byte represents one row (MSB = leftmost pixel).
+    fn get_char_bitmap(c: char) -> [u8; 7] {
+        match c {
+            '0' => [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
+            '1' => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+            '2' => [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111],
+            '3' => [0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110],
+            '4' => [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+            '5' => [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+            '6' => [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+            '7' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+            '8' => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+            '9' => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+            'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+            'a' => [0b00000, 0b00000, 0b01110, 0b00001, 0b01111, 0b10001, 0b01111],
+            'g' => [0b00000, 0b00000, 0b01111, 0b10001, 0b01111, 0b00001, 0b01110],
+            'e' => [0b00000, 0b00000, 0b01110, 0b10001, 0b11111, 0b10000, 0b01110],
+            'o' => [0b00000, 0b00000, 0b01110, 0b10001, 0b10001, 0b10001, 0b01110],
+            'f' => [0b00110, 0b01001, 0b01000, 0b11110, 0b01000, 0b01000, 0b01000],
+            ' ' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
+            '|' => [0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
+            '%' => [0b11001, 0b11010, 0b00100, 0b01000, 0b10110, 0b10011, 0b00000],
+            _ => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000], // unknown char
+        }
+    }
+
+    /// Render text to a Metal texture with a semi-transparent background
+    pub fn render_text_overlay(
+        device: &Device,
+        text: &str,
+        scale: u32,
+        padding: u32,
+    ) -> Option<OverlayTexture> {
+        let char_width = 5u32 * scale;
+        let char_height = 7u32 * scale;
+        let char_spacing = scale; // 1 pixel spacing between characters
+
+        let text_width = text.len() as u32 * (char_width + char_spacing);
+        let text_height = char_height;
+
+        let tex_width = text_width + padding * 2;
+        let tex_height = text_height + padding * 2;
+
+        // Ensure minimum size
+        let tex_width = tex_width.max(20);
+        let tex_height = tex_height.max(20);
+
+        // Create BGRA pixel buffer (initialized to semi-transparent black background)
+        let mut pixels = vec![0u8; (tex_width * tex_height * 4) as usize];
+
+        // Fill background with semi-transparent dark color
+        for y in 0..tex_height {
+            for x in 0..tex_width {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                // Check if we're in the rounded corner regions
+                let corner_radius = 6.0f32 * scale as f32 / 2.0;
+                let is_corner = is_outside_rounded_rect(
+                    x as f32,
+                    y as f32,
+                    tex_width as f32,
+                    tex_height as f32,
+                    corner_radius,
+                );
+
+                if is_corner {
+                    // Transparent
+                    pixels[idx] = 0;     // B
+                    pixels[idx + 1] = 0; // G
+                    pixels[idx + 2] = 0; // R
+                    pixels[idx + 3] = 0; // A
+                } else {
+                    // Semi-transparent black
+                    pixels[idx] = 0;       // B
+                    pixels[idx + 1] = 0;   // G
+                    pixels[idx + 2] = 0;   // R
+                    pixels[idx + 3] = 180; // A (about 70% opaque)
+                }
+            }
+        }
+
+        // Draw each character
+        let mut x_offset = padding;
+        for c in text.chars() {
+            let bitmap = get_char_bitmap(c);
+            draw_char_scaled(
+                &mut pixels,
+                tex_width,
+                x_offset,
+                padding,
+                &bitmap,
+                scale,
+            );
+            x_offset += char_width + char_spacing;
+        }
+
+        // Create Metal texture
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(tex_width as u64);
+        texture_desc.set_height(tex_height as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: tex_width as u64,
+                height: tex_height as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            pixels.as_ptr() as *const _,
+            (tex_width * 4) as u64,
+        );
+
+        Some(OverlayTexture {
+            texture,
+            width: tex_width,
+            height: tex_height,
+        })
+    }
+
+    /// Check if a point is outside the rounded rectangle
+    fn is_outside_rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> bool {
+        // Check each corner
+        // Top-left
+        if x < r && y < r {
+            let dx = r - x;
+            let dy = r - y;
+            return dx * dx + dy * dy > r * r;
+        }
+        // Top-right
+        if x > w - r && y < r {
+            let dx = x - (w - r);
+            let dy = r - y;
+            return dx * dx + dy * dy > r * r;
+        }
+        // Bottom-left
+        if x < r && y > h - r {
+            let dx = r - x;
+            let dy = y - (h - r);
+            return dx * dx + dy * dy > r * r;
+        }
+        // Bottom-right
+        if x > w - r && y > h - r {
+            let dx = x - (w - r);
+            let dy = y - (h - r);
+            return dx * dx + dy * dy > r * r;
+        }
+        false
+    }
+
+    /// Draw a scaled character bitmap to the pixel buffer
+    fn draw_char_scaled(
+        pixels: &mut [u8],
+        tex_width: u32,
+        x_start: u32,
+        y_start: u32,
+        bitmap: &[u8; 7],
+        scale: u32,
+    ) {
+        for (row_idx, &row_bits) in bitmap.iter().enumerate() {
+            for col in 0..5u32 {
+                let bit = (row_bits >> (4 - col)) & 1;
+                if bit == 1 {
+                    // Draw scaled pixel (scale x scale block)
+                    for sy in 0..scale {
+                        for sx in 0..scale {
+                            let px = x_start + col * scale + sx;
+                            let py = y_start + row_idx as u32 * scale + sy;
+                            let idx = ((py * tex_width + px) * 4) as usize;
+                            if idx + 3 < pixels.len() {
+                                // White text (BGRA format)
+                                pixels[idx] = 255;     // B
+                                pixels[idx + 1] = 255; // G
+                                pixels[idx + 2] = 255; // R
+                                pixels[idx + 3] = 255; // A
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_get_char_bitmap_digits() {
+            // Test that digit bitmaps are non-zero
+            for c in '0'..='9' {
+                let bitmap = get_char_bitmap(c);
+                let non_zero = bitmap.iter().any(|&b| b != 0);
+                assert!(non_zero, "Digit '{}' should have non-zero bitmap", c);
+            }
+        }
+
+        #[test]
+        fn test_get_char_bitmap_special() {
+            // Space should be all zeros
+            let space = get_char_bitmap(' ');
+            assert!(space.iter().all(|&b| b == 0), "Space should be all zeros");
+
+            // Pipe should have vertical line
+            let pipe = get_char_bitmap('|');
+            let has_center_bit = pipe.iter().all(|&b| b == 0b00100);
+            assert!(has_center_bit, "Pipe should have center bit set");
+
+            // Unknown char should be all zeros
+            let unknown = get_char_bitmap('$');
+            assert!(unknown.iter().all(|&b| b == 0), "Unknown char should be all zeros");
+        }
+
+        #[test]
+        fn test_is_outside_rounded_rect() {
+            // Point inside rectangle (not in corner)
+            assert!(!is_outside_rounded_rect(50.0, 50.0, 100.0, 100.0, 10.0));
+
+            // Point at top-left corner (outside rounded area)
+            assert!(is_outside_rounded_rect(0.0, 0.0, 100.0, 100.0, 10.0));
+
+            // Point at top-right corner (outside rounded area)
+            assert!(is_outside_rounded_rect(99.0, 0.0, 100.0, 100.0, 10.0));
+
+            // Point near but inside the corner radius
+            assert!(!is_outside_rounded_rect(10.0, 10.0, 100.0, 100.0, 10.0));
+        }
+
+        #[test]
+        fn test_draw_char_scaled() {
+            // Create a small buffer and draw a character
+            let tex_width = 20u32;
+            let tex_height = 20u32;
+            let mut pixels = vec![0u8; (tex_width * tex_height * 4) as usize];
+
+            // Draw the digit '1' at position (2, 2) with scale 1
+            let bitmap = get_char_bitmap('1');
+            draw_char_scaled(&mut pixels, tex_width, 2, 2, &bitmap, 1);
+
+            // Check that some pixels were set to white
+            let white_pixels: usize = pixels
+                .chunks_exact(4)
+                .filter(|p| p[0] == 255 && p[1] == 255 && p[2] == 255 && p[3] == 255)
+                .count();
+
+            assert!(white_pixels > 0, "Should have drawn some white pixels");
+
+            // The digit '1' has a specific pattern - count the set bits
+            let expected_bits: u32 = bitmap.iter().map(|&b| b.count_ones()).sum();
+            assert_eq!(white_pixels, expected_bits as usize, "White pixel count should match bitmap bits");
+        }
+
+        #[test]
+        fn test_draw_char_scaled_with_scaling() {
+            // Test that scaling works correctly (scale 2 = 4x pixels per bit)
+            let tex_width = 40u32;
+            let tex_height = 40u32;
+            let mut pixels = vec![0u8; (tex_width * tex_height * 4) as usize];
+
+            let bitmap = get_char_bitmap('1');
+            let scale = 2u32;
+            draw_char_scaled(&mut pixels, tex_width, 2, 2, &bitmap, scale);
+
+            let white_pixels: usize = pixels
+                .chunks_exact(4)
+                .filter(|p| p[0] == 255 && p[1] == 255 && p[2] == 255 && p[3] == 255)
+                .count();
+
+            let bits_in_bitmap: u32 = bitmap.iter().map(|&b| b.count_ones()).sum();
+            let expected_pixels = bits_in_bitmap * scale * scale;
+
+            assert_eq!(white_pixels, expected_pixels as usize,
+                "Scaled drawing should have scale^2 times the bitmap bits");
+        }
+    }
+}
+
+const TARGET_FPS: u64 = 120;
 const TARGET_FRAME_TIME: Duration = Duration::from_micros(1_000_000 / TARGET_FPS);
 
-/// Application state
+struct PageTexture {
+    texture: metal::Texture,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(target_os = "macos")]
+struct PageInfoOverlay {
+    texture: metal::Texture,
+    width: u32,
+    height: u32,
+}
+
+struct LoadedDocument {
+    pdf: PdfDocument,
+    #[allow(dead_code)]
+    path: PathBuf,
+    page_count: u16,
+    current_page: u16,
+    page_textures: HashMap<u16, PageTexture>,
+    #[cfg(target_os = "macos")]
+    page_info_overlay: Option<PageInfoOverlay>,
+}
+
 struct App {
     window: Option<Arc<Window>>,
     #[cfg(target_os = "macos")]
@@ -42,24 +368,24 @@ struct App {
     scene_graph: SceneGraph,
     renderer: Option<SceneRenderer>,
     input_handler: InputHandler,
-    // Frame loop timing
     last_update: Instant,
     delta_time: Duration,
     frame_count: u64,
     fps_update_time: Instant,
     current_fps: f64,
-    // Startup timing
     app_start: Instant,
     first_frame_rendered: bool,
+    modifiers: ModifiersState,
+    document: Option<LoadedDocument>,
+    pending_file_open: bool,
+    initial_file: Option<PathBuf>,
 }
 
 impl App {
     fn new() -> Self {
-        // Create an empty scene graph (test primitives removed for faster startup)
         let scene_graph = SceneGraph::new();
-
         let now = Instant::now();
-        let input_handler = InputHandler::new(1200.0, 800.0); // Default window size
+        let input_handler = InputHandler::new(1200.0, 800.0);
 
         Self {
             window: None,
@@ -80,62 +406,231 @@ impl App {
             current_fps: 0.0,
             app_start: now,
             first_frame_rendered: false,
+            modifiers: ModifiersState::empty(),
+            document: None,
+            pending_file_open: false,
+            initial_file: None,
         }
     }
 
-    /// Update game state (called every frame)
+    fn set_initial_file(&mut self, path: PathBuf) {
+        self.initial_file = Some(path);
+    }
+
+    fn open_file_dialog(&mut self) {
+        self.pending_file_open = true;
+    }
+
+    fn process_file_open(&mut self) {
+        if !self.pending_file_open {
+            return;
+        }
+        self.pending_file_open = false;
+
+        let file = rfd::FileDialog::new()
+            .add_filter("PDF Files", &["pdf"])
+            .set_title("Open PDF")
+            .pick_file();
+
+        if let Some(path) = file {
+            self.load_pdf(&path);
+        }
+    }
+
+    fn load_pdf(&mut self, path: &PathBuf) {
+        println!("=== Loading PDF: {} ===", path.display());
+
+        match PdfDocument::open(path) {
+            Ok(pdf) => {
+                let page_count = pdf.page_count();
+                println!("SUCCESS: Loaded PDF with {} pages", page_count);
+
+                self.document = Some(LoadedDocument {
+                    pdf,
+                    path: path.clone(),
+                    page_count,
+                    current_page: 0,
+                    page_textures: HashMap::new(),
+                    #[cfg(target_os = "macos")]
+                    page_info_overlay: None,
+                });
+
+                self.render_current_page();
+
+                if let Some(window) = &self.window {
+                    let title = path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("PDF Editor");
+                    window.set_title(&format!("{} - PDF Editor", title));
+                }
+            }
+            Err(e) => {
+                eprintln!("FAILED to load PDF: {}", e);
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn render_current_page(&mut self) {
+        let Some(device) = &self.device else { 
+            println!("ERROR: No Metal device");
+            return; 
+        };
+        let Some(doc) = &mut self.document else { 
+            return; 
+        };
+
+        let page_index = doc.current_page;
+
+        if doc.page_textures.contains_key(&page_index) {
+            println!("Page {} already cached", page_index + 1);
+            return;
+        }
+
+        println!("=== Rendering page {} to texture... ===", page_index + 1);
+
+        let window_size = self.window.as_ref().map(|w| w.inner_size()).unwrap_or_default();
+        let max_width = window_size.width.saturating_sub(40);
+        let max_height = window_size.height.saturating_sub(40);
+
+        println!("Window size: {}x{}, max render: {}x{}", window_size.width, window_size.height, max_width, max_height);
+
+        let (rgba, render_width, render_height) = match doc.pdf.render_page_scaled(
+            page_index,
+            max_width,
+            max_height,
+        ) {
+            Ok(result) => {
+                println!("PDFium rendered: {}x{}, {} bytes", result.1, result.2, result.0.len());
+                result
+            },
+            Err(e) => {
+                eprintln!("FAILED to render page: {}", e);
+                return;
+            }
+        };
+
+        // Convert RGBA to BGRA for Metal compatibility
+        let mut bgra = rgba.clone();
+        for pixel in bgra.chunks_exact_mut(4) {
+            pixel.swap(0, 2); // Swap R and B
+        }
+
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(render_width as u64);
+        texture_desc.set_height(render_height as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: render_width as u64,
+                height: render_height as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            bgra.as_ptr() as *const _,
+            (render_width * 4) as u64,
+        );
+
+        doc.page_textures.insert(page_index, PageTexture {
+            texture,
+            width: render_width,
+            height: render_height,
+        });
+        println!("SUCCESS: Page {} texture created ({}x{})", page_index + 1, render_width, render_height);
+
+        // Update the page info overlay
+        self.update_page_info_overlay();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn render_current_page(&mut self) {}
+
+    /// Update the page info overlay text (e.g., "Page 1 of 10 | 100%")
+    #[cfg(target_os = "macos")]
+    fn update_page_info_overlay(&mut self) {
+        let Some(device) = &self.device else { return; };
+        let Some(doc) = &mut self.document else { return; };
+
+        let zoom_percent = self.input_handler.viewport().zoom_level;
+        let text = format!(
+            "Page {} of {} | {}%",
+            doc.current_page + 1,
+            doc.page_count,
+            zoom_percent
+        );
+
+        // Scale = 2 gives readable text, padding = 8 pixels
+        if let Some(overlay) = text_overlay::render_text_overlay(device, &text, 2, 8) {
+            doc.page_info_overlay = Some(PageInfoOverlay {
+                texture: overlay.texture,
+                width: overlay.width,
+                height: overlay.height,
+            });
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn update_page_info_overlay(&mut self) {}
+
+    fn next_page(&mut self) {
+        if let Some(doc) = &mut self.document {
+            if doc.current_page + 1 < doc.page_count {
+                doc.current_page += 1;
+                println!("Page {}/{}", doc.current_page + 1, doc.page_count);
+                self.render_current_page();
+                self.update_page_info_overlay();
+            }
+        }
+    }
+
+    fn prev_page(&mut self) {
+        if let Some(doc) = &mut self.document {
+            if doc.current_page > 0 {
+                doc.current_page -= 1;
+                println!("Page {}/{}", doc.current_page + 1, doc.page_count);
+                self.render_current_page();
+                self.update_page_info_overlay();
+            }
+        }
+    }
+
     fn update(&mut self) {
         let now = Instant::now();
         self.delta_time = now.duration_since(self.last_update);
         self.last_update = now;
 
-        // Update frame counter
         self.frame_count += 1;
 
-        // Update FPS counter every second
         let fps_elapsed = now.duration_since(self.fps_update_time);
         if fps_elapsed >= Duration::from_secs(1) {
             self.current_fps = self.frame_count as f64 / fps_elapsed.as_secs_f64();
             self.frame_count = 0;
             self.fps_update_time = now;
-
-            // Log FPS for debugging
-            let viewport = self.input_handler.viewport();
-            println!(
-                "FPS: {:.1} | Frame time: {:.2}ms | Zoom: {}% | Pos: ({:.0}, {:.0}) | Page: {}",
-                self.current_fps,
-                self.delta_time.as_secs_f64() * 1000.0,
-                viewport.zoom_level,
-                viewport.x,
-                viewport.y,
-                viewport.page_index
-            );
         }
 
-        // Update input handler (smooth pan/zoom animations)
         let _viewport_changed = self.input_handler.update(self.delta_time);
-
-        // Future: Update scene graph animations, physics, etc.
-        // For now, this is where frame-by-frame updates will happen
     }
 
     #[cfg(target_os = "macos")]
     #[allow(deprecated)]
     fn setup_metal_layer(&mut self, window: &Window) {
-        // Get the raw window handle
         let window_handle = window.window_handle().unwrap();
         let raw_handle = window_handle.as_raw();
         let RawWindowHandle::AppKit(handle) = raw_handle else {
             panic!("Expected AppKit window handle on macOS");
         };
 
-        // Create Metal device
         let device = Device::system_default().expect("Failed to get Metal device");
-
-        // Create command queue once (reused for all frames)
         let command_queue = device.new_command_queue();
-
-        // Create Metal layer
         let layer = MetalLayer::new();
         layer.set_device(&device);
         layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm_sRGB);
@@ -163,26 +658,27 @@ impl App {
         #[cfg(target_os = "macos")]
         if let Some(layer) = &self.metal_layer {
             if let Some(drawable) = layer.next_drawable() {
-                // Track time to first frame
                 if !self.first_frame_rendered {
                     let startup_time = Instant::now().duration_since(self.app_start);
-                    println!("Startup time: {:.2}ms (time to first frame)", startup_time.as_secs_f64() * 1000.0);
+                    println!(
+                        "Startup time: {:.2}ms (time to first frame)",
+                        startup_time.as_secs_f64() * 1000.0
+                    );
                     self.first_frame_rendered = true;
                 }
 
-                // Render the scene graph using our renderer
-                if let (Some(gpu_context), Some(renderer)) = (&mut self.gpu_context, &mut self.renderer) {
-                    // Render scene graph (currently just validates the structure)
+                if let (Some(gpu_context), Some(renderer)) =
+                    (&mut self.gpu_context, &mut self.renderer)
+                {
                     if let Err(e) = renderer.render(gpu_context.as_mut(), &self.scene_graph) {
                         eprintln!("Scene render failed: {}", e);
                     }
                 }
 
-                // Create a render pass that clears to a dark gray
-                // In a full implementation, the scene renderer would draw primitives here
                 if let Some(command_queue) = &self.command_queue {
                     let command_buffer = command_queue.new_command_buffer();
 
+                    // First, clear the background
                     let render_pass_descriptor = metal::RenderPassDescriptor::new();
                     let color_attachment = render_pass_descriptor
                         .color_attachments()
@@ -191,11 +687,92 @@ impl App {
 
                     color_attachment.set_texture(Some(drawable.texture()));
                     color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-                    color_attachment.set_clear_color(metal::MTLClearColor::new(0.2, 0.2, 0.2, 1.0));
+
+                    let bg_color = if self.document.is_some() {
+                        metal::MTLClearColor::new(0.3, 0.3, 0.3, 1.0)
+                    } else {
+                        metal::MTLClearColor::new(0.15, 0.15, 0.15, 1.0)
+                    };
+                    color_attachment.set_clear_color(bg_color);
                     color_attachment.set_store_action(metal::MTLStoreAction::Store);
 
                     let encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
                     encoder.end_encoding();
+
+                    // Blit the PDF page texture to the drawable (centered)
+                    if let Some(doc) = &self.document {
+                        let drawable_width = drawable.texture().width();
+                        let drawable_height = drawable.texture().height();
+
+                        if let Some(page_tex) = doc.page_textures.get(&doc.current_page) {
+                            // Center the page
+                            let dest_x = (drawable_width.saturating_sub(page_tex.width as u64)) / 2;
+                            let dest_y = (drawable_height.saturating_sub(page_tex.height as u64)) / 2;
+
+                            let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                            let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                            let src_size = metal::MTLSize {
+                                width: page_tex.width as u64,
+                                height: page_tex.height as u64,
+                                depth: 1,
+                            };
+                            let dest_origin = metal::MTLOrigin {
+                                x: dest_x,
+                                y: dest_y,
+                                z: 0,
+                            };
+
+                            blit_encoder.copy_from_texture(
+                                &page_tex.texture,
+                                0,
+                                0,
+                                src_origin,
+                                src_size,
+                                drawable.texture(),
+                                0,
+                                0,
+                                dest_origin,
+                            );
+
+                            blit_encoder.end_encoding();
+                        }
+
+                        // Blit the page info overlay to the bottom-right corner
+                        if let Some(overlay) = &doc.page_info_overlay {
+                            let margin = 16u64;
+                            let dest_x = drawable_width.saturating_sub(overlay.width as u64 + margin);
+                            let dest_y = drawable_height.saturating_sub(overlay.height as u64 + margin);
+
+                            let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                            let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                            let src_size = metal::MTLSize {
+                                width: overlay.width as u64,
+                                height: overlay.height as u64,
+                                depth: 1,
+                            };
+                            let dest_origin = metal::MTLOrigin {
+                                x: dest_x,
+                                y: dest_y,
+                                z: 0,
+                            };
+
+                            blit_encoder.copy_from_texture(
+                                &overlay.texture,
+                                0,
+                                0,
+                                src_origin,
+                                src_size,
+                                drawable.texture(),
+                                0,
+                                0,
+                                dest_origin,
+                            );
+
+                            blit_encoder.end_encoding();
+                        }
+                    }
 
                     command_buffer.present_drawable(drawable);
                     command_buffer.commit();
@@ -209,7 +786,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             let window_attributes = Window::default_attributes()
-                .with_title("PDF Editor")
+                .with_title("PDF Editor - Press ⌘O to open a file")
                 .with_inner_size(winit::dpi::LogicalSize::new(1200, 800));
 
             let window = Arc::new(
@@ -221,7 +798,6 @@ impl ApplicationHandler for App {
             #[cfg(target_os = "macos")]
             self.setup_metal_layer(&window);
 
-            // Initialize GPU context and renderer
             if let Ok(context) = gpu::create_context() {
                 if let Ok(renderer) = SceneRenderer::new(context.as_ref()) {
                     self.renderer = Some(renderer);
@@ -230,6 +806,12 @@ impl ApplicationHandler for App {
             }
 
             self.window = Some(window);
+
+            // Load initial file if provided
+            if let Some(path) = self.initial_file.take() {
+                println!("Loading initial file: {}", path.display());
+                self.load_pdf(&path);
+            }
         }
     }
 
@@ -253,9 +835,23 @@ impl ApplicationHandler for App {
                     });
                 }
 
-                // Update input handler viewport dimensions
                 self.input_handler
                     .set_viewport_dimensions(size.width as f32, size.height as f32);
+
+                if self.document.is_some() {
+                    if let Some(doc) = &mut self.document {
+                        doc.page_textures.clear();
+                    }
+                    self.render_current_page();
+                }
+            }
+            WindowEvent::DroppedFile(path) => {
+                if path.extension().map(|e| e == "pdf").unwrap_or(false) {
+                    self.load_pdf(&path);
+                }
+            }
+            WindowEvent::ModifiersChanged(new_modifiers) => {
+                self.modifiers = new_modifiers.state();
             }
             WindowEvent::RedrawRequested => {
                 self.render();
@@ -288,21 +884,36 @@ impl ApplicationHandler for App {
                 use winit::keyboard::{KeyCode, PhysicalKey};
 
                 if event.state == ElementState::Pressed {
+                    let is_cmd = self.modifiers.super_key();
+
                     match event.physical_key {
-                        PhysicalKey::Code(KeyCode::Equal) | PhysicalKey::Code(KeyCode::NumpadAdd) => {
+                        PhysicalKey::Code(KeyCode::KeyO) if is_cmd => {
+                            self.open_file_dialog();
+                        }
+                        PhysicalKey::Code(KeyCode::Equal)
+                        | PhysicalKey::Code(KeyCode::NumpadAdd) => {
                             self.input_handler.zoom_in();
+                            self.update_page_info_overlay();
                         }
-                        PhysicalKey::Code(KeyCode::Minus) | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
+                        PhysicalKey::Code(KeyCode::Minus)
+                        | PhysicalKey::Code(KeyCode::NumpadSubtract) => {
                             self.input_handler.zoom_out();
+                            self.update_page_info_overlay();
                         }
-                        PhysicalKey::Code(KeyCode::Digit0) | PhysicalKey::Code(KeyCode::Numpad0) => {
+                        PhysicalKey::Code(KeyCode::Digit0)
+                        | PhysicalKey::Code(KeyCode::Numpad0) => {
                             self.input_handler.zoom_reset();
+                            self.update_page_info_overlay();
                         }
-                        PhysicalKey::Code(KeyCode::PageDown) | PhysicalKey::Code(KeyCode::ArrowDown) => {
-                            self.input_handler.next_page();
+                        PhysicalKey::Code(KeyCode::PageDown)
+                        | PhysicalKey::Code(KeyCode::ArrowDown)
+                        | PhysicalKey::Code(KeyCode::ArrowRight) => {
+                            self.next_page();
                         }
-                        PhysicalKey::Code(KeyCode::PageUp) | PhysicalKey::Code(KeyCode::ArrowUp) => {
-                            self.input_handler.prev_page();
+                        PhysicalKey::Code(KeyCode::PageUp)
+                        | PhysicalKey::Code(KeyCode::ArrowUp)
+                        | PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                            self.prev_page();
                         }
                         _ => {}
                     }
@@ -313,32 +924,59 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.process_file_open();
+
         if self.window.is_some() {
-            // Game-style frame loop: update every frame
             self.update();
 
-            // Request immediate redraw for continuous rendering
             if let Some(window) = &self.window {
                 window.request_redraw();
             }
 
-            // Optional: Sleep to maintain target frame rate
-            // This prevents excessive CPU usage while maintaining smooth updates
             let frame_time = Instant::now().duration_since(self.last_update);
             if frame_time < TARGET_FRAME_TIME {
                 std::thread::sleep(TARGET_FRAME_TIME - frame_time);
             }
 
-            // Set control flow to poll continuously for game-style updates
             event_loop.set_control_flow(ControlFlow::Poll);
         }
     }
 }
 
 fn main() {
+    println!("PDF Editor starting...");
+    println!("Press ⌘O to open a PDF file, or drag and drop a PDF onto the window");
+
+    // Check for command line argument
+    let args: Vec<String> = std::env::args().collect();
+    let initial_file = if args.len() > 1 {
+        let path = PathBuf::from(&args[1]);
+        if path.exists() && path.extension().map(|e| e == "pdf").unwrap_or(false) {
+            println!("Will open: {}", path.display());
+            Some(path)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    #[cfg(target_os = "macos")]
+    #[allow(deprecated)]
+    unsafe {
+        let app = NSApp();
+        app.setActivationPolicy_(NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular);
+        app.activateIgnoringOtherApps_(YES);
+    }
+
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::new();
-    event_loop.run_app(&mut app).expect("Failed to run event loop");
+    if let Some(path) = initial_file {
+        app.set_initial_file(path);
+    }
+    event_loop
+        .run_app(&mut app)
+        .expect("Failed to run event loop");
 }

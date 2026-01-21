@@ -9532,3 +9532,48 @@ Users can now:
 2. The app correctly finds libpdfium.dylib in the bundle's MacOS directory
 3. Development workflow remains unchanged (same-directory lookup still works)
 
+
+
+### Task: Implement Page Info Overlay showing "Page X of Y | Z%"
+
+**Status:** Complete
+
+**Changes:**
+- Added text_overlay module to crates/app/src/main.rs with bitmap font rendering
+- Implemented a simple 5x7 bitmap font for digits (0-9), letters (P, a, g, e, o, f), and special characters (space, |, %)
+- Created render_text_overlay() function that renders text to a Metal texture with rounded corners and semi-transparent background
+- Added PageInfoOverlay struct to LoadedDocument for caching the overlay texture
+- Implemented update_page_info_overlay() function that creates overlay text showing "Page X of Y | Z%"
+- Integrated overlay rendering into the main render() function, displaying in bottom-right corner with 16px margin
+- Added overlay updates when:
+  - PDF is loaded (render_current_page calls update_page_info_overlay)
+  - Page changes (next_page and prev_page)
+  - Zoom level changes (zoom_in, zoom_out, zoom_reset)
+- Added 5 unit tests for the text overlay module:
+  - test_get_char_bitmap_digits: Verifies digit bitmaps are non-zero
+  - test_get_char_bitmap_special: Verifies space and pipe characters
+  - test_is_outside_rounded_rect: Verifies rounded corner detection
+  - test_draw_char_scaled: Verifies character drawing
+  - test_draw_char_scaled_with_scaling: Verifies scaling multiplier works correctly
+
+**Files Modified:**
+- crates/app/src/main.rs (added text_overlay module, PageInfoOverlay struct, update_page_info_overlay function)
+- crates/app/Cargo.toml (no changes - reverted Core Text/Core Graphics additions due to version conflicts)
+- PRD.md (marked Phase 1.2 tasks as complete)
+
+**Architecture Notes:**
+- Uses bitmap font rendering rather than Core Text to avoid dependency version conflicts
+- Text is rendered to a texture once per state change (not every frame)
+- Overlay uses Metal blit operations for efficient display
+- Rounded corners implemented via pixel-level distance calculation
+- Scale factor of 2 gives readable text size (5x7 base * 2 = 10x14 pixels per character)
+
+**Technical Details:**
+- Bitmap font: 5 pixels wide x 7 pixels tall per character
+- Default scale: 2 (each bitmap pixel becomes 2x2 screen pixels)
+- Default padding: 8 pixels
+- Background: Semi-transparent black (alpha 180/255 ~ 70%)
+- Text color: White (BGRA: 255, 255, 255, 255)
+- Corner radius: 6 pixels (scaled)
+- Margin from window edge: 16 pixels
+
