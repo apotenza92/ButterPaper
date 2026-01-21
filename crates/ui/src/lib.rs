@@ -9,3 +9,4 @@ pub mod renderer;
 pub mod scene;
 pub mod text_selection;
 pub mod thumbnail;
+pub mod toolbar;

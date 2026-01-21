@@ -10465,3 +10465,53 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 
 **Linting:**
 - Clippy passes with only pre-existing deprecation warnings from cocoa crate
+
+### Task: Create toolbar component using scene graph (Phase 2.2)
+
+**Status:** Complete
+
+**Changes:**
+- Created new toolbar component in `crates/ui/src/toolbar.rs`
+- Implemented `Toolbar` struct following the same pattern as `ThumbnailStrip`
+- Added `ToolbarConfig` for customizable appearance (colors, sizing, visibility)
+- Implemented `ToolbarButton` enum for all toolbar buttons:
+  - Navigation: PrevPage, NextPage
+  - Zoom: ZoomOut, ZoomIn, FitPage, FitWidth
+  - Tools: SelectTool, HandTool, TextSelectTool, HighlightTool, CommentTool, MeasureTool
+- Each button has icon primitives rendered using scene graph shapes (polygons, rectangles, circles)
+- Implemented hit testing for button click detection
+- Added hover state support for visual feedback
+- Added selected tool tracking with active state highlighting
+- Exported toolbar module from `lib.rs`
+
+**Tests Added:**
+- test_toolbar_creation
+- test_toolbar_with_custom_config
+- test_toolbar_visibility_toggle
+- test_toolbar_viewport_resize
+- test_toolbar_selected_tool
+- test_toolbar_hit_test_when_visible
+- test_toolbar_hit_test_when_invisible
+- test_toolbar_contains_point
+- test_toolbar_button_hover
+- test_toolbar_config_default
+- test_toolbar_button_icon_primitives
+- test_toolbar_scene_node_has_primitives
+- test_toolbar_node_id_unique
+
+**Files Created:**
+- crates/ui/src/toolbar.rs (670+ lines)
+
+**Files Modified:**
+- crates/ui/src/lib.rs (added toolbar module export)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Follows the same component pattern as ThumbnailStrip
+- Uses Arc<SceneNode> for scene graph integration
+- Toolbar height constant: 44 pixels
+- Supports visual sections with separators (Navigation, Zoom, Tools)
+- Button states: Normal, Hover, Active
+- Icon primitives use basic shapes (rectangles, circles, polygons) for simple geometric icons
+- Ready for integration with main application once button click handling is wired up
+
