@@ -2,12 +2,13 @@
 //!
 //! This module provides input event processing for viewport navigation:
 //! - Mouse drag for panning (smooth scrolling)
-//! - Mouse wheel for zooming (with zoom centering on cursor position)
+//! - Mouse wheel for scrolling (smooth vertical/horizontal scrolling)
+//! - Ctrl/Cmd + mouse wheel for zooming (with zoom centering on cursor position)
 //! - Keyboard shortcuts for navigation
 //! - Vector-based hit testing for annotation selection
 //!
 //! The input handler maintains velocity-based smooth interpolation for
-//! natural-feeling pan and zoom animations.
+//! natural-feeling pan, scroll, and zoom animations.
 //!
 //! Zoom levels are quantized to discrete steps (25, 50, 75, 100, 125, 150, 200, 300, 400)
 //! to optimize tile cache efficiency. Smooth interpolation provides seamless transitions
@@ -43,8 +44,11 @@ pub struct InputHandler {
     /// Current viewport state
     viewport: Viewport,
 
-    /// Pan state
+    /// Pan state (for mouse drag)
     pan_state: PanState,
+
+    /// Scroll state (for mouse wheel scrolling)
+    scroll_state: ScrollState,
 
     /// Zoom state
     zoom_state: ZoomState,
@@ -104,6 +108,51 @@ impl Default for PanState {
     }
 }
 
+/// Scroll wheel state for smooth scrolling
+#[derive(Debug, Clone)]
+struct ScrollState {
+    /// Target scroll position offset (accumulated from wheel events)
+    target_offset_x: f32,
+    target_offset_y: f32,
+
+    /// Current smooth scroll offset (interpolated toward target)
+    current_offset_x: f32,
+    current_offset_y: f32,
+
+    /// Scroll velocity for momentum (pixels per second)
+    velocity_x: f32,
+    velocity_y: f32,
+
+    /// Scroll interpolation speed (0.0 - 1.0, higher = snappier)
+    interpolation_speed: f32,
+
+    /// Momentum decay factor after scroll wheel stops
+    momentum_decay: f32,
+
+    /// Pixels per line for line-based scroll deltas
+    pixels_per_line: f32,
+
+    /// Time since last scroll wheel event (for momentum detection)
+    time_since_last_scroll: f32,
+}
+
+impl Default for ScrollState {
+    fn default() -> Self {
+        Self {
+            target_offset_x: 0.0,
+            target_offset_y: 0.0,
+            current_offset_x: 0.0,
+            current_offset_y: 0.0,
+            velocity_x: 0.0,
+            velocity_y: 0.0,
+            interpolation_speed: 0.25, // 25% of remaining distance per frame for smooth feel
+            momentum_decay: 0.95,      // Slower decay than drag pan for natural scroll feel
+            pixels_per_line: 40.0,     // Standard line height for scroll
+            time_since_last_scroll: 1.0, // Start with "not recently scrolled"
+        }
+    }
+}
+
 /// Zoom state with smooth interpolation
 #[derive(Debug, Clone)]
 struct ZoomState {
@@ -140,6 +189,7 @@ impl InputHandler {
         Self {
             viewport,
             pan_state: PanState::default(),
+            scroll_state: ScrollState::default(),
             zoom_state: ZoomState::default(),
             mouse_position: (0.0, 0.0),
             mouse_pressed: false,
@@ -241,6 +291,52 @@ impl InputHandler {
         // (velocity is already set from last drag movement)
     }
 
+    /// Handle scroll wheel event for smooth scrolling (no modifier)
+    ///
+    /// This is the default scroll wheel behavior - scrolls the viewport.
+    /// Use `on_mouse_wheel` for zoom (with Ctrl/Cmd modifier).
+    ///
+    /// # Arguments
+    /// * `delta_x` - Horizontal scroll delta (positive = scroll right)
+    /// * `delta_y` - Vertical scroll delta (positive = scroll down)
+    /// * `is_line_delta` - True if delta is in lines, false if in pixels
+    pub fn on_scroll(&mut self, delta_x: f32, delta_y: f32, is_line_delta: bool) {
+        // Convert line deltas to pixels
+        let (pixel_delta_x, pixel_delta_y) = if is_line_delta {
+            (
+                delta_x * self.scroll_state.pixels_per_line,
+                delta_y * self.scroll_state.pixels_per_line,
+            )
+        } else {
+            (delta_x, delta_y)
+        };
+
+        // Accumulate scroll target (negative because scroll down = viewport moves up in content)
+        // This matches standard macOS scroll direction (natural scrolling)
+        self.scroll_state.target_offset_x += pixel_delta_x;
+        self.scroll_state.target_offset_y += pixel_delta_y;
+
+        // Update velocity for momentum (convert to per-second based on assumed 60fps input rate)
+        // Use exponential smoothing to blend with previous velocity for smoother feel
+        let blend_factor = 0.7;
+        self.scroll_state.velocity_x = self.scroll_state.velocity_x * (1.0 - blend_factor)
+            + pixel_delta_x * 60.0 * blend_factor;
+        self.scroll_state.velocity_y = self.scroll_state.velocity_y * (1.0 - blend_factor)
+            + pixel_delta_y * 60.0 * blend_factor;
+
+        // Reset time since last scroll (for momentum detection)
+        self.scroll_state.time_since_last_scroll = 0.0;
+    }
+
+    /// Check if the viewport is currently being scrolled (has scroll momentum)
+    pub fn is_scrolling(&self) -> bool {
+        let velocity_threshold = 1.0;
+        self.scroll_state.velocity_x.abs() > velocity_threshold
+            || self.scroll_state.velocity_y.abs() > velocity_threshold
+            || (self.scroll_state.target_offset_x - self.scroll_state.current_offset_x).abs() > 0.5
+            || (self.scroll_state.target_offset_y - self.scroll_state.current_offset_y).abs() > 0.5
+    }
+
     /// Handle mouse wheel event (zoom)
     ///
     /// delta: scroll amount (positive = zoom in, negative = zoom out)
@@ -319,11 +415,10 @@ impl InputHandler {
     /// Returns true if viewport changed
     pub fn update(&mut self, delta_time: Duration) -> bool {
         let mut changed = false;
+        let delta_seconds = delta_time.as_secs_f32();
 
-        // Update momentum-based panning
+        // Update momentum-based panning (mouse drag)
         if !self.mouse_pressed {
-            let delta_seconds = delta_time.as_secs_f32();
-
             // Apply velocity decay
             self.pan_state.velocity_x *= self.pan_state.momentum_decay;
             self.pan_state.velocity_y *= self.pan_state.momentum_decay;
@@ -344,6 +439,67 @@ impl InputHandler {
         } else {
             // Mouse is pressed, viewport is being updated in on_mouse_move
             changed = true;
+        }
+
+        // Update smooth scroll wheel animation
+        // Track time since last scroll for momentum detection
+        self.scroll_state.time_since_last_scroll += delta_seconds;
+
+        // Calculate remaining scroll distance
+        let remaining_x = self.scroll_state.target_offset_x - self.scroll_state.current_offset_x;
+        let remaining_y = self.scroll_state.target_offset_y - self.scroll_state.current_offset_y;
+
+        // Smooth interpolation toward target offset
+        let scroll_threshold = 0.5;
+        if remaining_x.abs() > scroll_threshold || remaining_y.abs() > scroll_threshold {
+            // Use adaptive interpolation speed based on remaining distance
+            // Faster when far from target, slower when close for precision
+            let base_speed = self.scroll_state.interpolation_speed;
+            let adaptive_speed = base_speed + (1.0 - base_speed) * 0.5 * (1.0 - (-remaining_y.abs() / 100.0).exp());
+
+            let delta_x = remaining_x * adaptive_speed.min(1.0);
+            let delta_y = remaining_y * adaptive_speed.min(1.0);
+
+            self.scroll_state.current_offset_x += delta_x;
+            self.scroll_state.current_offset_y += delta_y;
+
+            // Apply scroll offset to viewport
+            self.viewport.x += delta_x;
+            self.viewport.y += delta_y;
+            changed = true;
+        } else if remaining_x.abs() > 0.01 || remaining_y.abs() > 0.01 {
+            // Snap to target when very close
+            let final_delta_x = remaining_x;
+            let final_delta_y = remaining_y;
+            self.scroll_state.current_offset_x = self.scroll_state.target_offset_x;
+            self.scroll_state.current_offset_y = self.scroll_state.target_offset_y;
+            self.viewport.x += final_delta_x;
+            self.viewport.y += final_delta_y;
+            changed = true;
+        }
+
+        // Apply scroll momentum when wheel has stopped but velocity remains
+        // Only apply if not actively receiving scroll events (time since last > threshold)
+        if self.scroll_state.time_since_last_scroll > 0.05 {
+            let vel_threshold = 5.0;
+            if self.scroll_state.velocity_x.abs() > vel_threshold
+                || self.scroll_state.velocity_y.abs() > vel_threshold
+            {
+                // Apply velocity decay
+                self.scroll_state.velocity_x *= self.scroll_state.momentum_decay;
+                self.scroll_state.velocity_y *= self.scroll_state.momentum_decay;
+
+                // Apply momentum to targets (will be smoothly interpolated)
+                let momentum_x = self.scroll_state.velocity_x * delta_seconds;
+                let momentum_y = self.scroll_state.velocity_y * delta_seconds;
+                self.scroll_state.target_offset_x += momentum_x;
+                self.scroll_state.target_offset_y += momentum_y;
+                changed = true;
+            } else {
+                // Stop momentum when very slow
+                self.scroll_state.velocity_x = 0.0;
+                self.scroll_state.velocity_y = 0.0;
+            }
         }
 
         // Update smooth visual zoom animation
@@ -392,10 +548,16 @@ impl InputHandler {
         if self.viewport.x < 0.0 {
             self.viewport.x = 0.0;
             self.pan_state.velocity_x = 0.0;
+            self.scroll_state.velocity_x = 0.0;
+            // Reset scroll targets to prevent fighting with clamping
+            self.scroll_state.target_offset_x = self.scroll_state.current_offset_x;
         }
         if self.viewport.y < 0.0 {
             self.viewport.y = 0.0;
             self.pan_state.velocity_y = 0.0;
+            self.scroll_state.velocity_y = 0.0;
+            // Reset scroll targets to prevent fighting with clamping
+            self.scroll_state.target_offset_y = self.scroll_state.current_offset_y;
         }
 
         changed
@@ -1356,5 +1518,165 @@ mod tests {
         // Momentum should be stopped
         assert_eq!(handler.pan_state.velocity_x, 0.0);
         assert_eq!(handler.pan_state.velocity_y, 0.0);
+    }
+
+    #[test]
+    fn test_smooth_scroll_wheel_basic() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Scroll down (positive y in line delta)
+        handler.on_scroll(0.0, 3.0, true); // 3 lines
+
+        // Target should be updated (negative because natural scrolling)
+        assert!(handler.scroll_state.target_offset_y > 0.0);
+        assert_eq!(handler.scroll_state.target_offset_y, 3.0 * 40.0); // 3 lines * 40 pixels
+    }
+
+    #[test]
+    fn test_smooth_scroll_pixel_delta() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Scroll with pixel delta (trackpad)
+        handler.on_scroll(0.0, 100.0, false);
+
+        // Target should match pixel delta
+        assert_eq!(handler.scroll_state.target_offset_y, 100.0);
+    }
+
+    #[test]
+    fn test_smooth_scroll_interpolation() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Set viewport to position where scroll can happen
+        handler.viewport.y = 500.0;
+
+        // Scroll down
+        handler.on_scroll(0.0, 100.0, false);
+        let initial_y = handler.viewport().y;
+
+        // Update for one frame
+        let delta = Duration::from_millis(16);
+        let changed = handler.update(delta);
+
+        assert!(changed);
+        // Viewport should have moved toward target (current_offset tracks this)
+        assert!(handler.scroll_state.current_offset_y > 0.0);
+    }
+
+    #[test]
+    fn test_smooth_scroll_completes() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Set viewport to position where scroll can happen
+        handler.viewport.y = 500.0;
+
+        // Scroll down
+        handler.on_scroll(0.0, 100.0, false);
+
+        // Manually stop the velocity to test just the interpolation completion
+        // (momentum would keep extending the target otherwise)
+        handler.scroll_state.velocity_x = 0.0;
+        handler.scroll_state.velocity_y = 0.0;
+        handler.scroll_state.time_since_last_scroll = 1.0; // Mark as "not recently scrolled"
+
+        // Run animation to completion
+        let delta = Duration::from_millis(16);
+        for _ in 0..100 {
+            handler.update(delta);
+        }
+
+        // Current offset should have caught up to target
+        let diff = (handler.scroll_state.current_offset_y - handler.scroll_state.target_offset_y).abs();
+        assert!(diff < 1.0, "Scroll should complete, diff = {}", diff);
+    }
+
+    #[test]
+    fn test_is_scrolling_detection() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Initially not scrolling
+        assert!(!handler.is_scrolling());
+
+        // Start scrolling
+        handler.on_scroll(0.0, 100.0, false);
+
+        // Should be scrolling now
+        assert!(handler.is_scrolling());
+
+        // Run animation to completion
+        let delta = Duration::from_millis(16);
+        for _ in 0..200 {
+            handler.update(delta);
+        }
+
+        // Should no longer be scrolling
+        assert!(!handler.is_scrolling());
+    }
+
+    #[test]
+    fn test_scroll_horizontal() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Scroll right
+        handler.on_scroll(50.0, 0.0, false);
+
+        assert_eq!(handler.scroll_state.target_offset_x, 50.0);
+        assert_eq!(handler.scroll_state.target_offset_y, 0.0);
+    }
+
+    #[test]
+    fn test_scroll_diagonal() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Scroll diagonally
+        handler.on_scroll(30.0, 40.0, false);
+
+        assert_eq!(handler.scroll_state.target_offset_x, 30.0);
+        assert_eq!(handler.scroll_state.target_offset_y, 40.0);
+    }
+
+    #[test]
+    fn test_scroll_accumulates() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Multiple scroll events accumulate
+        handler.on_scroll(0.0, 50.0, false);
+        handler.on_scroll(0.0, 50.0, false);
+        handler.on_scroll(0.0, 50.0, false);
+
+        assert_eq!(handler.scroll_state.target_offset_y, 150.0);
+    }
+
+    #[test]
+    fn test_scroll_velocity_tracking() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Scroll with significant delta
+        handler.on_scroll(0.0, 50.0, false);
+
+        // Velocity should be set
+        assert!(handler.scroll_state.velocity_y.abs() > 0.0);
+    }
+
+    #[test]
+    fn test_scroll_clamping_at_origin() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+
+        // Start at origin
+        assert_eq!(handler.viewport().x, 0.0);
+        assert_eq!(handler.viewport().y, 0.0);
+
+        // Try to scroll up (negative direction)
+        handler.on_scroll(0.0, -100.0, false);
+
+        // Run several frames
+        let delta = Duration::from_millis(16);
+        for _ in 0..10 {
+            handler.update(delta);
+        }
+
+        // Viewport should be clamped at origin
+        assert_eq!(handler.viewport().x, 0.0);
+        assert_eq!(handler.viewport().y, 0.0);
     }
 }

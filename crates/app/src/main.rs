@@ -6921,11 +6921,29 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let scroll_amount = match delta {
-                    MouseScrollDelta::LineDelta(_x, y) => y,
-                    MouseScrollDelta::PixelDelta(pos) => (pos.y / 100.0) as f32,
-                };
-                self.input_handler.on_mouse_wheel(scroll_amount);
+                // Check if Cmd/Ctrl is held for zoom, otherwise scroll
+                let is_zoom_modifier = self.modifiers.super_key() || self.modifiers.control_key();
+
+                match delta {
+                    MouseScrollDelta::LineDelta(x, y) => {
+                        if is_zoom_modifier {
+                            // Zoom with Cmd/Ctrl + scroll wheel
+                            self.input_handler.on_mouse_wheel(y);
+                        } else {
+                            // Smooth scroll (natural scrolling direction)
+                            self.input_handler.on_scroll(-x, -y, true);
+                        }
+                    }
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        if is_zoom_modifier {
+                            // Zoom with Cmd/Ctrl + scroll wheel
+                            self.input_handler.on_mouse_wheel((pos.y / 100.0) as f32);
+                        } else {
+                            // Smooth scroll (pixel-based, e.g., trackpad)
+                            self.input_handler.on_scroll(-pos.x as f32, -pos.y as f32, false);
+                        }
+                    }
+                }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 use winit::keyboard::{KeyCode, PhysicalKey};

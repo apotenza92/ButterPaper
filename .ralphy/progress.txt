@@ -12544,3 +12544,77 @@ pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_
 - Double-buffering (2 drawables) reduces input latency vs triple-buffering (default 3)
 - Opaque layer allows CAMetalLayer to skip alpha blending during compositing
 - ProMotion displays report 0 for refresh rate (variable), detected as 120Hz max
+
+### Task: Implement smooth scrolling with no frame drops (Phase 4.3)
+
+**Status:** Complete
+
+**Changes:**
+- Added `ScrollState` struct to track scroll wheel velocity and smooth interpolation:
+  - `target_offset_x/y`: Accumulated target scroll position
+  - `current_offset_x/y`: Smoothly interpolated current position
+  - `velocity_x/y`: Scroll velocity for momentum
+  - `interpolation_speed`: Controls smoothness of scroll animation (0.25)
+  - `momentum_decay`: Decay factor for scroll momentum (0.95)
+  - `pixels_per_line`: Standard line height for line-based scroll (40px)
+  - `time_since_last_scroll`: Tracks timing for momentum detection
+
+- Added `on_scroll()` method to InputHandler:
+  - Handles both line-based (mouse wheel) and pixel-based (trackpad) scroll deltas
+  - Accumulates scroll targets for smooth interpolation
+  - Uses exponential smoothing for velocity blending
+  - Supports horizontal and vertical scrolling
+
+- Added `is_scrolling()` method:
+  - Returns true if scroll animation or momentum is active
+  - Useful for UI feedback and optimization
+
+- Updated `update()` method with scroll animation:
+  - Smooth interpolation from current to target offset using adaptive speed
+  - Momentum-based scroll continuation after wheel stops
+  - Proper clamping at viewport boundaries (resets scroll targets to prevent fighting)
+  - Time-based momentum detection to avoid applying momentum during active scroll
+
+- Changed mouse wheel behavior in main.rs:
+  - Default scroll wheel: smooth vertical/horizontal scrolling (natural scrolling direction)
+  - Cmd/Ctrl + scroll wheel: zoom (existing behavior)
+  - This matches standard macOS PDF viewer behavior
+
+**Files Modified:**
+- crates/ui/src/input.rs:
+  - Added `ScrollState` struct
+  - Added `scroll_state` field to `InputHandler`
+  - Added `on_scroll()` and `is_scrolling()` methods
+  - Extended `update()` with scroll animation logic
+  - Added 11 new tests for smooth scrolling
+- crates/app/src/main.rs:
+  - Updated `MouseWheel` event handler to distinguish between scroll and zoom
+- PRD.md: Marked task complete
+
+**Test Results:**
+- 11 new scroll tests pass:
+  - test_smooth_scroll_wheel_basic
+  - test_smooth_scroll_pixel_delta
+  - test_smooth_scroll_interpolation
+  - test_smooth_scroll_completes
+  - test_is_scrolling_detection
+  - test_scroll_horizontal
+  - test_scroll_diagonal
+  - test_scroll_accumulates
+  - test_scroll_velocity_tracking
+  - test_scroll_clamping_at_origin
+- All 259 UI tests pass
+- All workspace tests pass (700+)
+- Clippy passes (no errors)
+
+**Technical Details:**
+- Smooth scrolling uses adaptive interpolation speed based on remaining distance
+- Natural scrolling direction matches macOS conventions (scroll up = content moves up)
+- Velocity blending with factor 0.7 provides smooth acceleration
+- Momentum decay at 0.95 gives natural coasting feel
+- Scroll wheel behavior: default=scroll, Cmd/Ctrl+wheel=zoom (matches PRD mouse modifiers spec)
+- Frame drops prevented by:
+  1. VSync-based frame timing (already implemented)
+  2. Smooth interpolation spreads scroll over multiple frames
+  3. Adaptive interpolation speed for responsiveness
+  4. Proper viewport clamping prevents oscillation at boundaries

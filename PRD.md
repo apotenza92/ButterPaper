@@ -381,7 +381,7 @@ Wire up existing measurement system.
 - [x] Dark mode support
 - [x] Retina display support (ProMotion 120Hz)
 - [x] Target: 120fps on ProMotion displays, 60fps minimum
-- [ ] Smooth scrolling with no frame drops
+- [x] Smooth scrolling with no frame drops
 - [ ] Proper error messages
 
 ---
