@@ -69,8 +69,8 @@ All unit tests now pass after fixing:
 - [x] Debug why texture blit doesn't show content (fixed: set MTLStorageMode::Managed for CPU-writable textures)
 - [x] Verify RGBA→BGRA conversion is correct (verified: conversion is correct, issue was storage mode)
 - [x] Add debug overlay showing texture dimensions
-- [ ] Test with multiple PDF files
-- [ ] **Terminal test:** `cargo run --release -- test.pdf 2>&1 | grep "SUCCESS\|FAILED"`
+- [x] Test with multiple PDF files (added `--test-load` flag and `scripts/test-multiple-pdfs.sh`)
+- [x] **Terminal test:** `cargo run --release -- --test-load test.pdf` outputs `LOAD: OK pages=X time=Xms`
 
 ### Phase 1.2: Page Info Overlay
 - [x] Show "Page X of Y" in bottom-right corner
@@ -416,9 +416,10 @@ Note: Screenshot-based visual testing requires Screen Recording permission (manu
 Each feature should have CLI test mode:
 
 ```bash
-# Test PDF loading
+# Test PDF loading ✅ IMPLEMENTED
 cargo run --release -- --test-load file.pdf
 # Expected output: "LOAD: OK pages=10 time=50ms"
+# Also available: scripts/test-multiple-pdfs.sh for batch testing
 
 # Test page rendering
 cargo run --release -- --test-render file.pdf --page 1

@@ -7,6 +7,9 @@ repository.workspace = true
 
 [dependencies]
 pdf-editor-ui = { path = "../ui" }
+pdf-editor-core = { path = "../core" }
+pdf-editor-render = { path = "../render" }
+rfd = "0.15"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 winit = "0.30"
@@ -15,3 +18,14 @@ metal = "0.29"
 cocoa = "0.26"
 objc = "0.2"
 core-graphics-types = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[package.metadata.bundle]
+name = "PDF Editor"
+identifier = "com.apotenza92.pdf-editor"
+icon = ["icons/icon.icns"]
+category = "public.app-category.productivity"
+short_description = "A fast, GPU-rendered PDF editor"
+copyright = "Copyright © 2025"

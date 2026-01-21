@@ -9905,3 +9905,65 @@ Added `texture_desc.set_storage_mode(metal::MTLStorageMode::Managed)` to all tex
 - All 498 tests pass (1 new documentation test)
 - Clippy linting passes with no warnings
 - Build succeeds in release mode
+
+
+### Task: Test with multiple PDF files (Phase 1.1)
+
+**Status:** Complete
+
+**Problem:**
+The PRD required implementing automated terminal tests for PDF loading with multiple files. The existing test infrastructure only tested with a single sample PDF.
+
+**Solution:**
+Implemented `--test-load` CLI flag that:
+1. Loads a PDF file without starting the GUI
+2. Outputs structured test result: `LOAD: OK pages=X time=Xms` or `LOAD: FAILED error=...`
+3. Exits immediately with appropriate exit code (0=success, 1=failure)
+
+Also created `scripts/test-multiple-pdfs.sh` for batch testing multiple PDF files.
+
+**Files Modified:**
+- `crates/app/src/main.rs`:
+  - Added `run_test_load()` function for headless PDF loading
+  - Added `--test-load` CLI argument parsing
+  - Added `test_load_tests` module with 4 unit tests
+- `crates/app/Cargo.toml`:
+  - Added `tempfile = "3"` as dev-dependency for tests
+- `scripts/test-multiple-pdfs.sh`:
+  - New script for testing PDF loading with multiple files
+  - Downloads sample PDFs, creates minimal test PDF
+  - Uses `--test-load` flag for structured output
+- `PRD.md`:
+  - Marked "Test with multiple PDF files" as complete
+  - Marked "Terminal test" as complete with updated format
+  - Added "IMPLEMENTED" note to Automated Terminal Tests section
+
+**Tests Added:**
+- `test_run_test_load_nonexistent_file`: Verifies error handling for missing files
+- `test_run_test_load_invalid_pdf`: Verifies error handling for invalid PDF content
+- `test_run_test_load_valid_pdf_or_pdfium_missing`: Tests valid PDF handling (or graceful failure if PDFium unavailable)
+- `test_run_test_load_output_format`: Verifies output format is correct
+
+**Testing:**
+- All 502 tests pass (4 new tests in main.rs)
+- Clippy linting passes with no warnings
+
+**Usage:**
+```bash
+# Test single PDF
+cargo run --release -- --test-load test.pdf
+# Output: LOAD: OK pages=5 time=42ms
+
+# Test multiple PDFs
+./scripts/test-multiple-pdfs.sh
+# Output: Tests each PDF in /tmp/pdf-editor-test-pdfs/ directory
+
+# Combine with grep for CI/CD
+cargo run --release -- --test-load test.pdf 2>&1 | grep "LOAD:"
+```
+
+**Architecture Notes:**
+- The `--test-load` flag runs before GUI initialization, avoiding window creation
+- Uses same `PdfDocument::open()` as the main app for consistent behavior
+- Timing includes full PDF parsing (page count extraction)
+- Exit codes follow Unix convention: 0 for success, 1 for failure
