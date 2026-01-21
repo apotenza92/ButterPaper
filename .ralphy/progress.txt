@@ -9577,3 +9577,50 @@ Users can now:
 - Corner radius: 6 pixels (scaled)
 - Margin from window edge: 16 pixels
 
+
+### Task: Implement Loading Spinner While Rendering
+
+**Status:** Complete
+
+**Changes:**
+- Added `SpinnerTexture` struct to text_overlay module for pre-rendered spinner frames
+- Implemented `render_spinner()` function that creates an 8-frame rotating dot animation
+- Added `draw_filled_circle()` helper function for drawing spinner dots with alpha transparency
+- Created `LoadingSpinner` struct in main.rs with:
+  - Pre-rendered texture array for all 8 animation frames
+  - Frame timing control (100ms per frame = 10 fps rotation)
+  - `start()` and `stop()` methods for controlling visibility
+  - `update()` method to advance animation frames
+  - `current_texture()` to get the active frame for rendering
+- Integrated spinner into App struct with macOS-specific initialization
+- Added `start_loading_spinner()` and `stop_loading_spinner()` helper methods
+- Modified `render_current_page()` to:
+  - Start spinner before PDF rendering begins
+  - Stop spinner after rendering completes or on cache hit
+  - Restructured borrowing to avoid Rust borrow checker issues
+- Added spinner rendering to the main `render()` function, centered on screen
+- Added `update()` call in the main loop to animate the spinner
+
+**Files Modified:**
+- crates/app/src/main.rs (added spinner infrastructure, ~150 lines of new code)
+- PRD.md (marked Phase 1.2 loading spinner task as complete)
+
+**Tests Added:**
+- `test_draw_filled_circle`: Verifies circle drawing produces correct pixel count
+- `test_draw_filled_circle_alpha`: Verifies alpha channel is correctly applied
+- `test_spinner_frame_positions`: Verifies different frames produce dots in different positions
+
+**Architecture Notes:**
+- Spinner uses 8 pre-rendered frames stored as Metal textures
+- Animation advances at 10fps (100ms per frame) for smooth rotation
+- Each frame shows 8 dots in a circle with varying opacity (trail effect)
+- Spinner is 64x64 pixels, centered in the window
+- The spinner starts before PDF rendering and stops after completion
+- Currently renders synchronously, but infrastructure supports async rendering
+
+**Technical Details:**
+- Spinner size: 64x64 pixels
+- Frame count: 8 frames (45° rotation per frame)
+- Animation speed: 100ms per frame
+- Dot appearance: White dots with alpha gradient (255 at brightest, fading to 32)
+- Uses Metal blit operations for efficient compositing

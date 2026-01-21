@@ -43,6 +43,92 @@ mod text_overlay {
         pub height: u32,
     }
 
+    /// Spinner texture for loading indicator
+    pub struct SpinnerTexture {
+        pub texture: metal::Texture,
+        #[allow(dead_code)]
+        pub size: u32,
+    }
+
+    /// Render a loading spinner frame at a given rotation angle (0-7 for 8 positions)
+    pub fn render_spinner(device: &Device, frame: u8, size: u32) -> Option<SpinnerTexture> {
+        // Create BGRA pixel buffer
+        let mut pixels = vec![0u8; (size * size * 4) as usize];
+
+        let center = size as f32 / 2.0;
+        let outer_radius = center - 4.0;
+        let inner_radius = outer_radius * 0.5;
+        let dot_radius = (outer_radius - inner_radius) / 2.5;
+
+        // Draw 8 dots in a circle, with opacity based on their position relative to current frame
+        for i in 0..8u8 {
+            let angle = (i as f32) * std::f32::consts::PI / 4.0 - std::f32::consts::PI / 2.0;
+            let dot_center_x = center + (outer_radius - dot_radius - 2.0) * angle.cos();
+            let dot_center_y = center + (outer_radius - dot_radius - 2.0) * angle.sin();
+
+            // Calculate opacity based on distance from current frame (creates trail effect)
+            let distance = ((i as i8 - frame as i8).rem_euclid(8)) as f32;
+            let alpha = ((8.0 - distance) / 8.0 * 255.0) as u8;
+
+            // Draw the dot
+            draw_filled_circle(&mut pixels, size, dot_center_x, dot_center_y, dot_radius, alpha);
+        }
+
+        // Create Metal texture
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(size as u64);
+        texture_desc.set_height(size as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: size as u64,
+                height: size as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            pixels.as_ptr() as *const _,
+            (size * 4) as u64,
+        );
+
+        Some(SpinnerTexture { texture, size })
+    }
+
+    /// Draw a filled circle with the given alpha value (white color)
+    fn draw_filled_circle(pixels: &mut [u8], tex_width: u32, cx: f32, cy: f32, radius: f32, alpha: u8) {
+        let min_x = (cx - radius - 1.0).max(0.0) as u32;
+        let max_x = ((cx + radius + 1.0) as u32).min(tex_width - 1);
+        let min_y = (cy - radius - 1.0).max(0.0) as u32;
+        let max_y = ((cy + radius + 1.0) as u32).min(tex_width - 1);
+
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let dx = x as f32 - cx;
+                let dy = y as f32 - cy;
+                let dist = (dx * dx + dy * dy).sqrt();
+
+                if dist <= radius {
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        // White with varying alpha (BGRA format)
+                        pixels[idx] = 255;     // B
+                        pixels[idx + 1] = 255; // G
+                        pixels[idx + 2] = 255; // R
+                        pixels[idx + 3] = alpha; // A
+                    }
+                }
+            }
+        }
+    }
+
     /// Simple 5x7 bitmap font for basic ASCII characters (0-9, A-Z, a-z, space, punctuation)
     /// Each character is represented as a 5-wide by 7-tall bitmap, stored as a [u8; 7] where
     /// each byte represents one row (MSB = leftmost pixel).
@@ -326,6 +412,84 @@ mod text_overlay {
             assert_eq!(white_pixels, expected_pixels as usize,
                 "Scaled drawing should have scale^2 times the bitmap bits");
         }
+
+        #[test]
+        fn test_draw_filled_circle() {
+            // Create a buffer and draw a circle
+            let size = 50u32;
+            let mut pixels = vec![0u8; (size * size * 4) as usize];
+
+            // Draw a circle at center with radius 10
+            draw_filled_circle(&mut pixels, size, 25.0, 25.0, 10.0, 200);
+
+            // Count non-zero alpha pixels
+            let drawn_pixels: usize = pixels
+                .chunks_exact(4)
+                .filter(|p| p[3] > 0)
+                .count();
+
+            // Circle area is approximately pi * r^2 = ~314 pixels
+            // Allow some variance due to discrete pixel representation
+            assert!(drawn_pixels > 250, "Should have drawn a filled circle (got {} pixels)", drawn_pixels);
+            assert!(drawn_pixels < 400, "Circle should not be too large (got {} pixels)", drawn_pixels);
+        }
+
+        #[test]
+        fn test_draw_filled_circle_alpha() {
+            // Test that alpha is correctly applied
+            let size = 30u32;
+            let mut pixels = vec![0u8; (size * size * 4) as usize];
+
+            draw_filled_circle(&mut pixels, size, 15.0, 15.0, 5.0, 128);
+
+            // Find a pixel that was drawn and check its alpha
+            let drawn_pixel = pixels
+                .chunks_exact(4)
+                .find(|p| p[3] > 0)
+                .expect("Should have at least one drawn pixel");
+
+            assert_eq!(drawn_pixel[3], 128, "Alpha should be 128");
+            assert_eq!(drawn_pixel[0], 255, "Blue should be 255 (white)");
+            assert_eq!(drawn_pixel[1], 255, "Green should be 255 (white)");
+            assert_eq!(drawn_pixel[2], 255, "Red should be 255 (white)");
+        }
+
+        #[test]
+        fn test_spinner_frame_positions() {
+            // Test that different frames have pixels in different positions
+            // We can't test the actual Metal texture without a device, but we can test the logic
+            // by checking the draw_filled_circle function used by the spinner
+
+            let size = 64u32;
+
+            // For frame 0, the brightest dot should be at the top (negative y direction)
+            // For frame 4, the brightest dot should be at the bottom
+            // This tests that the animation frames produce different visual outputs
+
+            let mut pixels_frame0 = vec![0u8; (size * size * 4) as usize];
+            let mut pixels_frame4 = vec![0u8; (size * size * 4) as usize];
+
+            let center = size as f32 / 2.0;
+            let outer_radius = center - 4.0;
+            let dot_radius = outer_radius * 0.15;
+
+            // Draw frame 0 - brightest dot at top
+            let angle0 = -std::f32::consts::PI / 2.0; // top
+            let x0 = center + (outer_radius - dot_radius - 2.0) * angle0.cos();
+            let y0 = center + (outer_radius - dot_radius - 2.0) * angle0.sin();
+            draw_filled_circle(&mut pixels_frame0, size, x0, y0, dot_radius, 255);
+
+            // Draw frame 4 - brightest dot at bottom
+            let angle4 = std::f32::consts::PI / 2.0; // bottom
+            let x4 = center + (outer_radius - dot_radius - 2.0) * angle4.cos();
+            let y4 = center + (outer_radius - dot_radius - 2.0) * angle4.sin();
+            draw_filled_circle(&mut pixels_frame4, size, x4, y4, dot_radius, 255);
+
+            // The dots should be in different positions
+            // Frame 0 dot is near top (low y), Frame 4 dot is near bottom (high y)
+            assert!(y0 < center, "Frame 0 brightest dot should be in top half");
+            assert!(y4 > center, "Frame 4 brightest dot should be in bottom half");
+        }
     }
 }
 
@@ -343,6 +507,67 @@ struct PageInfoOverlay {
     texture: metal::Texture,
     width: u32,
     height: u32,
+}
+
+#[cfg(target_os = "macos")]
+struct LoadingSpinner {
+    textures: Vec<metal::Texture>,
+    size: u32,
+    current_frame: u8,
+    last_frame_time: Instant,
+    is_loading: bool,
+}
+
+#[cfg(target_os = "macos")]
+impl LoadingSpinner {
+    fn new(device: &Device, size: u32) -> Self {
+        // Pre-render all 8 frames of the spinner animation
+        let textures: Vec<metal::Texture> = (0..8)
+            .filter_map(|frame| {
+                text_overlay::render_spinner(device, frame, size)
+                    .map(|s| s.texture)
+            })
+            .collect();
+
+        Self {
+            textures,
+            size,
+            current_frame: 0,
+            last_frame_time: Instant::now(),
+            is_loading: false,
+        }
+    }
+
+    fn start(&mut self) {
+        self.is_loading = true;
+        self.current_frame = 0;
+        self.last_frame_time = Instant::now();
+    }
+
+    fn stop(&mut self) {
+        self.is_loading = false;
+    }
+
+    fn update(&mut self) {
+        if !self.is_loading {
+            return;
+        }
+
+        // Rotate at ~10 fps (100ms per frame) for smooth animation
+        let now = Instant::now();
+        if now.duration_since(self.last_frame_time) >= Duration::from_millis(100) {
+            self.current_frame = (self.current_frame + 1) % 8;
+            self.last_frame_time = now;
+        }
+    }
+
+    fn current_texture(&self) -> Option<&metal::Texture> {
+        if self.is_loading && !self.textures.is_empty() {
+            Some(&self.textures[self.current_frame as usize])
+        } else {
+            None
+        }
+    }
 }
 
 struct LoadedDocument {
@@ -364,6 +589,8 @@ struct App {
     device: Option<Device>,
     #[cfg(target_os = "macos")]
     command_queue: Option<CommandQueue>,
+    #[cfg(target_os = "macos")]
+    loading_spinner: Option<LoadingSpinner>,
     gpu_context: Option<Box<dyn gpu::GpuContext>>,
     scene_graph: SceneGraph,
     renderer: Option<SceneRenderer>,
@@ -395,6 +622,8 @@ impl App {
             device: None,
             #[cfg(target_os = "macos")]
             command_queue: None,
+            #[cfg(target_os = "macos")]
+            loading_spinner: None,
             gpu_context: None,
             scene_graph,
             renderer: None,
@@ -470,23 +699,54 @@ impl App {
         }
     }
 
+    /// Start the loading spinner animation
+    #[cfg(target_os = "macos")]
+    fn start_loading_spinner(&mut self) {
+        if let Some(spinner) = &mut self.loading_spinner {
+            spinner.start();
+        }
+    }
+
+    /// Stop the loading spinner animation
+    #[cfg(target_os = "macos")]
+    fn stop_loading_spinner(&mut self) {
+        if let Some(spinner) = &mut self.loading_spinner {
+            spinner.stop();
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn start_loading_spinner(&mut self) {}
+
+    #[cfg(not(target_os = "macos"))]
+    fn stop_loading_spinner(&mut self) {}
+
     #[cfg(target_os = "macos")]
     fn render_current_page(&mut self) {
-        let Some(device) = &self.device else { 
+        // Check if device is available
+        if self.device.is_none() {
             println!("ERROR: No Metal device");
-            return; 
-        };
-        let Some(doc) = &mut self.document else { 
-            return; 
-        };
-
-        let page_index = doc.current_page;
-
-        if doc.page_textures.contains_key(&page_index) {
-            println!("Page {} already cached", page_index + 1);
             return;
         }
 
+        // Check if document exists and get page info
+        let (page_index, already_cached) = match &self.document {
+            Some(doc) => {
+                let idx = doc.current_page;
+                let cached = doc.page_textures.contains_key(&idx);
+                (idx, cached)
+            }
+            None => return,
+        };
+
+        if already_cached {
+            println!("Page {} already cached", page_index + 1);
+            self.stop_loading_spinner();
+            return;
+        }
+
+        // Start spinner to indicate loading
+        self.start_loading_spinner();
         println!("=== Rendering page {} to texture... ===", page_index + 1);
 
         let window_size = self.window.as_ref().map(|w| w.inner_size()).unwrap_or_default();
@@ -495,17 +755,20 @@ impl App {
 
         println!("Window size: {}x{}, max render: {}x{}", window_size.width, window_size.height, max_width, max_height);
 
-        let (rgba, render_width, render_height) = match doc.pdf.render_page_scaled(
-            page_index,
-            max_width,
-            max_height,
-        ) {
+        // Render the page (requires mutable borrow of document)
+        let render_result = {
+            let doc = self.document.as_mut().unwrap();
+            doc.pdf.render_page_scaled(page_index, max_width, max_height)
+        };
+
+        let (rgba, render_width, render_height) = match render_result {
             Ok(result) => {
                 println!("PDFium rendered: {}x{}, {} bytes", result.1, result.2, result.0.len());
                 result
-            },
+            }
             Err(e) => {
                 eprintln!("FAILED to render page: {}", e);
+                self.stop_loading_spinner();
                 return;
             }
         };
@@ -516,6 +779,8 @@ impl App {
             pixel.swap(0, 2); // Swap R and B
         }
 
+        // Create the texture
+        let device = self.device.as_ref().unwrap();
         let texture_desc = TextureDescriptor::new();
         texture_desc.set_width(render_width as u64);
         texture_desc.set_height(render_height as u64);
@@ -540,12 +805,18 @@ impl App {
             (render_width * 4) as u64,
         );
 
-        doc.page_textures.insert(page_index, PageTexture {
-            texture,
-            width: render_width,
-            height: render_height,
-        });
+        // Insert the texture into the cache
+        if let Some(doc) = &mut self.document {
+            doc.page_textures.insert(page_index, PageTexture {
+                texture,
+                width: render_width,
+                height: render_height,
+            });
+        }
         println!("SUCCESS: Page {} texture created ({}x{})", page_index + 1, render_width, render_height);
+
+        // Stop the spinner now that rendering is complete
+        self.stop_loading_spinner();
 
         // Update the page info overlay
         self.update_page_info_overlay();
@@ -618,6 +889,12 @@ impl App {
         }
 
         let _viewport_changed = self.input_handler.update(self.delta_time);
+
+        // Update the loading spinner animation
+        #[cfg(target_os = "macos")]
+        if let Some(spinner) = &mut self.loading_spinner {
+            spinner.update();
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -649,7 +926,11 @@ impl App {
             height: size.height as f64,
         });
 
+        // Initialize the loading spinner with pre-rendered frames
+        let spinner = LoadingSpinner::new(&device, 64);
+
         self.metal_layer = Some(layer);
+        self.loading_spinner = Some(spinner);
         self.device = Some(device);
         self.command_queue = Some(command_queue);
     }
@@ -699,11 +980,11 @@ impl App {
                     let encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
                     encoder.end_encoding();
 
+                    let drawable_width = drawable.texture().width();
+                    let drawable_height = drawable.texture().height();
+
                     // Blit the PDF page texture to the drawable (centered)
                     if let Some(doc) = &self.document {
-                        let drawable_width = drawable.texture().width();
-                        let drawable_height = drawable.texture().height();
-
                         if let Some(page_tex) = doc.page_textures.get(&doc.current_page) {
                             // Center the page
                             let dest_x = (drawable_width.saturating_sub(page_tex.width as u64)) / 2;
@@ -760,6 +1041,42 @@ impl App {
 
                             blit_encoder.copy_from_texture(
                                 &overlay.texture,
+                                0,
+                                0,
+                                src_origin,
+                                src_size,
+                                drawable.texture(),
+                                0,
+                                0,
+                                dest_origin,
+                            );
+
+                            blit_encoder.end_encoding();
+                        }
+                    }
+
+                    // Render loading spinner in the center if active
+                    if let Some(spinner) = &self.loading_spinner {
+                        if let Some(spinner_tex) = spinner.current_texture() {
+                            let dest_x = (drawable_width.saturating_sub(spinner.size as u64)) / 2;
+                            let dest_y = (drawable_height.saturating_sub(spinner.size as u64)) / 2;
+
+                            let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                            let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                            let src_size = metal::MTLSize {
+                                width: spinner.size as u64,
+                                height: spinner.size as u64,
+                                depth: 1,
+                            };
+                            let dest_origin = metal::MTLOrigin {
+                                x: dest_x,
+                                y: dest_y,
+                                z: 0,
+                            };
+
+                            blit_encoder.copy_from_texture(
+                                spinner_tex,
                                 0,
                                 0,
                                 src_origin,

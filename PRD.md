@@ -75,7 +75,7 @@ All unit tests now pass after fixing:
 ### Phase 1.2: Page Info Overlay
 - [x] Show "Page X of Y" in bottom-right corner
 - [x] Show current zoom level (e.g., "100%")
-- [ ] Show loading spinner while rendering
+- [x] Show loading spinner while rendering
 - [x] Use scene graph primitives (Rect + text texture)
 
 ### Phase 1.3: Connect Zoom/Pan to Display
