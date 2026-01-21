@@ -86,7 +86,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Implement smooth pan and zoom
 - [x] Add discrete zoom levels for tile rendering
 - [x] Build thumbnail strip/page navigator
-- [ ] Implement page rotation support
+- [x] Implement page rotation support
 
 ### Phase 7: Annotation Engine
 - [ ] Design annotation data model (immutable geometry + editable metadata)
