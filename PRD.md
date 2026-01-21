@@ -269,7 +269,7 @@ GPU-rendered toolbar at top of window.
 - [x] Add icon rendering (use simple geometric shapes initially)
 - [x] **Navigation section:**
   - [x] Previous page button (◀)
-  - [ ] Page number input field
+  - [x] Page number input field
   - [x] Next page button (▶)
 - [ ] **Zoom section:**
   - [ ] Zoom out button (-)

@@ -9,6 +9,11 @@ use std::sync::Arc;
 /// Height of the toolbar in pixels
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 
+/// Width of the page number input field
+const PAGE_INPUT_WIDTH: f32 = 70.0;
+/// Height of the page number input field
+const PAGE_INPUT_HEIGHT: f32 = 24.0;
+
 /// Configuration for toolbar appearance
 #[derive(Debug, Clone)]
 pub struct ToolbarConfig {
@@ -294,6 +299,27 @@ pub enum ButtonState {
     Active,
 }
 
+/// Page number display state
+#[derive(Debug, Clone)]
+pub struct PageNumberDisplay {
+    /// Current page number (1-indexed)
+    pub current_page: u16,
+    /// Total number of pages
+    pub total_pages: u16,
+    /// Whether the input field is focused/active
+    pub is_focused: bool,
+}
+
+impl Default for PageNumberDisplay {
+    fn default() -> Self {
+        Self {
+            current_page: 1,
+            total_pages: 1,
+            is_focused: false,
+        }
+    }
+}
+
 /// Toolbar component that displays navigation, zoom, and tool buttons
 pub struct Toolbar {
     /// Configuration for layout and appearance
@@ -313,6 +339,12 @@ pub struct Toolbar {
 
     /// Currently selected tool
     selected_tool: Option<ToolbarButton>,
+
+    /// Page number display state
+    page_display: PageNumberDisplay,
+
+    /// Rectangle bounds for the page input field (for hit testing)
+    page_input_rect: Option<Rect>,
 }
 
 impl Toolbar {
@@ -329,6 +361,8 @@ impl Toolbar {
             node_id,
             button_states: Vec::new(),
             selected_tool: Some(ToolbarButton::SelectTool),
+            page_display: PageNumberDisplay::default(),
+            page_input_rect: None,
         };
 
         toolbar.rebuild();
@@ -347,6 +381,8 @@ impl Toolbar {
             node_id,
             button_states: Vec::new(),
             selected_tool: Some(ToolbarButton::SelectTool),
+            page_display: PageNumberDisplay::default(),
+            page_input_rect: None,
         };
 
         toolbar.rebuild();
@@ -404,6 +440,45 @@ impl Toolbar {
     /// Get the selected tool
     pub fn selected_tool(&self) -> Option<ToolbarButton> {
         self.selected_tool
+    }
+
+    /// Set the current page number (1-indexed)
+    pub fn set_current_page(&mut self, page: u16) {
+        if self.page_display.current_page != page {
+            self.page_display.current_page = page;
+            self.rebuild();
+        }
+    }
+
+    /// Set the total number of pages
+    pub fn set_total_pages(&mut self, total: u16) {
+        if self.page_display.total_pages != total {
+            self.page_display.total_pages = total;
+            self.rebuild();
+        }
+    }
+
+    /// Set both current page and total pages
+    pub fn set_page_info(&mut self, current: u16, total: u16) {
+        if self.page_display.current_page != current || self.page_display.total_pages != total {
+            self.page_display.current_page = current;
+            self.page_display.total_pages = total;
+            self.rebuild();
+        }
+    }
+
+    /// Get the current page display state
+    pub fn page_display(&self) -> &PageNumberDisplay {
+        &self.page_display
+    }
+
+    /// Check if a point is within the page input field
+    pub fn hit_test_page_input(&self, x: f32, y: f32) -> bool {
+        if let Some(rect) = &self.page_input_rect {
+            x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
+        } else {
+            false
+        }
     }
 
     /// Set button hover state
@@ -504,6 +579,10 @@ impl Toolbar {
 
         // Navigation section
         x = self.add_button(&mut new_node, ToolbarButton::PrevPage, x, button_y);
+
+        // Page number input field
+        x = self.add_page_input(&mut new_node, x, button_y);
+
         x = self.add_button(&mut new_node, ToolbarButton::NextPage, x, button_y);
 
         // Separator
@@ -537,6 +616,121 @@ impl Toolbar {
         let _ = self.add_button(&mut new_node, ToolbarButton::MeasureTool, x, button_y);
 
         self.scene_node = Arc::new(new_node);
+    }
+
+    /// Add the page number input field to the scene node and return the next x position
+    fn add_page_input(&mut self, node: &mut SceneNode, x: f32, _button_y: f32) -> f32 {
+        let input_y = (TOOLBAR_HEIGHT - PAGE_INPUT_HEIGHT) / 2.0;
+        let rect = Rect::new(x, input_y, PAGE_INPUT_WIDTH, PAGE_INPUT_HEIGHT);
+
+        // Store the rect for hit testing
+        self.page_input_rect = Some(rect);
+
+        // Background (darker than buttons, like an input field)
+        let bg_color = Color::rgba(0.15, 0.15, 0.15, 1.0);
+        node.add_primitive(Primitive::Rectangle {
+            rect,
+            color: bg_color,
+        });
+
+        // Border
+        let border_color = Color::rgba(0.35, 0.35, 0.35, 1.0);
+        // Top border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(x, input_y, PAGE_INPUT_WIDTH, 1.0),
+            color: border_color,
+        });
+        // Bottom border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(x, input_y + PAGE_INPUT_HEIGHT - 1.0, PAGE_INPUT_WIDTH, 1.0),
+            color: border_color,
+        });
+        // Left border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(x, input_y, 1.0, PAGE_INPUT_HEIGHT),
+            color: border_color,
+        });
+        // Right border
+        node.add_primitive(Primitive::Rectangle {
+            rect: Rect::new(x + PAGE_INPUT_WIDTH - 1.0, input_y, 1.0, PAGE_INPUT_HEIGHT),
+            color: border_color,
+        });
+
+        // Render the page number text "X / Y" using simple rectangles for each digit
+        // This uses a basic approach - for actual text, a texture-based approach would be better
+        let text = format!(
+            "{} / {}",
+            self.page_display.current_page, self.page_display.total_pages
+        );
+        Self::render_page_text(node, &text, x, input_y);
+
+        x + PAGE_INPUT_WIDTH + self.config.button_spacing
+    }
+
+    /// Render page number text using simple primitives
+    /// This is a simplified text renderer - for production, use texture-based text
+    fn render_page_text(node: &mut SceneNode, text: &str, field_x: f32, field_y: f32) {
+        let text_color = Color::rgba(0.85, 0.85, 0.85, 1.0);
+
+        // Character dimensions (simplified 3x5 font at scale 2)
+        let char_width = 6.0_f32;
+        let char_height = 10.0_f32;
+        let char_spacing = 2.0_f32;
+
+        // Calculate total text width
+        let text_width = text.len() as f32 * (char_width + char_spacing) - char_spacing;
+
+        // Center the text in the input field
+        let start_x = field_x + (PAGE_INPUT_WIDTH - text_width) / 2.0;
+        let start_y = field_y + (PAGE_INPUT_HEIGHT - char_height) / 2.0;
+
+        let mut current_x = start_x;
+
+        for c in text.chars() {
+            let char_rect = Rect::new(current_x, start_y, char_width, char_height);
+            Self::render_char(node, c, char_rect, text_color);
+            current_x += char_width + char_spacing;
+        }
+    }
+
+    /// Render a single character using primitives
+    fn render_char(node: &mut SceneNode, c: char, bounds: Rect, color: Color) {
+        // Simple 3x5 pixel representations of digits and symbols
+        // Scaled to fill the given bounds
+        let pixel_w = bounds.width / 3.0;
+        let pixel_h = bounds.height / 5.0;
+
+        // Get the pixel pattern for this character (3 wide x 5 tall)
+        // Each element is a row, with bits representing pixels
+        let pattern: [u8; 5] = match c {
+            '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+            '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+            '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+            '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+            '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+            '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+            '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+            '7' => [0b111, 0b001, 0b001, 0b001, 0b001],
+            '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+            '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+            '/' => [0b001, 0b001, 0b010, 0b100, 0b100],
+            ' ' => [0b000, 0b000, 0b000, 0b000, 0b000],
+            _ => [0b000, 0b000, 0b000, 0b000, 0b000],
+        };
+
+        for (row_idx, &row) in pattern.iter().enumerate() {
+            for col in 0..3 {
+                let bit = (row >> (2 - col)) & 1;
+                if bit == 1 {
+                    let px = bounds.x + col as f32 * pixel_w;
+                    let py = bounds.y + row_idx as f32 * pixel_h;
+                    node.add_primitive(Primitive::Rectangle {
+                        rect: Rect::new(px, py, pixel_w, pixel_h),
+                        color,
+                    });
+                }
+            }
+        }
     }
 
     /// Add a button to the scene node and return the next x position
@@ -758,5 +952,153 @@ mod tests {
         let toolbar2 = Toolbar::new(1200.0);
 
         assert_ne!(toolbar1.node_id(), toolbar2.node_id());
+    }
+
+    // Page number input field tests
+
+    #[test]
+    fn test_page_display_default() {
+        let display = PageNumberDisplay::default();
+        assert_eq!(display.current_page, 1);
+        assert_eq!(display.total_pages, 1);
+        assert!(!display.is_focused);
+    }
+
+    #[test]
+    fn test_toolbar_page_display_initial() {
+        let toolbar = Toolbar::new(1200.0);
+        let display = toolbar.page_display();
+        assert_eq!(display.current_page, 1);
+        assert_eq!(display.total_pages, 1);
+    }
+
+    #[test]
+    fn test_toolbar_set_current_page() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        toolbar.set_current_page(5);
+        assert_eq!(toolbar.page_display().current_page, 5);
+
+        toolbar.set_current_page(10);
+        assert_eq!(toolbar.page_display().current_page, 10);
+    }
+
+    #[test]
+    fn test_toolbar_set_total_pages() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        toolbar.set_total_pages(100);
+        assert_eq!(toolbar.page_display().total_pages, 100);
+
+        toolbar.set_total_pages(50);
+        assert_eq!(toolbar.page_display().total_pages, 50);
+    }
+
+    #[test]
+    fn test_toolbar_set_page_info() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        toolbar.set_page_info(7, 42);
+        assert_eq!(toolbar.page_display().current_page, 7);
+        assert_eq!(toolbar.page_display().total_pages, 42);
+    }
+
+    #[test]
+    fn test_toolbar_page_input_rect_exists() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // The page input rect should be set after construction
+        assert!(toolbar.page_input_rect.is_some());
+    }
+
+    #[test]
+    fn test_toolbar_hit_test_page_input() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // Get the page input rect position
+        let rect = toolbar.page_input_rect.as_ref().unwrap();
+        let center_x = rect.x + rect.width / 2.0;
+        let center_y = rect.y + rect.height / 2.0;
+
+        // Test hit in center of page input
+        assert!(toolbar.hit_test_page_input(center_x, center_y));
+
+        // Test miss outside the toolbar
+        assert!(!toolbar.hit_test_page_input(1000.0, 100.0));
+    }
+
+    #[test]
+    fn test_toolbar_page_input_not_hit_when_outside() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // Test points that should not hit the page input
+        assert!(!toolbar.hit_test_page_input(0.0, 0.0));
+        assert!(!toolbar.hit_test_page_input(500.0, 500.0));
+    }
+
+    #[test]
+    fn test_page_number_display_clone() {
+        let display = PageNumberDisplay {
+            current_page: 5,
+            total_pages: 10,
+            is_focused: true,
+        };
+        let cloned = display.clone();
+
+        assert_eq!(cloned.current_page, 5);
+        assert_eq!(cloned.total_pages, 10);
+        assert!(cloned.is_focused);
+    }
+
+    #[test]
+    fn test_toolbar_scene_has_page_input_primitives() {
+        let mut toolbar = Toolbar::new(1200.0);
+        toolbar.set_page_info(3, 15);
+
+        // The scene node should have primitives including those for the page input
+        let primitives = toolbar.scene_node().primitives();
+
+        // Count rectangles - should be many since we render digits as rectangles
+        let rect_count = primitives
+            .iter()
+            .filter(|p| matches!(p, Primitive::Rectangle { .. }))
+            .count();
+
+        // Should have many rectangles: background, borders, buttons, and digit pixels
+        assert!(
+            rect_count > 20,
+            "Should have many rectangles including page input (got {})",
+            rect_count
+        );
+    }
+
+    #[test]
+    fn test_toolbar_page_display_no_rebuild_same_values() {
+        let mut toolbar = Toolbar::new(1200.0);
+        toolbar.set_page_info(5, 10);
+
+        // Get the scene node pointer
+        let node_ptr = Arc::as_ptr(toolbar.scene_node());
+
+        // Set the same values - should not rebuild
+        toolbar.set_page_info(5, 10);
+
+        // Scene node should be the same (no rebuild occurred)
+        assert_eq!(Arc::as_ptr(toolbar.scene_node()), node_ptr);
+    }
+
+    #[test]
+    fn test_toolbar_page_display_rebuild_on_change() {
+        let mut toolbar = Toolbar::new(1200.0);
+        toolbar.set_page_info(5, 10);
+
+        // Get the scene node pointer
+        let node_ptr = Arc::as_ptr(toolbar.scene_node());
+
+        // Change values - should trigger rebuild
+        toolbar.set_page_info(6, 10);
+
+        // Scene node should be different (rebuild occurred)
+        assert_ne!(Arc::as_ptr(toolbar.scene_node()), node_ptr);
     }
 }

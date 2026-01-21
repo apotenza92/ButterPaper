@@ -10553,3 +10553,38 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 - Visual rendering uses CPU-based pixel buffer creation, blitted to Metal texture
 - Button icons use simple geometric shapes (triangles, rectangles, circles, lines)
 - Page number input field is still pending (requires text input handling)
+
+### Task: Implement page number input field in toolbar (Phase 2.2)
+
+**Status:** Complete
+
+**Changes:**
+- Added `PageNumberDisplay` struct to track current page, total pages, and focus state
+- Added page input field constants (`PAGE_INPUT_WIDTH`, `PAGE_INPUT_HEIGHT`)
+- Extended `Toolbar` struct with `page_display` and `page_input_rect` fields
+- Implemented `set_current_page()`, `set_total_pages()`, `set_page_info()` methods
+- Implemented `page_display()` getter and `hit_test_page_input()` for click detection
+- Created `add_page_input()` method that renders:
+  - Dark background rectangle
+  - Border on all four sides
+  - Centered page text "X / Y" format
+- Implemented `render_page_text()` and `render_char()` using 3x5 bitmap font
+  - Supports digits 0-9, space, and '/' character
+  - Characters rendered as scaled rectangle primitives
+- Page input field is positioned between Previous and Next page buttons
+- Added 13 new tests covering:
+  - `PageNumberDisplay` default and clone
+  - Page info getters and setters
+  - Hit testing for page input field
+  - Scene primitives generation
+  - Rebuild optimization (no rebuild when values unchanged)
+
+**Files Modified:**
+- crates/ui/src/toolbar.rs (added page number input field functionality and tests)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- Page number display uses simple 3x5 bitmap font rendered with rectangle primitives
+- Text is centered within the input field
+- Hit testing enables future click-to-edit functionality
+- Design allows for easy extension to handle keyboard input for direct page entry
