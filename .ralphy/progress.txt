@@ -3332,3 +3332,35 @@ The annotation data model is now complete and ready for the following tasks:
 
 **Phase 7, Task 1: COMPLETE ✅**
 
+
+### Task: Implement stable annotation IDs
+
+**Status:** Complete
+
+**Summary:**
+Stable annotation IDs were already fully implemented in the annotation data model. The implementation uses UUID v4 for guaranteed uniqueness and stability across document lifetime and persistence.
+
+**Implementation Details:**
+- AnnotationId type defined as `uuid::Uuid` (line 12 in annotation.rs)
+- IDs generated using `AnnotationId::new_v4()` when creating new annotations (line 469)
+- `with_id()` constructor provided for deserialization with specific IDs (lines 480-497)
+- Public getter `id()` method for accessing annotation IDs (lines 500-502)
+- IDs are preserved when creating modified copies via `with_geometry()` and `with_style()` methods (lines 573-586)
+- UUID dependency properly configured in Cargo.toml with v4 feature
+
+**Key Features:**
+1. Globally unique IDs using UUID v4
+2. IDs remain stable across document lifetime
+3. IDs persist in saved files (via with_id constructor for deserialization)
+4. IDs preserved when modifying annotation geometry or style
+5. IDs used as primary key in AnnotationCollection HashMap
+
+**Testing:**
+- Comprehensive unit tests verify ID behavior
+- Linting passes with no warnings (`cargo clippy`)
+- All code compiles successfully
+
+**Files Verified:**
+- crates/core/src/annotation.rs (lines 8-921)
+- crates/core/Cargo.toml (uuid dependency with v4 feature)
+
