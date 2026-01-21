@@ -505,6 +505,238 @@ mod text_overlay {
     }
 }
 
+/// Selection highlight renderer for text selection overlays
+#[cfg(target_os = "macos")]
+mod selection_highlight {
+    use metal::{Device, MTLBlendFactor, MTLBlendOperation, MTLPixelFormat, MTLPrimitiveType, MTLVertexFormat, Buffer, RenderPipelineState};
+
+    /// Metal shader source for rendering colored rectangles
+    const SHADER_SOURCE: &str = r#"
+        #include <metal_stdlib>
+        using namespace metal;
+
+        struct VertexIn {
+            float2 position [[attribute(0)]];
+            float4 color [[attribute(1)]];
+        };
+
+        struct VertexOut {
+            float4 position [[position]];
+            float4 color;
+        };
+
+        vertex VertexOut vertex_main(VertexIn in [[stage_in]]) {
+            VertexOut out;
+            out.position = float4(in.position, 0.0, 1.0);
+            out.color = in.color;
+            return out;
+        }
+
+        fragment float4 fragment_main(VertexOut in [[stage_in]]) {
+            return in.color;
+        }
+    "#;
+
+    /// Vertex data for a colored rectangle
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Vertex {
+        pub position: [f32; 2],
+        pub color: [f32; 4],
+    }
+
+    /// Selection highlight renderer using Metal
+    pub struct SelectionHighlightRenderer {
+        pipeline_state: RenderPipelineState,
+        vertex_buffer: Buffer,
+        vertex_capacity: usize,
+    }
+
+    impl SelectionHighlightRenderer {
+        /// Create a new selection highlight renderer
+        pub fn new(device: &Device) -> Option<Self> {
+            // Compile shaders
+            let compile_options = metal::CompileOptions::new();
+            let library = device.new_library_with_source(SHADER_SOURCE, &compile_options).ok()?;
+
+            let vertex_function = library.get_function("vertex_main", None).ok()?;
+            let fragment_function = library.get_function("fragment_main", None).ok()?;
+
+            // Create vertex descriptor
+            let vertex_descriptor = metal::VertexDescriptor::new();
+
+            // Position attribute
+            let pos_attr = vertex_descriptor.attributes().object_at(0).unwrap();
+            pos_attr.set_format(MTLVertexFormat::Float2);
+            pos_attr.set_offset(0);
+            pos_attr.set_buffer_index(0);
+
+            // Color attribute
+            let color_attr = vertex_descriptor.attributes().object_at(1).unwrap();
+            color_attr.set_format(MTLVertexFormat::Float4);
+            color_attr.set_offset(8); // After position (2 * f32)
+            color_attr.set_buffer_index(0);
+
+            // Layout
+            let layout = vertex_descriptor.layouts().object_at(0).unwrap();
+            layout.set_stride(24); // 2 * f32 + 4 * f32 = 24 bytes
+
+            // Create pipeline descriptor
+            let pipeline_descriptor = metal::RenderPipelineDescriptor::new();
+            pipeline_descriptor.set_vertex_function(Some(&vertex_function));
+            pipeline_descriptor.set_fragment_function(Some(&fragment_function));
+            pipeline_descriptor.set_vertex_descriptor(Some(&vertex_descriptor));
+
+            // Configure color attachment with alpha blending
+            let color_attachment = pipeline_descriptor.color_attachments().object_at(0).unwrap();
+            color_attachment.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+            color_attachment.set_blending_enabled(true);
+            color_attachment.set_source_rgb_blend_factor(MTLBlendFactor::SourceAlpha);
+            color_attachment.set_destination_rgb_blend_factor(MTLBlendFactor::OneMinusSourceAlpha);
+            color_attachment.set_rgb_blend_operation(MTLBlendOperation::Add);
+            color_attachment.set_source_alpha_blend_factor(MTLBlendFactor::One);
+            color_attachment.set_destination_alpha_blend_factor(MTLBlendFactor::OneMinusSourceAlpha);
+            color_attachment.set_alpha_blend_operation(MTLBlendOperation::Add);
+
+            // Create pipeline state
+            let pipeline_state = device.new_render_pipeline_state(&pipeline_descriptor).ok()?;
+
+            // Create initial vertex buffer (can hold 100 rectangles = 600 vertices)
+            let vertex_capacity = 600;
+            let buffer_size = vertex_capacity * std::mem::size_of::<Vertex>();
+            let vertex_buffer = device.new_buffer(buffer_size as u64, metal::MTLResourceOptions::StorageModeManaged);
+
+            Some(Self {
+                pipeline_state,
+                vertex_buffer,
+                vertex_capacity,
+            })
+        }
+
+        /// Render selection highlights
+        ///
+        /// # Arguments
+        /// * `command_buffer` - The command buffer to record to
+        /// * `drawable_texture` - The render target texture
+        /// * `highlights` - List of highlight rectangles (x, y, w, h in screen pixels) and colors (r, g, b, a)
+        /// * `drawable_width` - Width of the drawable
+        /// * `drawable_height` - Height of the drawable
+        pub fn render(
+            &mut self,
+            device: &Device,
+            command_buffer: &metal::CommandBufferRef,
+            drawable_texture: &metal::TextureRef,
+            highlights: &[([f32; 4], [f32; 4])], // (x, y, w, h), (r, g, b, a)
+            drawable_width: f32,
+            drawable_height: f32,
+        ) {
+            if highlights.is_empty() {
+                return;
+            }
+
+            // Build vertex data (6 vertices per rectangle: 2 triangles)
+            let vertices_needed = highlights.len() * 6;
+
+            // Resize buffer if needed
+            if vertices_needed > self.vertex_capacity {
+                let new_capacity = vertices_needed * 2;
+                let buffer_size = new_capacity * std::mem::size_of::<Vertex>();
+                self.vertex_buffer = device.new_buffer(buffer_size as u64, metal::MTLResourceOptions::StorageModeManaged);
+                self.vertex_capacity = new_capacity;
+            }
+
+            let mut vertices = Vec::with_capacity(vertices_needed);
+
+            for (rect, color) in highlights {
+                // Convert screen coordinates to normalized device coordinates (-1 to 1)
+                let x1 = (rect[0] / drawable_width) * 2.0 - 1.0;
+                let y1 = 1.0 - (rect[1] / drawable_height) * 2.0; // Flip Y
+                let x2 = ((rect[0] + rect[2]) / drawable_width) * 2.0 - 1.0;
+                let y2 = 1.0 - ((rect[1] + rect[3]) / drawable_height) * 2.0;
+
+                // Triangle 1
+                vertices.push(Vertex { position: [x1, y1], color: *color });
+                vertices.push(Vertex { position: [x2, y1], color: *color });
+                vertices.push(Vertex { position: [x1, y2], color: *color });
+
+                // Triangle 2
+                vertices.push(Vertex { position: [x2, y1], color: *color });
+                vertices.push(Vertex { position: [x2, y2], color: *color });
+                vertices.push(Vertex { position: [x1, y2], color: *color });
+            }
+
+            // Upload vertex data
+            let data_ptr = self.vertex_buffer.contents() as *mut Vertex;
+            unsafe {
+                std::ptr::copy_nonoverlapping(vertices.as_ptr(), data_ptr, vertices.len());
+            }
+            self.vertex_buffer.did_modify_range(metal::NSRange {
+                location: 0,
+                length: (vertices.len() * std::mem::size_of::<Vertex>()) as u64,
+            });
+
+            // Create render pass
+            let render_pass_descriptor = metal::RenderPassDescriptor::new();
+            let color_attachment = render_pass_descriptor.color_attachments().object_at(0).unwrap();
+            color_attachment.set_texture(Some(drawable_texture));
+            color_attachment.set_load_action(metal::MTLLoadAction::Load); // Keep existing content
+            color_attachment.set_store_action(metal::MTLStoreAction::Store);
+
+            let encoder = command_buffer.new_render_command_encoder(&render_pass_descriptor);
+            encoder.set_render_pipeline_state(&self.pipeline_state);
+            encoder.set_vertex_buffer(0, Some(&self.vertex_buffer), 0);
+            encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
+            encoder.end_encoding();
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_vertex_size() {
+            // Verify vertex struct has expected size for Metal alignment
+            assert_eq!(std::mem::size_of::<Vertex>(), 24); // 2 floats (8 bytes) + 4 floats (16 bytes)
+        }
+
+        #[test]
+        fn test_selection_highlight_renderer_creation() {
+            // Test that renderer can be created with a Metal device
+            let device = Device::system_default().expect("Metal device required for test");
+            let renderer = SelectionHighlightRenderer::new(&device);
+            assert!(renderer.is_some(), "Selection highlight renderer should be created successfully");
+        }
+
+        #[test]
+        fn test_coordinate_transform() {
+            // Test normalized device coordinate calculation
+            // Screen coords (0,0) should map to NDC (-1, 1)
+            // Screen coords (w,h) should map to NDC (1, -1)
+            let w = 800.0f32;
+            let h = 600.0f32;
+
+            // Top-left corner
+            let x1 = (0.0 / w) * 2.0 - 1.0;
+            let y1 = 1.0 - (0.0 / h) * 2.0;
+            assert!((x1 - (-1.0)).abs() < 0.001);
+            assert!((y1 - 1.0).abs() < 0.001);
+
+            // Bottom-right corner
+            let x2 = (w / w) * 2.0 - 1.0;
+            let y2 = 1.0 - (h / h) * 2.0;
+            assert!((x2 - 1.0).abs() < 0.001);
+            assert!((y2 - (-1.0)).abs() < 0.001);
+
+            // Center
+            let x3 = (w / 2.0 / w) * 2.0 - 1.0;
+            let y3 = 1.0 - (h / 2.0 / h) * 2.0;
+            assert!((x3 - 0.0).abs() < 0.001);
+            assert!((y3 - 0.0).abs() < 0.001);
+        }
+    }
+}
+
 /// Calculate clipping region for blitting a texture with pan offset.
 ///
 /// Returns (src_x, src_y, dest_x, dest_y, copy_width, copy_height) or None if fully clipped.
@@ -1000,6 +1232,9 @@ struct App {
     text_search_manager: Option<TextSearchManager>,
     /// Whether text selection mode is active (TextSelectTool is selected)
     text_selection_active: bool,
+    /// Selection highlight renderer for text selection overlays
+    #[cfg(target_os = "macos")]
+    selection_highlight_renderer: Option<selection_highlight::SelectionHighlightRenderer>,
 }
 
 impl App {
@@ -1058,6 +1293,8 @@ impl App {
             text_layer_manager: None,
             text_search_manager: None,
             text_selection_active: false,
+            #[cfg(target_os = "macos")]
+            selection_highlight_renderer: None,
         }
     }
 
@@ -2449,10 +2686,17 @@ impl App {
         // Initialize the loading spinner with pre-rendered frames
         let spinner = LoadingSpinner::new(&device, 64);
 
+        // Initialize selection highlight renderer
+        let selection_renderer = selection_highlight::SelectionHighlightRenderer::new(&device);
+        if selection_renderer.is_none() {
+            eprintln!("WARNING: Failed to create selection highlight renderer");
+        }
+
         self.metal_layer = Some(layer);
         self.loading_spinner = Some(spinner);
         self.device = Some(device);
         self.command_queue = Some(command_queue);
+        self.selection_highlight_renderer = selection_renderer;
 
         // Initialize toolbar texture
         self.update_toolbar_texture();
@@ -2568,7 +2812,63 @@ impl App {
                                 blit_encoder.end_encoding();
                             }
                         }
+                    }
 
+                    // Render selection highlights (after page texture, before overlays)
+                    // This requires borrowing text_search_manager and selection_highlight_renderer separately
+                    let page_index = self.document.as_ref().map(|d| d.current_page).unwrap_or(0);
+                    let highlights_data: Vec<([f32; 4], [f32; 4])> = if let Some(ref search_manager) = self.text_search_manager {
+                        let highlights = search_manager.get_highlights_for_page(page_index);
+
+                        // Get the page texture dimensions and position for coordinate transformation
+                        if let Some(doc) = &self.document {
+                            if let Some(page_tex) = doc.page_textures.get(&doc.current_page) {
+                                // Calculate page position on screen (same as blit calculation)
+                                let center_x = (drawable_width as f32 - page_tex.width as f32) / 2.0;
+                                let center_y = (drawable_height as f32 - page_tex.height as f32) / 2.0;
+                                let pan_x = center_x - viewport_x;
+                                let pan_y = center_y - viewport_y;
+
+                                // Get zoom scale for coordinate transformation
+                                let zoom_scale = self.input_handler.viewport().zoom_level as f32 / 100.0;
+
+                                highlights.iter().map(|h| {
+                                    // Transform page coordinates to screen coordinates
+                                    let bbox = &h.bbox;
+                                    let screen_x = pan_x + bbox.x * zoom_scale;
+                                    let screen_y = pan_y + bbox.y * zoom_scale;
+                                    let screen_w = bbox.width * zoom_scale;
+                                    let screen_h = bbox.height * zoom_scale;
+
+                                    // Get color based on highlight type
+                                    let (r, g, b, a) = h.highlight_type.color();
+
+                                    ([screen_x, screen_y, screen_w, screen_h], [r, g, b, a])
+                                }).collect()
+                            } else {
+                                Vec::new()
+                            }
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+
+                    if !highlights_data.is_empty() {
+                        if let (Some(device), Some(ref mut renderer)) = (&self.device, &mut self.selection_highlight_renderer) {
+                            renderer.render(
+                                device,
+                                command_buffer,
+                                drawable.texture(),
+                                &highlights_data,
+                                drawable_width as f32,
+                                drawable_height as f32,
+                            );
+                        }
+                    }
+
+                    if let Some(doc) = &self.document {
                         // Blit the page info overlay to the bottom-right corner
                         if let Some(overlay) = &doc.page_info_overlay {
                             let margin = 16u64;

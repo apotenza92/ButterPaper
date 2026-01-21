@@ -10844,3 +10844,42 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 **Linting:** No new warnings in our code (some from external macros)
 
 **Note:** Visual highlight rendering is prepared but not yet visible - the compositor has the highlight rendering code but it's not connected to the current blit-based rendering pipeline. This can be improved in a future iteration.
+
+### Task: Render selection highlight rectangles for text selection (Phase 3.1)
+
+**Status:** Complete
+
+**Changes:**
+- Implemented Metal-based selection highlight rendering with alpha blending
+- Created `selection_highlight` module with:
+  - Custom Metal shader for rendering colored rectangles with transparency
+  - `SelectionHighlightRenderer` struct managing render pipeline and vertex buffers
+  - Proper alpha blending for semi-transparent highlights
+- Added `SelectionHighlightRenderer` to the App struct
+- Integrated highlight rendering in the render loop:
+  - Highlights are rendered after the PDF page texture but before UI overlays
+  - Selection rectangles are transformed from page coordinates to screen coordinates
+  - Supports three highlight types: Search (yellow), ActiveSearch (orange), Selection (blue)
+- Added 3 unit tests for the selection highlight renderer:
+  - `test_vertex_size`: Verifies vertex struct alignment
+  - `test_selection_highlight_renderer_creation`: Tests Metal pipeline creation
+  - `test_coordinate_transform`: Validates NDC coordinate transformation
+
+**Files Modified:**
+- crates/app/src/main.rs:
+  - Added `selection_highlight` module with Metal shader and renderer
+  - Added `selection_highlight_renderer` field to App struct
+  - Initialized renderer in `setup_metal_layer()`
+  - Integrated highlight rendering in `render()` function
+- PRD.md: Marked "Render selection highlight rectangles" as complete
+
+**Technical Details:**
+- Uses Metal render pass with alpha blending (SrcAlpha, OneMinusSrcAlpha)
+- Vertex data: position (float2) + color (float4) = 24 bytes per vertex
+- Each rectangle = 2 triangles = 6 vertices
+- Coordinates transformed from page space to normalized device coordinates
+- Supports dynamic buffer resizing for large numbers of highlights
+
+**Testing:**
+- All 158 tests pass (155 existing + 3 new)
+- No new clippy warnings introduced
