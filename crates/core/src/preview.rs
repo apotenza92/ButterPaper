@@ -283,6 +283,7 @@ mod tests {
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
+            annotations: Vec::new(),
         };
 
         Document::new(1, metadata)

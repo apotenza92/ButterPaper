@@ -39,7 +39,7 @@ impl PageCoordinate {
 }
 
 /// RGBA color representation
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -83,7 +83,7 @@ impl Color {
 ///
 /// Geometry is immutable once created. To modify geometry, create a new annotation.
 /// This ensures predictable rendering and caching behavior.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum AnnotationGeometry {
     /// Line segment from start to end point
     Line {
@@ -300,7 +300,7 @@ fn point_near_line_segment(
 ///
 /// Metadata can be changed without affecting geometry or rendering.
 /// Changes to metadata don't invalidate tile cache.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AnnotationMetadata {
     /// User-provided label or description
     pub label: Option<String>,
@@ -357,7 +357,7 @@ impl Default for AnnotationMetadata {
 /// Visual styling for annotation rendering
 ///
 /// Immutable like geometry. To change appearance, create a new annotation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnnotationStyle {
     /// Stroke color for lines and outlines
     pub stroke_color: Color,
@@ -712,6 +712,69 @@ impl AnnotationCollection {
 impl Default for AnnotationCollection {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Serializable annotation format for persistence
+///
+/// This structure is used when saving annotations to disk or exporting to PDF.
+/// It flattens the Arc-wrapped fields for simpler serialization.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SerializableAnnotation {
+    /// Stable unique identifier
+    pub id: AnnotationId,
+
+    /// Page index this annotation belongs to (0-based)
+    pub page_index: u16,
+
+    /// Annotation geometry
+    pub geometry: AnnotationGeometry,
+
+    /// Visual style
+    pub style: AnnotationStyle,
+
+    /// Metadata
+    pub metadata: AnnotationMetadata,
+
+    /// Whether this annotation is visible
+    #[serde(default = "default_true")]
+    pub visible: bool,
+
+    /// Layer/z-index for rendering order (higher = on top)
+    #[serde(default)]
+    pub layer: u32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl From<&Annotation> for SerializableAnnotation {
+    fn from(annotation: &Annotation) -> Self {
+        Self {
+            id: annotation.id,
+            page_index: annotation.page_index,
+            geometry: (*annotation.geometry).clone(),
+            style: (*annotation.style).clone(),
+            metadata: annotation.metadata.clone(),
+            visible: annotation.visible,
+            layer: annotation.layer,
+        }
+    }
+}
+
+impl From<SerializableAnnotation> for Annotation {
+    fn from(serializable: SerializableAnnotation) -> Self {
+        Self {
+            id: serializable.id,
+            page_index: serializable.page_index,
+            geometry: Arc::new(serializable.geometry),
+            style: Arc::new(serializable.style),
+            metadata: serializable.metadata,
+            selected: false, // Selection is not persisted
+            visible: serializable.visible,
+            layer: serializable.layer,
+        }
     }
 }
 

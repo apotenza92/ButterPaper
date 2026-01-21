@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use crate::measurement::{ScaleSystem, ScaleSystemId};
 use crate::text_edit::PageTextEdits;
+use crate::annotation::SerializableAnnotation;
 
 /// Unique identifier for a document
 pub type DocumentId = u64;
@@ -49,6 +50,10 @@ pub struct DocumentMetadata {
     /// Text edits for the document (per-page)
     #[serde(default)]
     pub text_edits: Vec<PageTextEdits>,
+
+    /// Annotations for the document
+    #[serde(default)]
+    pub annotations: Vec<SerializableAnnotation>,
 }
 
 impl DocumentMetadata {
@@ -128,6 +133,36 @@ impl DocumentMetadata {
     pub fn total_text_edit_count(&self) -> usize {
         self.text_edits.iter().map(|p| p.edits.len()).sum()
     }
+
+    /// Add an annotation to the document
+    pub fn add_annotation(&mut self, annotation: SerializableAnnotation) {
+        self.annotations.push(annotation);
+    }
+
+    /// Get all annotations for a specific page
+    pub fn get_annotations_for_page(&self, page_index: u16) -> Vec<&SerializableAnnotation> {
+        self.annotations
+            .iter()
+            .filter(|a| a.page_index == page_index)
+            .collect()
+    }
+
+    /// Remove an annotation by ID
+    pub fn remove_annotation(&mut self, id: crate::annotation::AnnotationId) -> bool {
+        let initial_len = self.annotations.len();
+        self.annotations.retain(|a| a.id != id);
+        self.annotations.len() != initial_len
+    }
+
+    /// Get annotation by ID
+    pub fn get_annotation(&self, id: crate::annotation::AnnotationId) -> Option<&SerializableAnnotation> {
+        self.annotations.iter().find(|a| a.id == id)
+    }
+
+    /// Get total number of annotations across all pages
+    pub fn total_annotation_count(&self) -> usize {
+        self.annotations.len()
+    }
 }
 
 impl Default for DocumentMetadata {
@@ -144,6 +179,7 @@ impl Default for DocumentMetadata {
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
+            annotations: Vec::new(),
         }
     }
 }
@@ -457,6 +493,7 @@ mod tests {
             scale_systems: Vec::new(),
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
+            annotations: Vec::new(),
         }
     }
 

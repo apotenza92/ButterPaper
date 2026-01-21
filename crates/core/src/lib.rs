@@ -12,6 +12,7 @@ pub mod manipulation;
 pub mod measurement;
 pub mod ocr;
 pub mod page_switch;
+pub mod pdf_export;
 pub mod persistence;
 pub mod preview;
 pub mod progressive_ocr;
@@ -24,7 +25,7 @@ pub mod write_coordinator;
 
 pub use annotation::{
     Annotation, AnnotationCollection, AnnotationGeometry, AnnotationId, AnnotationMetadata,
-    AnnotationStyle, Color, PageCoordinate,
+    AnnotationStyle, Color, PageCoordinate, SerializableAnnotation,
 };
 pub use checkpoint::{CheckpointManager, CheckpointMetadata};
 pub use deferred::{DeferredJob, DeferredJobConfig, DeferredJobScheduler, DeferredJobType};
@@ -42,6 +43,10 @@ pub use measurement::{
 };
 pub use ocr::{OcrConfig, OcrEngine, OcrError, OcrResult, TextBlock};
 pub use page_switch::{PageSwitchResult, PageSwitcher};
+pub use pdf_export::{
+    generate_appearance_stream, save_pdf_with_annotations, ExportOptions, PdfExportError,
+    PdfExportResult,
+};
 pub use progressive_ocr::{ProgressiveOcr, ProgressiveOcrStats};
 pub use persistence::{
     delete_metadata, load_metadata, metadata_exists, metadata_path, save_metadata,
