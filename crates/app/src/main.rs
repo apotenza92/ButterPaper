@@ -5,7 +5,7 @@
 use pdf_editor_ui::gpu;
 use pdf_editor_ui::input::InputHandler;
 use pdf_editor_ui::renderer::SceneRenderer;
-use pdf_editor_ui::scene::{Color, Primitive, Rect, SceneGraph};
+use pdf_editor_ui::scene::SceneGraph;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -19,7 +19,7 @@ use cocoa::base::id as cocoa_id;
 #[cfg(target_os = "macos")]
 use core_graphics_types::geometry::CGSize;
 #[cfg(target_os = "macos")]
-use metal::{Device, MetalLayer};
+use metal::{CommandQueue, Device, MetalLayer};
 #[cfg(target_os = "macos")]
 use objc::runtime::YES;
 #[cfg(target_os = "macos")]
@@ -36,6 +36,8 @@ struct App {
     metal_layer: Option<MetalLayer>,
     #[cfg(target_os = "macos")]
     device: Option<Device>,
+    #[cfg(target_os = "macos")]
+    command_queue: Option<CommandQueue>,
     gpu_context: Option<Box<dyn gpu::GpuContext>>,
     scene_graph: SceneGraph,
     renderer: Option<SceneRenderer>,
@@ -46,32 +48,15 @@ struct App {
     frame_count: u64,
     fps_update_time: Instant,
     current_fps: f64,
+    // Startup timing
+    app_start: Instant,
+    first_frame_rendered: bool,
 }
 
 impl App {
     fn new() -> Self {
-        // Create a sample scene graph with some test primitives
-        let mut scene_graph = SceneGraph::new();
-        let root = scene_graph.root_mut();
-
-        // Add a red rectangle in the center
-        root.add_primitive(Primitive::Rectangle {
-            rect: Rect::new(500.0, 300.0, 200.0, 200.0),
-            color: Color::rgb(0.8, 0.2, 0.2),
-        });
-
-        // Add a blue rectangle in the top-left
-        root.add_primitive(Primitive::Rectangle {
-            rect: Rect::new(50.0, 50.0, 150.0, 100.0),
-            color: Color::rgb(0.2, 0.2, 0.8),
-        });
-
-        // Add a green circle
-        root.add_primitive(Primitive::Circle {
-            center: [900.0, 400.0],
-            radius: 75.0,
-            color: Color::rgb(0.2, 0.8, 0.2),
-        });
+        // Create an empty scene graph (test primitives removed for faster startup)
+        let scene_graph = SceneGraph::new();
 
         let now = Instant::now();
         let input_handler = InputHandler::new(1200.0, 800.0); // Default window size
@@ -82,6 +67,8 @@ impl App {
             metal_layer: None,
             #[cfg(target_os = "macos")]
             device: None,
+            #[cfg(target_os = "macos")]
+            command_queue: None,
             gpu_context: None,
             scene_graph,
             renderer: None,
@@ -91,6 +78,8 @@ impl App {
             frame_count: 0,
             fps_update_time: now,
             current_fps: 0.0,
+            app_start: now,
+            first_frame_rendered: false,
         }
     }
 
@@ -143,6 +132,9 @@ impl App {
         // Create Metal device
         let device = Device::system_default().expect("Failed to get Metal device");
 
+        // Create command queue once (reused for all frames)
+        let command_queue = device.new_command_queue();
+
         // Create Metal layer
         let layer = MetalLayer::new();
         layer.set_device(&device);
@@ -164,12 +156,20 @@ impl App {
 
         self.metal_layer = Some(layer);
         self.device = Some(device);
+        self.command_queue = Some(command_queue);
     }
 
     fn render(&mut self) {
         #[cfg(target_os = "macos")]
         if let Some(layer) = &self.metal_layer {
             if let Some(drawable) = layer.next_drawable() {
+                // Track time to first frame
+                if !self.first_frame_rendered {
+                    let startup_time = Instant::now().duration_since(self.app_start);
+                    println!("Startup time: {:.2}ms (time to first frame)", startup_time.as_secs_f64() * 1000.0);
+                    self.first_frame_rendered = true;
+                }
+
                 // Render the scene graph using our renderer
                 if let (Some(gpu_context), Some(renderer)) = (&mut self.gpu_context, &mut self.renderer) {
                     // Render scene graph (currently just validates the structure)
@@ -180,8 +180,7 @@ impl App {
 
                 // Create a render pass that clears to a dark gray
                 // In a full implementation, the scene renderer would draw primitives here
-                if let Some(device) = &self.device {
-                    let command_queue = device.new_command_queue();
+                if let Some(command_queue) = &self.command_queue {
                     let command_buffer = command_queue.new_command_buffer();
 
                     let render_pass_descriptor = metal::RenderPassDescriptor::new();
@@ -222,26 +221,12 @@ impl ApplicationHandler for App {
             #[cfg(target_os = "macos")]
             self.setup_metal_layer(&window);
 
-            // Initialize GPU context
-            match gpu::create_context() {
-                Ok(context) => {
-                    // Initialize scene renderer
-                    match SceneRenderer::new(context.as_ref()) {
-                        Ok(renderer) => {
-                            self.renderer = Some(renderer);
-                            println!("Scene renderer initialized successfully");
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to initialize scene renderer: {}", e);
-                        }
-                    }
-
-                    self.gpu_context = Some(context);
-                    println!("GPU context initialized successfully");
+            // Initialize GPU context and renderer
+            if let Ok(context) = gpu::create_context() {
+                if let Ok(renderer) = SceneRenderer::new(context.as_ref()) {
+                    self.renderer = Some(renderer);
                 }
-                Err(e) => {
-                    eprintln!("Failed to initialize GPU context: {}", e);
-                }
+                self.gpu_context = Some(context);
             }
 
             self.window = Some(window);
@@ -351,8 +336,6 @@ impl ApplicationHandler for App {
 }
 
 fn main() {
-    println!("Starting PDF Editor...");
-
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
 

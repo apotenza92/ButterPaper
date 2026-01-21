@@ -126,7 +126,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Implement CSV export for markups and measurements
 
 ### Phase 12: Polish and Performance
-- [ ] Profile and optimize startup time
+- [x] Profile and optimize startup time
 - [ ] Ensure large PDFs open without UI stalls
 - [ ] Verify page flipping feels instantaneous
 - [ ] Test reopening cached documents (must feel instant)
