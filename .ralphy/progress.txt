@@ -11696,3 +11696,51 @@ This completes Phase 3.4 scale calibration tasks:
 - [x] Scale calibration
 - [x] Click known distance, enter real value
 - [x] Apply scale to page
+
+### Task: Export measurements to CSV (Phase 3.4)
+
+**Status:** Complete
+
+**Changes:**
+- Added `SerializableMeasurement` struct to `measurement.rs` for JSON serialization
+- Added serde derives to `MeasurementType` and `MeasurementMetadata`
+- Added `measurements: Vec<SerializableMeasurement>` field to `DocumentMetadata`
+- Added `all_scales()` method to `MeasurementCollection`
+- Updated `save_document`, `save_document_as`, and `export_as_pdf` to also save measurements
+- Added `--export-measurements` CLI flag to main.rs
+- Implemented `run_export_measurements()` function that loads measurements from sidecar metadata file and exports to CSV
+
+**Files Modified:**
+- crates/core/src/measurement.rs (added SerializableMeasurement, serde derives, all_scales method, tests)
+- crates/core/src/lib.rs (exported SerializableMeasurement)
+- crates/core/src/document.rs (added measurements field to DocumentMetadata and Default impl)
+- crates/core/src/loader.rs (added measurements field initialization and loading)
+- crates/core/src/checkpoint.rs (updated test_metadata)
+- crates/core/src/page_switch.rs (updated test_document)
+- crates/core/src/persistence.rs (updated test_metadata)
+- crates/core/src/preview.rs (updated test_document)
+- crates/core/src/write_coordinator.rs (updated test_metadata)
+- crates/app/src/main.rs (added imports, CLI flag, run_export_measurements function, updated save functions)
+- PRD.md (marked tasks as complete)
+
+**Tests Added:**
+- test_serializable_measurement_roundtrip
+- test_serializable_measurement_json_roundtrip
+- test_measurement_collection_all_scales
+
+**Verified:**
+- All 654 tests pass
+- Clippy linting passes (no new warnings)
+
+**Usage:**
+```bash
+# Export measurements from a PDF with saved measurements
+cargo run --release -- --export-measurements file.pdf
+
+# Output: CSV to stdout, summary to stderr
+# MEASUREMENTS: OK count=5 time=10ms
+```
+
+**CSV Columns:**
+ID, Page, Type, Value, Unit, Formatted, Scale System ID, Scale Ratio, Label, Tags, Notes, Geometry, Label Position X, Label Position Y, BBox Min X, BBox Min Y, BBox Max X, BBox Max Y, Visible, Layer
+

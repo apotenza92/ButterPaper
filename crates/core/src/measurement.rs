@@ -170,7 +170,7 @@ impl ScaleSystem {
 }
 
 /// Type of measurement being performed
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MeasurementType {
     /// Linear distance between two points or along a path
     Distance,
@@ -183,7 +183,7 @@ pub enum MeasurementType {
 }
 
 /// Metadata for a measurement
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MeasurementMetadata {
     /// User-provided label
     pub label: Option<String>,
@@ -662,6 +662,80 @@ impl MeasurementCollection {
             .map(|ids| ids.len())
             .unwrap_or(0)
     }
+
+    /// Get all scale systems
+    pub fn all_scales(&self) -> Vec<&ScaleSystem> {
+        self.scales.values().collect()
+    }
+}
+
+/// Serializable version of Measurement for persistence
+///
+/// This type can be serialized to JSON for storage in metadata sidecar files.
+/// Unlike `Measurement`, this type owns its geometry data directly instead of
+/// using `Arc`, making it suitable for serialization.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SerializableMeasurement {
+    /// Unique identifier
+    pub id: MeasurementId,
+    /// Page this measurement is on (0-based)
+    pub page_index: u16,
+    /// Geometry defining the measurement (stored in page coordinates)
+    pub geometry: crate::annotation::AnnotationGeometry,
+    /// Type of measurement
+    pub measurement_type: MeasurementType,
+    /// Reference to the scale system used
+    pub scale_system_id: ScaleSystemId,
+    /// Cached computed value in real-world units
+    pub value: Option<f32>,
+    /// Formatted label with value and unit
+    pub formatted_label: Option<String>,
+    /// Additional metadata
+    pub metadata: MeasurementMetadata,
+    /// Visibility flag
+    #[serde(default = "default_true")]
+    pub visible: bool,
+    /// Z-order layer for rendering
+    #[serde(default)]
+    pub layer: u32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl From<&Measurement> for SerializableMeasurement {
+    fn from(measurement: &Measurement) -> Self {
+        Self {
+            id: measurement.id,
+            page_index: measurement.page_index,
+            geometry: (*measurement.geometry).clone(),
+            measurement_type: measurement.measurement_type,
+            scale_system_id: measurement.scale_system_id,
+            value: measurement.value,
+            formatted_label: measurement.formatted_label.clone(),
+            metadata: measurement.metadata.clone(),
+            visible: measurement.visible,
+            layer: measurement.layer,
+        }
+    }
+}
+
+impl From<SerializableMeasurement> for Measurement {
+    fn from(serializable: SerializableMeasurement) -> Self {
+        Self {
+            id: serializable.id,
+            page_index: serializable.page_index,
+            geometry: Arc::new(serializable.geometry),
+            measurement_type: serializable.measurement_type,
+            scale_system_id: serializable.scale_system_id,
+            value: serializable.value,
+            formatted_label: serializable.formatted_label,
+            metadata: serializable.metadata,
+            visible: serializable.visible,
+            layer: serializable.layer,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -926,5 +1000,80 @@ mod tests {
         // Centroid of square is at center
         assert_eq!(pos.x, 30.0);
         assert_eq!(pos.y, 30.0);
+    }
+
+    #[test]
+    fn test_serializable_measurement_roundtrip() {
+        let scale = ScaleSystem::manual(0, 72.0, "inches");
+        let scale_id = scale.id();
+
+        let geometry = AnnotationGeometry::Line {
+            start: PageCoordinate::new(0.0, 0.0),
+            end: PageCoordinate::new(72.0, 0.0),
+        };
+
+        let mut measurement = Measurement::new(0, geometry, MeasurementType::Distance, scale_id);
+        measurement.compute_value(&scale);
+
+        // Convert to serializable
+        let serializable = SerializableMeasurement::from(&measurement);
+
+        assert_eq!(serializable.id, measurement.id());
+        assert_eq!(serializable.page_index, 0);
+        assert_eq!(serializable.measurement_type, MeasurementType::Distance);
+        assert_eq!(serializable.scale_system_id, scale_id);
+        assert_eq!(serializable.value, Some(1.0));
+        assert!(serializable.visible);
+
+        // Convert back to measurement
+        let restored: Measurement = serializable.into();
+
+        assert_eq!(restored.id(), measurement.id());
+        assert_eq!(restored.page_index(), 0);
+        assert_eq!(restored.measurement_type(), MeasurementType::Distance);
+        assert_eq!(restored.scale_system_id(), scale_id);
+        assert_eq!(restored.value(), Some(1.0));
+        assert!(restored.is_visible());
+    }
+
+    #[test]
+    fn test_serializable_measurement_json_roundtrip() {
+        let scale = ScaleSystem::manual(0, 72.0, "inches");
+        let scale_id = scale.id();
+
+        let geometry = AnnotationGeometry::Line {
+            start: PageCoordinate::new(10.0, 20.0),
+            end: PageCoordinate::new(82.0, 20.0),
+        };
+
+        let mut measurement = Measurement::new(0, geometry.clone(), MeasurementType::Distance, scale_id);
+        measurement.compute_value(&scale);
+
+        let serializable = SerializableMeasurement::from(&measurement);
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&serializable).expect("JSON serialization failed");
+
+        // Deserialize from JSON
+        let deserialized: SerializableMeasurement = serde_json::from_str(&json).expect("JSON deserialization failed");
+
+        assert_eq!(deserialized.id, measurement.id());
+        assert_eq!(deserialized.page_index, 0);
+        assert_eq!(deserialized.measurement_type, MeasurementType::Distance);
+        assert_eq!(deserialized.value, Some(1.0));
+    }
+
+    #[test]
+    fn test_measurement_collection_all_scales() {
+        let mut collection = MeasurementCollection::new();
+
+        let scale1 = ScaleSystem::manual(0, 72.0, "inches");
+        let scale2 = ScaleSystem::manual(1, 36.0, "feet");
+
+        collection.add_scale(scale1);
+        collection.add_scale(scale2);
+
+        let all_scales = collection.all_scales();
+        assert_eq!(all_scales.len(), 2);
     }
 }

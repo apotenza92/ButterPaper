@@ -355,8 +355,8 @@ Wire up existing measurement system.
 - [x] Scale calibration
 - [x] Click known distance, enter real value
 - [x] Apply scale to page
-- [ ] Export measurements to CSV
-- [ ] **Terminal test:** `--export-measurements file.pdf` outputs CSV
+- [x] Export measurements to CSV
+- [x] **Terminal test:** `--export-measurements file.pdf` outputs CSV
 
 ---
 

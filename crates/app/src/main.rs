@@ -8,11 +8,13 @@ use pdf_editor_core::annotation::{
     SerializableAnnotation,
 };
 use pdf_editor_core::measurement::{
-    Measurement, MeasurementCollection, MeasurementType, ScaleSystem,
+    Measurement, MeasurementCollection, MeasurementType, ScaleSystem, SerializableMeasurement,
 };
 use pdf_editor_core::{load_annotations_from_pdf, ImportStats};
+use pdf_editor_core::csv_export::{export_measurements_csv, CsvExportConfig};
 use pdf_editor_core::document::DocumentMetadata;
 use pdf_editor_core::pdf_export::export_flattened_pdf;
+use pdf_editor_core::persistence::load_metadata;
 use pdf_editor_core::text_layer::{PageTextLayer, TextBoundingBox, TextLayerManager, TextSpan};
 use pdf_editor_render::PdfDocument;
 use pdf_editor_ui::gpu;
@@ -4450,9 +4452,9 @@ impl App {
         let path = doc.path.clone();
         println!("Saving document to: {}", path.display());
 
-        // Check if there are annotations to save
-        if self.annotations.is_empty() {
-            // No annotations, just save the original PDF
+        // Check if there are annotations or measurements to save
+        if self.annotations.is_empty() && self.measurements.count() == 0 {
+            // No annotations or measurements, just save the original PDF
             match doc.pdf.save(&path) {
                 Ok(()) => {
                     println!("Document saved successfully: {}", path.display());
@@ -4470,15 +4472,25 @@ impl App {
                 .map(|a| SerializableAnnotation::from(*a))
                 .collect();
 
+            // Convert measurements to serializable format
+            let serializable_measurements: Vec<SerializableMeasurement> = (0..=u16::MAX)
+                .flat_map(|page| self.measurements.get_for_page(page))
+                .map(SerializableMeasurement::from)
+                .collect();
+
+            // Collect scale systems
+            let scale_systems: Vec<_> = self.measurements.all_scales().into_iter().cloned().collect();
+
             println!(
-                "Saving document with {} annotations",
-                serializable_annotations.len()
+                "Saving document with {} annotations and {} measurements",
+                serializable_annotations.len(),
+                serializable_measurements.len()
             );
 
             // Create a temporary path for the new version with annotations
             let temp_path = path.with_extension("pdf.tmp");
 
-            // Create metadata with annotations
+            // Create metadata with annotations and measurements
             let metadata = DocumentMetadata {
                 title: None,
                 author: None,
@@ -4489,10 +4501,11 @@ impl App {
                 file_path: path.clone(),
                 file_size: 0,
                 page_dimensions: std::collections::HashMap::new(),
-                scale_systems: Vec::new(),
+                scale_systems,
                 default_scales: std::collections::HashMap::new(),
                 text_edits: Vec::new(),
                 annotations: serializable_annotations,
+                measurements: serializable_measurements,
             };
 
             match export_flattened_pdf(&path, &temp_path, &metadata) {
@@ -4556,9 +4569,9 @@ impl App {
         if let Some(new_path) = file {
             println!("Saving document as: {}", new_path.display());
 
-            // Check if there are annotations to save
-            let save_result = if self.annotations.is_empty() {
-                // No annotations, just save the original PDF
+            // Check if there are annotations or measurements to save
+            let save_result = if self.annotations.is_empty() && self.measurements.count() == 0 {
+                // No annotations or measurements, just save the original PDF
                 doc.pdf.save(&new_path).map_err(|e| e.to_string())
             } else {
                 // Convert annotations to serializable format
@@ -4569,13 +4582,23 @@ impl App {
                     .map(|a| SerializableAnnotation::from(*a))
                     .collect();
 
+                // Convert measurements to serializable format
+                let serializable_measurements: Vec<SerializableMeasurement> = (0..=u16::MAX)
+                    .flat_map(|page| self.measurements.get_for_page(page))
+                    .map(SerializableMeasurement::from)
+                    .collect();
+
+                // Collect scale systems
+                let scale_systems: Vec<_> = self.measurements.all_scales().into_iter().cloned().collect();
+
                 println!(
-                    "Saving document as {} with {} annotations",
+                    "Saving document as {} with {} annotations and {} measurements",
                     new_path.display(),
-                    serializable_annotations.len()
+                    serializable_annotations.len(),
+                    serializable_measurements.len()
                 );
 
-                // Create metadata with annotations
+                // Create metadata with annotations and measurements
                 let metadata = DocumentMetadata {
                     title: None,
                     author: None,
@@ -4586,10 +4609,11 @@ impl App {
                     file_path: doc.path.clone(),
                     file_size: 0,
                     page_dimensions: std::collections::HashMap::new(),
-                    scale_systems: Vec::new(),
+                    scale_systems,
                     default_scales: std::collections::HashMap::new(),
                     text_edits: Vec::new(),
                     annotations: serializable_annotations,
+                    measurements: serializable_measurements,
                 };
 
                 export_flattened_pdf(&doc.path, &new_path, &metadata)
@@ -4655,9 +4679,9 @@ impl App {
         if let Some(export_path) = file {
             println!("Exporting PDF to: {}", export_path.display());
 
-            // Check if there are annotations to export
-            if self.annotations.is_empty() {
-                // No annotations, just save the original PDF
+            // Check if there are annotations or measurements to export
+            if self.annotations.is_empty() && self.measurements.count() == 0 {
+                // No annotations or measurements, just save the original PDF
                 match doc.pdf.save(&export_path) {
                     Ok(()) => {
                         println!("PDF exported successfully (no annotations): {}", export_path.display());
@@ -4675,12 +4699,22 @@ impl App {
                     .map(|a| SerializableAnnotation::from(*a))
                     .collect();
 
+                // Convert measurements to serializable format
+                let serializable_measurements: Vec<SerializableMeasurement> = (0..=u16::MAX)
+                    .flat_map(|page| self.measurements.get_for_page(page))
+                    .map(SerializableMeasurement::from)
+                    .collect();
+
+                // Collect scale systems
+                let scale_systems: Vec<_> = self.measurements.all_scales().into_iter().cloned().collect();
+
                 println!(
-                    "Exporting PDF with {} annotations",
-                    serializable_annotations.len()
+                    "Exporting PDF with {} annotations and {} measurements",
+                    serializable_annotations.len(),
+                    serializable_measurements.len()
                 );
 
-                // Create metadata with annotations
+                // Create metadata with annotations and measurements
                 let metadata = DocumentMetadata {
                     title: None,
                     author: None,
@@ -4691,10 +4725,11 @@ impl App {
                     file_path: doc.path.clone(),
                     file_size: 0,
                     page_dimensions: std::collections::HashMap::new(),
-                    scale_systems: Vec::new(),
+                    scale_systems,
                     default_scales: std::collections::HashMap::new(),
                     text_edits: Vec::new(),
                     annotations: serializable_annotations,
+                    measurements: serializable_measurements,
                 };
 
                 match export_flattened_pdf(&doc.path, &export_path, &metadata) {
@@ -6586,6 +6621,88 @@ fn run_list_annotations(path: &Path) -> i32 {
     }
 }
 
+/// Run --export-measurements mode: export measurements from metadata file as CSV
+fn run_export_measurements(path: &Path) -> i32 {
+    let start = Instant::now();
+
+    // Try to load metadata from sidecar file
+    match load_metadata(path) {
+        Ok(Some(metadata)) => {
+            // Convert serializable measurements to a MeasurementCollection
+            let mut collection = MeasurementCollection::new();
+
+            // Add scale systems first
+            for scale in &metadata.scale_systems {
+                collection.add_scale(scale.clone());
+            }
+
+            // Add measurements
+            for serializable in &metadata.measurements {
+                let measurement: Measurement = serializable.clone().into();
+                collection.add(measurement);
+            }
+
+            let count = collection.count();
+
+            // Export to CSV
+            let config = CsvExportConfig::default();
+            let mut output = Vec::new();
+
+            match export_measurements_csv(&mut output, &collection, &config) {
+                Ok(()) => {
+                    // Output CSV to stdout
+                    if let Ok(csv_str) = String::from_utf8(output) {
+                        print!("{}", csv_str);
+                    } else {
+                        eprintln!("MEASUREMENTS: FAILED error=invalid UTF-8 in CSV output");
+                        return 1;
+                    }
+
+                    let elapsed = start.elapsed();
+                    eprintln!(
+                        "MEASUREMENTS: OK count={} time={}ms",
+                        count,
+                        elapsed.as_millis()
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("MEASUREMENTS: FAILED error={}", e);
+                    1
+                }
+            }
+        }
+        Ok(None) => {
+            // No metadata file exists - output empty CSV with just headers
+            let collection = MeasurementCollection::new();
+            let config = CsvExportConfig::default();
+            let mut output = Vec::new();
+
+            match export_measurements_csv(&mut output, &collection, &config) {
+                Ok(()) => {
+                    if let Ok(csv_str) = String::from_utf8(output) {
+                        print!("{}", csv_str);
+                    }
+                    let elapsed = start.elapsed();
+                    eprintln!(
+                        "MEASUREMENTS: OK count=0 time={}ms (no metadata file)",
+                        elapsed.as_millis()
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("MEASUREMENTS: FAILED error={}", e);
+                    1
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("MEASUREMENTS: FAILED error={}", e);
+            1
+        }
+    }
+}
+
 fn main() {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -6594,6 +6711,7 @@ fn main() {
     let mut debug_texture = false;
     let mut test_load = false;
     let mut list_annotations = false;
+    let mut export_measurements = false;
     let mut search_query: Option<String> = None;
 
     let mut i = 1;
@@ -6607,6 +6725,8 @@ fn main() {
             test_load = true;
         } else if arg == "--list-annotations" {
             list_annotations = true;
+        } else if arg == "--export-measurements" {
+            export_measurements = true;
         } else if arg == "--search" {
             // Next argument should be the search query
             if i + 1 < args.len() {
@@ -6654,6 +6774,17 @@ fn main() {
             std::process::exit(exit_code);
         } else {
             eprintln!("ANNOTATIONS: FAILED error=no PDF file specified");
+            std::process::exit(1);
+        }
+    }
+
+    // Handle --export-measurements mode: export measurements as CSV and exit without GUI
+    if export_measurements {
+        if let Some(path) = initial_file {
+            let exit_code = run_export_measurements(&path);
+            std::process::exit(exit_code);
+        } else {
+            eprintln!("MEASUREMENTS: FAILED error=no PDF file specified");
             std::process::exit(1);
         }
     }

@@ -70,7 +70,9 @@ impl PreviewRenderer {
 
         // Ensure document has at least one page
         if document.page_count() == 0 {
-            return Err(DocumentError::LoadError("Document has no pages".to_string()));
+            return Err(DocumentError::LoadError(
+                "Document has no pages".to_string(),
+            ));
         }
 
         // Get first page dimensions from cache
@@ -79,16 +81,17 @@ impl PreviewRenderer {
             .page_dimensions
             .get(&0)
             .map(|d| (d.width as u32, d.height as u32))
-            .ok_or_else(|| DocumentError::LoadError(
-                "Page dimensions not cached for first page".to_string()
-            ))?;
+            .ok_or_else(|| {
+                DocumentError::LoadError("Page dimensions not cached for first page".to_string())
+            })?;
 
         // Open PDF document for rendering
         let pdf_doc = PdfDocument::open(file_path)
             .map_err(|e| DocumentError::LoadError(format!("Failed to open PDF: {}", e)))?;
 
         // Render all tiles for first page using preview profile
-        let tiles = self.tile_renderer
+        let tiles = self
+            .tile_renderer
             .render_page_tiles(&pdf_doc, 0, self.default_zoom, TileProfile::Preview)
             .map_err(|e| DocumentError::LoadError(format!("Failed to render tiles: {}", e)))?;
 
@@ -121,7 +124,9 @@ impl PreviewRenderer {
 
         // Ensure document has at least one page
         if document.page_count() == 0 {
-            return Err(DocumentError::LoadError("Document has no pages".to_string()));
+            return Err(DocumentError::LoadError(
+                "Document has no pages".to_string(),
+            ));
         }
 
         // Get first page dimensions from cache
@@ -130,16 +135,17 @@ impl PreviewRenderer {
             .page_dimensions
             .get(&0)
             .map(|d| (d.width as u32, d.height as u32))
-            .ok_or_else(|| DocumentError::LoadError(
-                "Page dimensions not cached for first page".to_string()
-            ))?;
+            .ok_or_else(|| {
+                DocumentError::LoadError("Page dimensions not cached for first page".to_string())
+            })?;
 
         // Open PDF document for rendering
         let pdf_doc = PdfDocument::open(file_path)
             .map_err(|e| DocumentError::LoadError(format!("Failed to open PDF: {}", e)))?;
 
         // Render all tiles for first page using preview profile
-        let tiles = self.tile_renderer
+        let tiles = self
+            .tile_renderer
             .render_page_tiles(&pdf_doc, 0, zoom_level, TileProfile::Preview)
             .map_err(|e| DocumentError::LoadError(format!("Failed to render tiles: {}", e)))?;
 
@@ -268,7 +274,11 @@ impl PreviewHandle {
             handle.join().expect("Preview rendering thread panicked");
         }
 
-        self.result.lock().unwrap().take().expect("No result available")
+        self.result
+            .lock()
+            .unwrap()
+            .take()
+            .expect("No result available")
     }
 }
 
@@ -293,6 +303,7 @@ mod tests {
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
             annotations: Vec::new(),
+            measurements: Vec::new(),
         };
 
         Document::new(1, metadata)

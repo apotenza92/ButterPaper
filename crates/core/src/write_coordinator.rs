@@ -190,7 +190,9 @@ impl WriteCoordinator {
     ///
     /// Should be called on startup before loading metadata normally.
     /// Returns Ok(Some(metadata)) if recovery was needed and successful.
-    pub fn recover(pdf_path: impl AsRef<std::path::Path>) -> PersistenceResult<Option<DocumentMetadata>> {
+    pub fn recover(
+        pdf_path: impl AsRef<std::path::Path>,
+    ) -> PersistenceResult<Option<DocumentMetadata>> {
         let checkpoint_mgr = CheckpointManager::new(pdf_path);
         checkpoint_mgr.recover()
     }
@@ -287,11 +289,13 @@ mod tests {
 
     fn test_metadata() -> DocumentMetadata {
         let temp_dir = std::env::temp_dir();
-        let pdf_path = temp_dir.join(format!("test_write_coordinator_{}.pdf",
+        let pdf_path = temp_dir.join(format!(
+            "test_write_coordinator_{}.pdf",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()));
+                .as_nanos()
+        ));
 
         DocumentMetadata {
             title: Some("Test Document".to_string()),
@@ -307,6 +311,7 @@ mod tests {
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
             annotations: Vec::new(),
+            measurements: Vec::new(),
         }
     }
 
@@ -465,10 +470,13 @@ mod tests {
         let handle = thread::spawn(move || {
             for _ in 0..10 {
                 let mut meta = metadata_clone.clone();
-                meta.title = Some(format!("Updated {}", std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis()));
+                meta.title = Some(format!(
+                    "Updated {}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                ));
                 coordinator_clone.mark_dirty(meta);
                 thread::sleep(Duration::from_millis(50));
             }

@@ -151,6 +151,7 @@ mod tests {
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
             annotations: Vec::new(),
+            measurements: Vec::new(),
         };
 
         // Add a scale system

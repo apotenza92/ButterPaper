@@ -9,7 +9,9 @@
 
 use crate::document::{Document, DocumentError, DocumentId, DocumentResult};
 use pdf_editor_cache::{ram::CachedTile, DiskTileCache, RamTileCache};
-use pdf_editor_render::{PdfDocument, RenderedTile, TileCoordinate, TileId, TileProfile, TileRenderer};
+use pdf_editor_render::{
+    PdfDocument, RenderedTile, TileCoordinate, TileId, TileProfile, TileRenderer,
+};
 use pdf_editor_scheduler::{JobPriority, JobScheduler, JobType};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -147,7 +149,12 @@ impl PageSwitcher {
         document: &Document,
         page_index: u16,
     ) -> DocumentResult<PageSwitchResult> {
-        self.switch_to_page_with_options(document, page_index, self.default_zoom, self.default_rotation)
+        self.switch_to_page_with_options(
+            document,
+            page_index,
+            self.default_zoom,
+            self.default_rotation,
+        )
     }
 
     /// Switch to a page with custom zoom and rotation
@@ -188,10 +195,12 @@ impl PageSwitcher {
             .page_dimensions
             .get(&page_index)
             .map(|d| (d.width, d.height))
-            .ok_or_else(|| DocumentError::LoadError(format!(
-                "Page dimensions not cached for page {}",
-                page_index
-            )))?;
+            .ok_or_else(|| {
+                DocumentError::LoadError(format!(
+                    "Page dimensions not cached for page {}",
+                    page_index
+                ))
+            })?;
 
         // Try to load from cache first (fast path: <100ms)
         if let Some(cached_result) = self.try_load_from_cache(
@@ -262,9 +271,9 @@ impl PageSwitcher {
         // This eliminates a major UI stall point
 
         // Calculate tile grid
-        let (columns, rows) = self
-            .tile_renderer
-            .calculate_tile_grid(page_width, page_height, zoom_level);
+        let (columns, rows) =
+            self.tile_renderer
+                .calculate_tile_grid(page_width, page_height, zoom_level);
 
         let mut tiles = Vec::new();
         let mut all_cached = true;
@@ -275,13 +284,8 @@ impl PageSwitcher {
                 let coord = TileCoordinate::new(x, y);
 
                 // Create tile ID for crisp profile (prefer high quality from cache)
-                let tile_id = TileId::new(
-                    page_index,
-                    coord,
-                    zoom_level,
-                    rotation,
-                    TileProfile::Crisp,
-                );
+                let tile_id =
+                    TileId::new(page_index, coord, zoom_level, rotation, TileProfile::Crisp);
 
                 let cache_key = tile_id.cache_key();
 
@@ -299,12 +303,14 @@ impl PageSwitcher {
                             .try_get(cache_key)
                             .ok()
                             .and_then(|opt| opt)
-                            .and_then(|opt| opt.map(|t| CachedTile {
-                                key: cache_key,
-                                pixels: t.pixels,
-                                width: t.width,
-                                height: t.height,
-                            }))
+                            .and_then(|opt| {
+                                opt.map(|t| CachedTile {
+                                    key: cache_key,
+                                    pixels: t.pixels,
+                                    width: t.width,
+                                    height: t.height,
+                                })
+                            })
                     } else {
                         None
                     }
@@ -341,7 +347,7 @@ impl PageSwitcher {
                 zoom_level,
                 rotation,
                 from_cache: true,
-                time_ms: 0, // Will be filled by caller
+                time_ms: 0,        // Will be filled by caller
                 is_preview: false, // Cached tiles are crisp quality
             }))
         } else {
@@ -403,7 +409,8 @@ impl PageSwitcher {
 
             // Store in disk cache
             if let Some(disk_cache) = &self.disk_cache {
-                let _: Result<(), std::io::Error> = disk_cache.put(cache_key, tile.pixels.clone(), tile.width, tile.height);
+                let _: Result<(), std::io::Error> =
+                    disk_cache.put(cache_key, tile.pixels.clone(), tile.width, tile.height);
             }
         }
     }
@@ -424,7 +431,12 @@ impl PageSwitcher {
         document: &Document,
         page_index: u16,
     ) -> DocumentResult<PageSwitchResult> {
-        self.upgrade_to_crisp_with_options(document, page_index, self.default_zoom, self.default_rotation)
+        self.upgrade_to_crisp_with_options(
+            document,
+            page_index,
+            self.default_zoom,
+            self.default_rotation,
+        )
     }
 
     /// Upgrade a page to crisp quality with custom zoom and rotation
@@ -453,10 +465,12 @@ impl PageSwitcher {
             .page_dimensions
             .get(&page_index)
             .map(|d| (d.width, d.height))
-            .ok_or_else(|| DocumentError::LoadError(format!(
-                "Page dimensions not cached for page {}",
-                page_index
-            )))?;
+            .ok_or_else(|| {
+                DocumentError::LoadError(format!(
+                    "Page dimensions not cached for page {}",
+                    page_index
+                ))
+            })?;
 
         // Render crisp tiles
         let mut result = self.render_page_tiles(
@@ -587,9 +601,9 @@ impl PageSwitcher {
         let page_height = page.height().value;
 
         // Calculate tile grid dimensions
-        let (columns, rows) = self
-            .tile_renderer
-            .calculate_tile_grid(page_width, page_height, zoom_level);
+        let (columns, rows) =
+            self.tile_renderer
+                .calculate_tile_grid(page_width, page_height, zoom_level);
 
         let mut jobs_submitted = 0;
 
@@ -675,6 +689,7 @@ mod tests {
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
             annotations: Vec::new(),
+            measurements: Vec::new(),
         };
 
         Document::new(1, metadata)
@@ -867,16 +882,20 @@ mod tests {
             for zoom in &[100, 150, 200] {
                 // Generate a unique cache key (simplified version of TileId hash)
                 let cache_key = (page as u64) * 1000 + (*zoom as u64);
-                cache1.put(cache_key, tile_pixels.clone(), 256, 256).unwrap();
+                cache1
+                    .put(cache_key, tile_pixels.clone(), 256, 256)
+                    .unwrap();
             }
         }
 
         // Verify tiles are in cache
         assert_eq!(cache1.tile_count(), 9); // 3 pages × 3 zoom levels
         let stats1 = cache1.stats();
-        println!("Initial cache: {} tiles, {} MB used",
-                 stats1.tile_count,
-                 stats1.disk_used / (1024 * 1024));
+        println!(
+            "Initial cache: {} tiles, {} MB used",
+            stats1.tile_count,
+            stats1.disk_used / (1024 * 1024)
+        );
 
         // Step 2: Drop the cache (simulate app close)
         drop(cache1);
@@ -914,21 +933,31 @@ mod tests {
 
         // Step 6: Validate performance targets
         // Target: Cache restoration should feel instant (<100ms)
-        assert!(load_time_ms < 100,
-                "Disk cache restoration took {}ms, exceeds 100ms target",
-                load_time_ms);
+        assert!(
+            load_time_ms < 100,
+            "Disk cache restoration took {}ms, exceeds 100ms target",
+            load_time_ms
+        );
 
         // Target: Individual tile retrieval should be fast (<50ms)
-        assert!(retrieval_time_ms < 50,
-                "Tile retrieval took {}ms, exceeds 50ms target",
-                retrieval_time_ms);
+        assert!(
+            retrieval_time_ms < 50,
+            "Tile retrieval took {}ms, exceeds 50ms target",
+            retrieval_time_ms
+        );
 
         // Cleanup
         let _ = std::fs::remove_dir_all(temp_dir);
 
         println!("✓ Document reopening test passed:");
         println!("  - Cache restoration: {}ms (target: <100ms)", load_time_ms);
-        println!("  - Tile retrieval: {}ms (target: <50ms)", retrieval_time_ms);
-        println!("  - All {} tiles restored successfully", cache2.tile_count());
+        println!(
+            "  - Tile retrieval: {}ms (target: <50ms)",
+            retrieval_time_ms
+        );
+        println!(
+            "  - All {} tiles restored successfully",
+            cache2.tile_count()
+        );
     }
 }

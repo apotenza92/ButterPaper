@@ -44,7 +44,7 @@ pub use loader::{DocumentLoader, LoaderConfig};
 pub use manipulation::{generate_handles, HandleType, ManipulationHandle, ManipulationState};
 pub use measurement::{
     Measurement, MeasurementCollection, MeasurementId, MeasurementMetadata, MeasurementType,
-    ScaleSystem, ScaleSystemId, ScaleType,
+    ScaleSystem, ScaleSystemId, ScaleType, SerializableMeasurement,
 };
 pub use ocr::{OcrConfig, OcrEngine, OcrError, OcrResult, TextBlock};
 pub use page_switch::{PageSwitchResult, PageSwitcher};

@@ -3,11 +3,11 @@
 //! Provides fast document loading with metadata-only initialization
 //! and lazy loading of page content.
 
+use crate::annotation::SerializableAnnotation;
+use crate::measurement::{ScaleSystem, ScaleSystemId, SerializableMeasurement};
+use crate::text_edit::PageTextEdits;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use crate::measurement::{ScaleSystem, ScaleSystemId};
-use crate::text_edit::PageTextEdits;
-use crate::annotation::SerializableAnnotation;
 
 /// Unique identifier for a document
 pub type DocumentId = u64;
@@ -66,6 +66,10 @@ pub struct DocumentMetadata {
     /// Annotations for the document
     #[serde(default)]
     pub annotations: Vec<SerializableAnnotation>,
+
+    /// Measurements for the document
+    #[serde(default)]
+    pub measurements: Vec<SerializableMeasurement>,
 }
 
 impl DocumentMetadata {
@@ -122,13 +126,16 @@ impl DocumentMetadata {
 
     /// Get mutable text edits for a specific page
     pub fn get_text_edits_for_page_mut(&mut self, page_index: u16) -> Option<&mut PageTextEdits> {
-        self.text_edits.iter_mut().find(|e| e.page_index == page_index)
+        self.text_edits
+            .iter_mut()
+            .find(|e| e.page_index == page_index)
     }
 
     /// Set text edits for a specific page
     pub fn set_text_edits_for_page(&mut self, page_edits: PageTextEdits) {
         // Remove existing edits for this page
-        self.text_edits.retain(|e| e.page_index != page_edits.page_index);
+        self.text_edits
+            .retain(|e| e.page_index != page_edits.page_index);
 
         // Only add if there are edits
         if !page_edits.edits.is_empty() {
@@ -167,7 +174,10 @@ impl DocumentMetadata {
     }
 
     /// Get annotation by ID
-    pub fn get_annotation(&self, id: crate::annotation::AnnotationId) -> Option<&SerializableAnnotation> {
+    pub fn get_annotation(
+        &self,
+        id: crate::annotation::AnnotationId,
+    ) -> Option<&SerializableAnnotation> {
         self.annotations.iter().find(|a| a.id == id)
     }
 
@@ -193,6 +203,7 @@ impl Default for DocumentMetadata {
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
             annotations: Vec::new(),
+            measurements: Vec::new(),
         }
     }
 }
@@ -440,9 +451,7 @@ impl DocumentManager {
     /// Close a document
     pub fn close_document(&self, id: DocumentId) -> DocumentResult<()> {
         let mut documents = self.documents.lock().unwrap();
-        let document = documents
-            .get(&id)
-            .ok_or(DocumentError::NotFound(id))?;
+        let document = documents.get(&id).ok_or(DocumentError::NotFound(id))?;
 
         document.set_state(DocumentState::Closed);
         documents.remove(&id);
@@ -508,6 +517,7 @@ mod tests {
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
             annotations: Vec::new(),
+            measurements: Vec::new(),
         }
     }
 

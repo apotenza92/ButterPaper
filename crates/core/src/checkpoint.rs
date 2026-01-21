@@ -250,6 +250,7 @@ mod tests {
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
             annotations: Vec::new(),
+            measurements: Vec::new(),
         }
     }
 
@@ -399,10 +400,8 @@ mod tests {
     #[test]
     fn test_checkpoint_metadata() {
         let metadata = test_metadata("checkpoint_meta");
-        let checkpoint = CheckpointMetadata::new(
-            metadata.clone(),
-            Some("Test checkpoint".to_string()),
-        );
+        let checkpoint =
+            CheckpointMetadata::new(metadata.clone(), Some("Test checkpoint".to_string()));
 
         assert_eq!(checkpoint.metadata.title, metadata.title);
         assert_eq!(checkpoint.description, Some("Test checkpoint".to_string()));

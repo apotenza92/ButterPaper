@@ -3,7 +3,9 @@
 //! Provides fast file opening by loading only metadata initially.
 //! Page rendering is deferred to the render pipeline.
 
-use crate::document::{DocumentError, DocumentId, DocumentManager, DocumentMetadata, DocumentResult};
+use crate::document::{
+    DocumentError, DocumentId, DocumentManager, DocumentMetadata, DocumentResult,
+};
 use pdf_editor_render::PdfDocument;
 use std::path::Path;
 
@@ -41,9 +43,7 @@ impl DocumentLoader {
         }
 
         // Get file size
-        let file_size = std::fs::metadata(path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
         // Load metadata using pdf-editor-render crate
         // This is a fast operation that doesn't render any pages
@@ -97,14 +97,16 @@ impl DocumentLoader {
             default_scales: std::collections::HashMap::new(),
             text_edits: Vec::new(),
             annotations: Vec::new(),
+            measurements: Vec::new(),
         };
 
-        // Try to load persisted metadata (scale systems, text edits, annotations, etc.)
+        // Try to load persisted metadata (scale systems, text edits, annotations, measurements, etc.)
         if let Ok(Some(persisted)) = crate::persistence::load_metadata(path) {
             metadata.scale_systems = persisted.scale_systems;
             metadata.default_scales = persisted.default_scales;
             metadata.text_edits = persisted.text_edits;
             metadata.annotations = persisted.annotations;
+            metadata.measurements = persisted.measurements;
             // Merge persisted page dimensions if available (in case they weren't cached before)
             if !persisted.page_dimensions.is_empty() {
                 metadata.page_dimensions = persisted.page_dimensions;
