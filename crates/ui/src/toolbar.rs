@@ -577,6 +577,17 @@ impl Toolbar {
         self.config.visible
     }
 
+    /// Get the current toolbar configuration
+    pub fn config(&self) -> &ToolbarConfig {
+        &self.config
+    }
+
+    /// Update the toolbar configuration and rebuild
+    pub fn set_config(&mut self, config: ToolbarConfig) {
+        self.config = config;
+        self.rebuild();
+    }
+
     /// Get the toolbar height
     pub fn height(&self) -> f32 {
         if self.config.visible {

@@ -51,6 +51,15 @@ static MENU_EXPORT_IMAGES_CLICKED: AtomicBool = AtomicBool::new(false);
 /// Global flag indicating "Clear Menu" in Open Recent was clicked
 static MENU_CLEAR_RECENT_CLICKED: AtomicBool = AtomicBool::new(false);
 
+/// Global flag indicating "Light Mode" appearance was selected
+static MENU_APPEARANCE_LIGHT: AtomicBool = AtomicBool::new(false);
+
+/// Global flag indicating "Dark Mode" appearance was selected
+static MENU_APPEARANCE_DARK: AtomicBool = AtomicBool::new(false);
+
+/// Global flag indicating "System Appearance" was selected
+static MENU_APPEARANCE_SYSTEM: AtomicBool = AtomicBool::new(false);
+
 /// Global index of which recent file menu item was clicked (0-9, or usize::MAX for none)
 static RECENT_FILE_INDEX: AtomicUsize = AtomicUsize::new(usize::MAX);
 
@@ -90,6 +99,31 @@ pub fn poll_export_images_action() -> bool {
 /// Check if "Clear Menu" was clicked and reset the flag
 pub fn poll_clear_recent_action() -> bool {
     MENU_CLEAR_RECENT_CLICKED.swap(false, Ordering::SeqCst)
+}
+
+/// Appearance mode selection from View menu
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppearanceSelection {
+    /// User selected Light Mode
+    Light,
+    /// User selected Dark Mode
+    Dark,
+    /// User selected System (auto) appearance
+    System,
+}
+
+/// Check if an appearance mode was selected and return which one
+pub fn poll_appearance_action() -> Option<AppearanceSelection> {
+    if MENU_APPEARANCE_LIGHT.swap(false, Ordering::SeqCst) {
+        return Some(AppearanceSelection::Light);
+    }
+    if MENU_APPEARANCE_DARK.swap(false, Ordering::SeqCst) {
+        return Some(AppearanceSelection::Dark);
+    }
+    if MENU_APPEARANCE_SYSTEM.swap(false, Ordering::SeqCst) {
+        return Some(AppearanceSelection::System);
+    }
+    None
 }
 
 /// Check if a recent file menu item was clicked and return its path
@@ -256,6 +290,31 @@ unsafe fn register_menu_handler_class() -> *const Class {
     add_recent_file_method!(decl, 7, openRecentFile7, open_recent_7);
     add_recent_file_method!(decl, 8, openRecentFile8, open_recent_8);
     add_recent_file_method!(decl, 9, openRecentFile9, open_recent_9);
+
+    // Add appearance mode methods
+    extern "C" fn set_appearance_light(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_APPEARANCE_LIGHT.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(setAppearanceLight:),
+        set_appearance_light as extern "C" fn(&Object, Sel, id),
+    );
+
+    extern "C" fn set_appearance_dark(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_APPEARANCE_DARK.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(setAppearanceDark:),
+        set_appearance_dark as extern "C" fn(&Object, Sel, id),
+    );
+
+    extern "C" fn set_appearance_system(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_APPEARANCE_SYSTEM.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(setAppearanceSystem:),
+        set_appearance_system as extern "C" fn(&Object, Sel, id),
+    );
 
     // Add validateMenuItem: to enable our custom menu items
     extern "C" fn validate_menu_item(_this: &Object, _cmd: Sel, _item: id) -> BOOL {
@@ -769,6 +828,54 @@ unsafe fn add_view_menu(main_menu: id) {
 
     // Show Annotations
     view_menu.addItem_(menu_item_no_key("Show Annotations", selector("toggleAnnotations:")));
+
+    view_menu.addItem_(separator_item());
+
+    // Appearance submenu
+    let appearance_menu = NSMenu::alloc(nil).initWithTitle_(ns_string("Appearance")).autorelease();
+
+    let handler = get_menu_handler();
+
+    // Light Mode
+    let light_item = NSMenuItem::alloc(nil)
+        .initWithTitle_action_keyEquivalent_(
+            ns_string("Light"),
+            sel!(setAppearanceLight:),
+            ns_string(""),
+        )
+        .autorelease();
+    let _: () = msg_send![light_item, setTarget: handler];
+    appearance_menu.addItem_(light_item);
+
+    // Dark Mode
+    let dark_item = NSMenuItem::alloc(nil)
+        .initWithTitle_action_keyEquivalent_(
+            ns_string("Dark"),
+            sel!(setAppearanceDark:),
+            ns_string(""),
+        )
+        .autorelease();
+    let _: () = msg_send![dark_item, setTarget: handler];
+    appearance_menu.addItem_(dark_item);
+
+    appearance_menu.addItem_(separator_item());
+
+    // System (Auto)
+    let system_item = NSMenuItem::alloc(nil)
+        .initWithTitle_action_keyEquivalent_(
+            ns_string("System (Auto)"),
+            sel!(setAppearanceSystem:),
+            ns_string(""),
+        )
+        .autorelease();
+    let _: () = msg_send![system_item, setTarget: handler];
+    appearance_menu.addItem_(system_item);
+
+    // Create and add the Appearance submenu item
+    let appearance_item = NSMenuItem::new(nil).autorelease();
+    appearance_item.setSubmenu_(appearance_menu);
+    let _: () = msg_send![appearance_item, setTitle: ns_string("Appearance")];
+    view_menu.addItem_(appearance_item);
 
     // Create menu bar item
     let view_menu_item = NSMenuItem::new(nil).autorelease();

@@ -1922,6 +1922,8 @@ struct App {
     show_splash: bool,
     /// Whether deferred initialization has been completed (done after first frame for fast startup)
     deferred_init_complete: bool,
+    /// Whether the theme has changed and UI needs rebuilding
+    theme_changed: bool,
 }
 
 impl App {
@@ -2022,6 +2024,7 @@ impl App {
             splash_texture: None,
             show_splash: true, // Show splash on cold start
             deferred_init_complete: false,
+            theme_changed: false,
         }
     }
 
@@ -5279,6 +5282,47 @@ impl App {
         if let Some(spinner) = &mut self.loading_spinner {
             spinner.update();
         }
+
+        // Handle theme changes - rebuild UI component textures with new colors
+        if self.theme_changed {
+            self.theme_changed = false;
+
+            // Rebuild toolbar with new theme colors
+            let theme = pdf_editor_ui::theme::current_theme();
+            self.toolbar.set_config(pdf_editor_ui::toolbar::ToolbarConfig {
+                background_color: theme.colors.background_tertiary,
+                separator_color: theme.colors.separator,
+                button_color: theme.colors.button_normal,
+                button_hover_color: theme.colors.button_hover,
+                button_active_color: theme.colors.button_active,
+                button_icon_color: theme.colors.button_icon,
+                button_size: theme.sizes.button_size,
+                button_spacing: theme.spacing.sm,
+                padding: theme.spacing.md,
+                visible: self.toolbar.config().visible,
+            });
+
+            // Rebuild search bar with new theme colors
+            self.search_bar.set_config(pdf_editor_ui::search_bar::SearchBarConfig {
+                background_color: theme.colors.background_secondary,
+                input_background_color: theme.colors.background_input,
+                input_border_color: theme.colors.border_primary,
+                input_focused_border_color: theme.colors.border_focused,
+                button_color: theme.colors.button_normal,
+                button_hover_color: theme.colors.button_hover,
+                button_icon_color: theme.colors.button_icon,
+                text_color: theme.colors.text_primary,
+                placeholder_color: theme.colors.text_muted,
+                padding: theme.spacing.md,
+                visible: self.search_bar.is_visible(),
+            });
+
+            // Update textures
+            self.update_toolbar_texture();
+            self.update_search_bar_texture();
+            self.update_note_popup_texture();
+            self.update_thumbnail_texture();
+        }
     }
 
     /// Log viewport state changes (throttled to significant changes only)
@@ -6927,6 +6971,31 @@ impl ApplicationHandler for App {
                 }
             }
             menu::refresh_open_recent_menu();
+        }
+
+        // Check for appearance mode change from menu
+        if let Some(appearance) = menu::poll_appearance_action() {
+            use pdf_editor_ui::theme::{set_appearance_mode, AppearanceMode};
+            let mode = match appearance {
+                menu::AppearanceSelection::Light => AppearanceMode::Light,
+                menu::AppearanceSelection::Dark => AppearanceMode::Dark,
+                menu::AppearanceSelection::System => AppearanceMode::System,
+            };
+            if set_appearance_mode(mode) {
+                // Theme changed, rebuild UI components that use theme colors
+                self.theme_changed = true;
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+        }
+
+        // Check for system appearance changes (when in System mode)
+        if pdf_editor_ui::theme::check_system_appearance_change() {
+            self.theme_changed = true;
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
 
         self.process_file_open();

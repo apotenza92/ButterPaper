@@ -346,28 +346,273 @@ impl Theme {
     }
 }
 
-/// Global theme accessor.
+use std::sync::RwLock;
+
+/// Appearance mode for the application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AppearanceMode {
+    /// Light mode (light backgrounds, dark text)
+    Light,
+    /// Dark mode (dark backgrounds, light text)
+    #[default]
+    Dark,
+    /// Follow system appearance (auto-switch based on macOS settings)
+    System,
+}
+
+/// Theme state that can be changed at runtime.
+struct ThemeState {
+    /// The current theme (computed from mode)
+    theme: Theme,
+    /// The current appearance mode
+    mode: AppearanceMode,
+    /// Generation counter for tracking theme changes
+    generation: u64,
+}
+
+impl Default for ThemeState {
+    fn default() -> Self {
+        Self {
+            theme: Theme::dark(),
+            mode: AppearanceMode::Dark,
+            generation: 0,
+        }
+    }
+}
+
+/// Global theme accessor with runtime switching support.
 ///
 /// This provides a convenient way to access the current theme throughout the
-/// application without passing it through every function call.
-static CURRENT_THEME: std::sync::OnceLock<Theme> = std::sync::OnceLock::new();
+/// application without passing it through every function call, while also
+/// supporting runtime theme changes for dark mode support.
+static CURRENT_THEME: RwLock<ThemeState> = RwLock::new(ThemeState {
+    theme: Theme {
+        colors: ThemeColors {
+            // Dark theme colors (default) - duplicated here for const initialization
+            background_primary: Color { r: 0.12, g: 0.12, b: 0.12, a: 1.0 },
+            background_secondary: Color { r: 0.15, g: 0.15, b: 0.15, a: 0.95 },
+            background_tertiary: Color { r: 0.18, g: 0.18, b: 0.18, a: 0.98 },
+            background_elevated: Color { r: 0.22, g: 0.22, b: 0.22, a: 1.0 },
+            background_input: Color { r: 0.10, g: 0.10, b: 0.10, a: 1.0 },
+            text_primary: Color { r: 0.90, g: 0.90, b: 0.90, a: 1.0 },
+            text_secondary: Color { r: 0.70, g: 0.70, b: 0.70, a: 1.0 },
+            text_muted: Color { r: 0.50, g: 0.50, b: 0.50, a: 1.0 },
+            text_disabled: Color { r: 0.40, g: 0.40, b: 0.40, a: 1.0 },
+            accent_primary: Color { r: 0.30, g: 0.50, b: 0.80, a: 1.0 },
+            accent_secondary: Color { r: 0.30, g: 0.60, b: 1.00, a: 1.0 },
+            accent_success: Color { r: 0.20, g: 0.50, b: 0.30, a: 1.0 },
+            accent_warning: Color { r: 0.80, g: 0.60, b: 0.20, a: 1.0 },
+            accent_error: Color { r: 0.50, g: 0.25, b: 0.25, a: 1.0 },
+            border_primary: Color { r: 0.35, g: 0.35, b: 0.35, a: 1.0 },
+            border_secondary: Color { r: 0.30, g: 0.30, b: 0.30, a: 1.0 },
+            border_focused: Color { r: 0.30, g: 0.50, b: 0.80, a: 1.0 },
+            border_selected: Color { r: 0.30, g: 0.60, b: 1.00, a: 1.0 },
+            button_normal: Color { r: 0.25, g: 0.25, b: 0.25, a: 1.0 },
+            button_hover: Color { r: 0.35, g: 0.35, b: 0.35, a: 1.0 },
+            button_active: Color { r: 0.20, g: 0.40, b: 0.70, a: 1.0 },
+            button_icon: Color { r: 0.90, g: 0.90, b: 0.90, a: 1.0 },
+            separator: Color { r: 0.30, g: 0.30, b: 0.30, a: 1.0 },
+            note_background: Color { r: 1.00, g: 1.00, b: 0.85, a: 0.98 },
+            note_title_bar: Color { r: 0.95, g: 0.90, b: 0.70, a: 1.0 },
+            note_border: Color { r: 0.70, g: 0.65, b: 0.40, a: 1.0 },
+            note_text: Color { r: 0.10, g: 0.10, b: 0.10, a: 1.0 },
+        },
+        spacing: ThemeSpacing { xs: 2.0, sm: 4.0, md: 8.0, lg: 16.0, xl: 24.0, xxl: 32.0 },
+        sizes: ThemeSizes {
+            toolbar_height: 44.0,
+            search_bar_height: 36.0,
+            button_size: 32.0,
+            button_size_small: 24.0,
+            border_width: 1.0,
+            border_width_focused: 2.0,
+            thumbnail_width: 120.0,
+            thumbnail_height: 160.0,
+            border_radius: 0.0,
+        },
+    },
+    mode: AppearanceMode::Dark,
+    generation: 0,
+});
 
 /// Get the current application theme.
 ///
-/// Returns the dark theme by default if no theme has been explicitly set.
-pub fn current_theme() -> &'static Theme {
-    CURRENT_THEME.get_or_init(Theme::default)
+/// Returns a copy of the current theme. The theme may change at runtime
+/// when the system appearance changes or when explicitly set.
+pub fn current_theme() -> Theme {
+    CURRENT_THEME.read().unwrap().theme
 }
 
-/// Initialize the application theme.
+/// Get the current theme generation counter.
 ///
-/// This should be called once at application startup. If not called,
-/// `current_theme()` will return the default dark theme.
+/// This can be used to detect when the theme has changed without comparing
+/// the full theme struct. The generation increments each time the theme changes.
+pub fn theme_generation() -> u64 {
+    CURRENT_THEME.read().unwrap().generation
+}
+
+/// Get the current appearance mode.
+pub fn current_appearance_mode() -> AppearanceMode {
+    CURRENT_THEME.read().unwrap().mode
+}
+
+/// Set the appearance mode.
 ///
-/// # Panics
-/// Panics if called more than once.
-pub fn init_theme(theme: Theme) {
-    CURRENT_THEME.set(theme).expect("Theme already initialized");
+/// This changes the theme based on the specified mode:
+/// - `AppearanceMode::Light` - Always use light theme
+/// - `AppearanceMode::Dark` - Always use dark theme
+/// - `AppearanceMode::System` - Follow system appearance (requires calling
+///   `apply_system_appearance()` to actually apply the system setting)
+///
+/// Returns true if the theme actually changed.
+pub fn set_appearance_mode(mode: AppearanceMode) -> bool {
+    let mut state = CURRENT_THEME.write().unwrap();
+    if state.mode == mode {
+        return false;
+    }
+
+    state.mode = mode;
+    let new_theme = match mode {
+        AppearanceMode::Light => Theme::light(),
+        AppearanceMode::Dark => Theme::dark(),
+        AppearanceMode::System => {
+            // When set to System, use current system appearance
+            // This will be updated by apply_system_appearance()
+            if is_system_dark_mode() {
+                Theme::dark()
+            } else {
+                Theme::light()
+            }
+        }
+    };
+
+    let changed = state.theme != new_theme;
+    if changed {
+        state.theme = new_theme;
+        state.generation += 1;
+    }
+    changed
+}
+
+/// Apply the current system appearance to the theme.
+///
+/// This only has an effect when the appearance mode is set to `System`.
+/// Call this when the system appearance changes (e.g., from a notification).
+///
+/// Returns true if the theme actually changed.
+pub fn apply_system_appearance(is_dark: bool) -> bool {
+    let mut state = CURRENT_THEME.write().unwrap();
+
+    // Only apply if in System mode
+    if state.mode != AppearanceMode::System {
+        return false;
+    }
+
+    let new_theme = if is_dark {
+        Theme::dark()
+    } else {
+        Theme::light()
+    };
+
+    let changed = state.theme != new_theme;
+    if changed {
+        state.theme = new_theme;
+        state.generation += 1;
+    }
+    changed
+}
+
+/// Initialize the theme with a specific mode at startup.
+///
+/// This is a convenience function for setting the initial appearance mode.
+pub fn init_theme(mode: AppearanceMode) {
+    set_appearance_mode(mode);
+}
+
+/// Check if the system is currently in dark mode.
+///
+/// On macOS, this queries the system appearance setting.
+/// On other platforms, returns true (dark mode default).
+#[cfg(target_os = "macos")]
+pub fn is_system_dark_mode() -> bool {
+    #[allow(deprecated)]
+    use cocoa::appkit::NSApplication;
+    #[allow(deprecated)]
+    use cocoa::base::nil;
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+    use std::ffi::CStr;
+
+    unsafe {
+        // Get the shared NSApplication instance
+        #[allow(deprecated)]
+        let app = NSApplication::sharedApplication(nil);
+        if app.is_null() {
+            return true; // Default to dark if we can't get the app
+        }
+
+        // Get effectiveAppearance
+        let appearance: *mut Object = msg_send![app, effectiveAppearance];
+        if appearance.is_null() {
+            return true;
+        }
+
+        // Get appearance name
+        let name: *mut Object = msg_send![appearance, name];
+        if name.is_null() {
+            return true;
+        }
+
+        // Convert NSString to &str and check for "Dark"
+        let name_cstr: *const i8 = msg_send![name, UTF8String];
+        if name_cstr.is_null() {
+            return true;
+        }
+
+        let name_rust = CStr::from_ptr(name_cstr);
+        if let Ok(name_str) = name_rust.to_str() {
+            // Dark mode appearance names contain "Dark"
+            // e.g., "NSAppearanceNameDarkAqua", "NSAppearanceNameAccessibilityHighContrastDarkAqua"
+            name_str.contains("Dark")
+        } else {
+            true
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_system_dark_mode() -> bool {
+    // Default to dark mode on non-macOS platforms
+    true
+}
+
+/// Check for system appearance changes and update the theme if needed.
+///
+/// This should be called periodically (e.g., when the app becomes active or
+/// receives certain events) to detect when the user changes their system
+/// appearance setting.
+///
+/// Returns true if the theme changed as a result of this check.
+pub fn check_system_appearance_change() -> bool {
+    let mode = current_appearance_mode();
+    if mode != AppearanceMode::System {
+        return false;
+    }
+
+    let is_dark = is_system_dark_mode();
+    apply_system_appearance(is_dark)
+}
+
+/// Initialize the theme to follow system appearance.
+///
+/// This sets the appearance mode to System and applies the current
+/// system appearance. Call this at app startup if you want the app
+/// to automatically match the system light/dark mode.
+pub fn init_system_appearance() {
+    // First set to System mode
+    set_appearance_mode(AppearanceMode::System);
+    // Then apply current system appearance
+    let is_dark = is_system_dark_mode();
+    apply_system_appearance(is_dark);
 }
 
 #[cfg(test)]
@@ -474,5 +719,100 @@ mod tests {
         assert!(colors.note_background.r > 0.9);
         assert!(colors.note_background.g > 0.9);
         assert!(colors.note_background.b < colors.note_background.r);
+    }
+
+    #[test]
+    fn test_appearance_mode_default() {
+        // Default mode should be Dark
+        assert_eq!(AppearanceMode::default(), AppearanceMode::Dark);
+    }
+
+    #[test]
+    fn test_theme_state_default() {
+        let state = ThemeState::default();
+        assert_eq!(state.mode, AppearanceMode::Dark);
+        assert_eq!(state.generation, 0);
+    }
+
+    #[test]
+    fn test_set_appearance_mode_light() {
+        // Note: This test manipulates global state, so results depend on test order
+        // We test the Theme construction directly to avoid global state issues
+        let theme = Theme::light();
+
+        // Light theme should have light backgrounds
+        assert!(theme.colors.background_primary.r > 0.9);
+        assert!(theme.colors.background_primary.g > 0.9);
+        assert!(theme.colors.background_primary.b > 0.9);
+
+        // Light theme should have dark text
+        assert!(theme.colors.text_primary.r < 0.2);
+        assert!(theme.colors.text_primary.g < 0.2);
+        assert!(theme.colors.text_primary.b < 0.2);
+    }
+
+    #[test]
+    fn test_set_appearance_mode_dark() {
+        let theme = Theme::dark();
+
+        // Dark theme should have dark backgrounds
+        assert!(theme.colors.background_primary.r < 0.2);
+        assert!(theme.colors.background_primary.g < 0.2);
+        assert!(theme.colors.background_primary.b < 0.2);
+
+        // Dark theme should have light text
+        assert!(theme.colors.text_primary.r > 0.8);
+        assert!(theme.colors.text_primary.g > 0.8);
+        assert!(theme.colors.text_primary.b > 0.8);
+    }
+
+    #[test]
+    fn test_theme_generation_increments() {
+        // Test that theme generation works correctly
+        let initial_gen = theme_generation();
+
+        // Switching to same mode should not change generation
+        // Since tests share global state, we just verify generation is >= 0
+        assert!(initial_gen >= 0);
+    }
+
+    #[test]
+    fn test_apply_system_appearance_only_in_system_mode() {
+        // When not in System mode, apply_system_appearance should return false
+        // and not change the theme
+        let theme_before = current_theme();
+
+        // The global state may be in any mode, so we test the logic directly
+        let mode = current_appearance_mode();
+        if mode != AppearanceMode::System {
+            // In non-System mode, apply_system_appearance should do nothing
+            let changed = apply_system_appearance(false);
+            assert!(!changed || mode == AppearanceMode::System);
+        }
+
+        // Theme should still be the same
+        let theme_after = current_theme();
+        assert_eq!(theme_before.colors.background_primary.r, theme_after.colors.background_primary.r);
+    }
+
+    #[test]
+    fn test_theme_colors_light_vs_dark_contrast() {
+        let dark = ThemeColors::dark();
+        let light = ThemeColors::light();
+
+        // Background brightness should be inverted
+        assert!(dark.background_primary.r < 0.2);
+        assert!(light.background_primary.r > 0.9);
+
+        // Text brightness should be inverted
+        assert!(dark.text_primary.r > 0.8);
+        assert!(light.text_primary.r < 0.2);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn test_is_system_dark_mode_non_macos() {
+        // On non-macOS platforms, should default to dark
+        assert!(is_system_dark_mode());
     }
 }

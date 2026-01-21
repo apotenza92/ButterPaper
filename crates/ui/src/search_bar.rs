@@ -332,6 +332,17 @@ impl SearchBar {
         self.config.visible
     }
 
+    /// Get the current search bar configuration
+    pub fn config(&self) -> &SearchBarConfig {
+        &self.config
+    }
+
+    /// Update the search bar configuration and rebuild
+    pub fn set_config(&mut self, config: SearchBarConfig) {
+        self.config = config;
+        self.rebuild();
+    }
+
     /// Get the search bar height
     pub fn height(&self) -> f32 {
         if self.config.visible {

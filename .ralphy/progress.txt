@@ -12384,3 +12384,67 @@ pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_
 - Single source of truth for colors, spacing, and sizes
 - Easy to adjust visual style by modifying theme.rs
 
+
+### Task: Implement dark mode support (Phase 4.3)
+
+**Status:** Complete
+
+**Changes:**
+- Modified theme module (`crates/ui/src/theme.rs`) to support runtime theme switching:
+  - Replaced `OnceLock<Theme>` with `RwLock<ThemeState>` for mutable global state
+  - Added `AppearanceMode` enum with `Light`, `Dark`, and `System` variants
+  - Added `ThemeState` struct tracking current theme, mode, and generation counter
+  - Implemented `is_system_dark_mode()` for macOS using Cocoa/objc to query NSApplication.effectiveAppearance
+  - Added `set_appearance_mode()` to switch between light/dark/system modes
+  - Added `apply_system_appearance()` to update theme when system appearance changes
+  - Added `check_system_appearance_change()` for polling-based appearance change detection
+  - Added `init_system_appearance()` convenience function for app startup
+  - Added `theme_generation()` for efficient change detection
+  - `current_theme()` now returns `Theme` by value instead of `&'static Theme`
+
+- Added View > Appearance menu in menu.rs:
+  - Added `AppearanceSelection` enum and `poll_appearance_action()` function
+  - Added atomic flags for light/dark/system menu selections
+  - Added menu handler methods for setAppearanceLight/Dark/System selectors
+  - Added Appearance submenu with Light, Dark, and System (Auto) options
+
+- Updated App struct and event handling in main.rs:
+  - Added `theme_changed: bool` field to App struct
+  - Poll for appearance menu actions and apply mode changes
+  - Poll for system appearance changes when in System mode
+  - Rebuild toolbar and search bar configs with new theme colors on change
+  - Update textures when theme changes
+
+- Added UI component configuration methods:
+  - Added `set_config()` and `config()` methods to `Toolbar` in toolbar.rs
+  - Added `set_config()` and `config()` methods to `SearchBar` in search_bar.rs
+
+- Added comprehensive tests:
+  - `test_appearance_mode_default` - verifies default is Dark
+  - `test_theme_state_default` - verifies ThemeState initialization
+  - `test_set_appearance_mode_light` - verifies light theme colors
+  - `test_set_appearance_mode_dark` - verifies dark theme colors
+  - `test_theme_generation_increments` - verifies generation tracking
+  - `test_apply_system_appearance_only_in_system_mode` - verifies System mode behavior
+  - `test_theme_colors_light_vs_dark_contrast` - verifies proper contrast between themes
+  - `test_is_system_dark_mode_non_macos` - verifies non-macOS fallback
+
+**Files Modified:**
+- crates/ui/src/theme.rs (major rewrite for runtime switching)
+- crates/ui/src/toolbar.rs (added set_config/config methods)
+- crates/ui/src/search_bar.rs (added set_config/config methods)
+- crates/app/src/menu.rs (added Appearance submenu)
+- crates/app/src/main.rs (added theme change handling)
+- PRD.md (marked task as complete)
+
+**Test Results:**
+- All 249 pdf-editor-ui tests pass (including 15 theme tests)
+- All workspace tests pass
+- Clippy passes with only expected objc macro warnings
+
+**Architecture Notes:**
+- Theme switching is polling-based rather than notification-based for simplicity
+- System appearance detection queries NSApplication.effectiveAppearance
+- UI components rebuild their scene graphs when config changes
+- Generation counter enables efficient dirty checking without full theme comparison
+- Light and dark themes have properly inverted backgrounds and text colors

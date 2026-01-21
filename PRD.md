@@ -378,7 +378,7 @@ Wire up existing measurement system.
 
 ### Phase 4.3: Polish
 - [x] Consistent visual style
-- [ ] Dark mode support
+- [x] Dark mode support
 - [ ] Retina display support (ProMotion 120Hz)
 - [ ] Target: 120fps on ProMotion displays, 60fps minimum
 - [ ] Smooth scrolling with no frame drops
