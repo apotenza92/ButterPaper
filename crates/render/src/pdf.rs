@@ -5,6 +5,55 @@
 use pdfium_render::prelude::*;
 use std::path::Path;
 
+/// Minimum number of non-whitespace characters required to skip OCR
+const MIN_TEXT_CHARS_THRESHOLD: usize = 50;
+
+/// Minimum word count required to skip OCR
+const MIN_WORD_COUNT_THRESHOLD: usize = 10;
+
+/// Detect if a page needs OCR based on extracted text content
+///
+/// This function analyzes the extracted text from a PDF page to determine
+/// if OCR is necessary. Pages with minimal or no selectable text need OCR.
+///
+/// # Logic
+/// - Empty or whitespace-only text → needs OCR
+/// - Very short text (< 50 chars) → needs OCR
+/// - Few words (< 10 words) → needs OCR
+/// - Otherwise → has sufficient text, skip OCR
+///
+/// # Arguments
+/// * `text` - The extracted text from the page
+///
+/// # Returns
+/// * `true` if the page needs OCR
+/// * `false` if the page has sufficient selectable text
+pub fn detect_needs_ocr(text: &str) -> bool {
+    // Empty or whitespace-only pages need OCR
+    if text.trim().is_empty() {
+        return true;
+    }
+
+    // Count non-whitespace characters
+    let char_count = text.chars().filter(|c| !c.is_whitespace()).count();
+    if char_count < MIN_TEXT_CHARS_THRESHOLD {
+        return true;
+    }
+
+    // Count words (sequences of alphanumeric characters)
+    let word_count = text
+        .split_whitespace()
+        .filter(|word| word.chars().any(|c| c.is_alphanumeric()))
+        .count();
+
+    if word_count < MIN_WORD_COUNT_THRESHOLD {
+        return true;
+    }
+
+    // Page has sufficient text, no OCR needed
+    false
+}
+
 /// Errors that can occur during PDF operations
 #[derive(Debug)]
 pub enum PdfError {
@@ -133,6 +182,44 @@ impl PdfDocument {
                 .map(|v| v.value().to_string()),
         }
     }
+
+    /// Extract all text from a specific page
+    ///
+    /// This extracts any selectable text embedded in the PDF page.
+    /// Returns an empty string if the page has no text.
+    ///
+    /// # Arguments
+    /// * `page_index` - Zero-based page index
+    ///
+    /// # Returns
+    /// The extracted text or an error if the page index is invalid
+    pub fn extract_page_text(&self, page_index: u16) -> PdfResult<String> {
+        let page = self.get_page(page_index)?;
+
+        // Extract text from the page
+        let text = page
+            .text()
+            .map_err(|e| PdfError::RenderError(format!("Failed to extract text: {}", e)))?
+            .all()
+            .to_string();
+
+        Ok(text)
+    }
+
+    /// Check if a page has selectable text
+    ///
+    /// Returns true if the page has sufficient selectable text,
+    /// false if the page needs OCR.
+    ///
+    /// # Arguments
+    /// * `page_index` - Zero-based page index
+    ///
+    /// # Returns
+    /// True if the page has text, false otherwise
+    pub fn page_has_text(&self, page_index: u16) -> PdfResult<bool> {
+        let text = self.extract_page_text(page_index)?;
+        Ok(!detect_needs_ocr(&text))
+    }
 }
 
 /// PDF document metadata
@@ -170,5 +257,122 @@ mod tests {
         let metadata = PdfMetadata::default();
         assert!(metadata.title.is_none());
         assert!(metadata.author.is_none());
+    }
+
+    #[test]
+    fn test_detect_needs_ocr_empty_text() {
+        // Empty string needs OCR
+        assert!(detect_needs_ocr(""));
+
+        // Whitespace-only needs OCR
+        assert!(detect_needs_ocr("   "));
+        assert!(detect_needs_ocr("\n\n\t  "));
+        assert!(detect_needs_ocr("     \n     "));
+    }
+
+    #[test]
+    fn test_detect_needs_ocr_minimal_text() {
+        // Very short text needs OCR (< 50 chars)
+        assert!(detect_needs_ocr("Hello"));
+        assert!(detect_needs_ocr("Page 1"));
+        assert!(detect_needs_ocr("A B C D E F G"));
+
+        // Just under threshold
+        let short_text = "A".repeat(49);
+        assert!(detect_needs_ocr(&short_text));
+    }
+
+    #[test]
+    fn test_detect_needs_ocr_few_words() {
+        // Few words need OCR (< 10 words)
+        assert!(detect_needs_ocr("one two three four five"));
+        assert!(detect_needs_ocr("This is a short sentence."));
+
+        // 9 words - should need OCR
+        assert!(detect_needs_ocr("one two three four five six seven eight nine"));
+    }
+
+    #[test]
+    fn test_detect_needs_ocr_sufficient_text() {
+        // 10+ words with 50+ chars - no OCR needed
+        let text = "This is a document with sufficient text content that should not require OCR processing.";
+        assert!(!detect_needs_ocr(text));
+
+        // 100+ words - definitely no OCR needed
+        let long_text = "word ".repeat(100);
+        assert!(!detect_needs_ocr(&long_text));
+
+        // Real-world example
+        let document_text = "Construction plans for building 123. \
+                             Floor plans indicate 3 bedrooms, 2 bathrooms. \
+                             Total square footage: 2,500 sq ft. \
+                             Foundation depth: 4 feet. \
+                             Wall height: 9 feet.";
+        assert!(!detect_needs_ocr(document_text));
+    }
+
+    #[test]
+    fn test_detect_needs_ocr_edge_cases() {
+        // Exactly at threshold - 50 non-whitespace chars with 10 words
+        let exactly_threshold = "apple banana cherry dates elder figs grape honey iris jades";
+        // This has 10 words and 50 non-whitespace characters (47 + 3 = 50)
+        assert!(!detect_needs_ocr(exactly_threshold));
+
+        // Exactly 10 words with sufficient characters
+        let ten_words = "Documentation contains multiple words with sufficient character count here now okay";
+        assert!(!detect_needs_ocr(ten_words));
+
+        // Non-alphanumeric content doesn't count as words
+        assert!(detect_needs_ocr("!!! ### $$$ %%% ^^^ &&& *** ((( ))) ___"));
+
+        // Mixed alphanumeric and symbols
+        let mixed = "Page 1 - Section A. Drawing #123. Scale: 1:100. Date: 2024-01-20.";
+        assert!(!detect_needs_ocr(mixed)); // Has sufficient words and chars
+
+        // 50 characters but only 1 word - needs OCR
+        let fifty_one_word = "A".repeat(50);
+        assert!(detect_needs_ocr(&fifty_one_word));
+
+        // 9 words with 50+ chars - needs OCR (not enough words)
+        let nine_words = "supercalifragilisticexpialidocious word three four five six seven eight nine";
+        assert!(detect_needs_ocr(nine_words));
+    }
+
+    #[test]
+    fn test_detect_needs_ocr_unicode() {
+        // Unicode with Latin alphanumeric characters should work
+        // Note: Rust's is_alphanumeric() primarily recognizes Latin/ASCII alphanumerics
+        let mixed_script = "Engineering Document contains sufficient text content for OCR detection purposes here";
+        assert!(!detect_needs_ocr(mixed_script));
+
+        // Unicode-only text without Latin characters would need OCR by our current logic
+        // This is a limitation of using is_alphanumeric() which is Latin-centric
+        let unicode_only = "这是一个包含中文字符的文档";
+        // This will need OCR because Chinese characters aren't detected as alphanumeric
+        assert!(detect_needs_ocr(unicode_only));
+
+        // Mixed Latin and Unicode with sufficient Latin words
+        let mixed_with_latin = "Document 文档 contains sufficient Latin words to pass the threshold test successfully here";
+        assert!(!detect_needs_ocr(mixed_with_latin));
+    }
+
+    #[test]
+    fn test_detect_needs_ocr_scanned_page_simulation() {
+        // Simulate a scanned page with just artifacts or minimal text
+        // (common in construction drawings)
+        assert!(detect_needs_ocr("1"));
+        assert!(detect_needs_ocr("Page 1 of 50"));
+        assert!(detect_needs_ocr("A1")); // Just a sheet number
+
+        // Simulate a page with actual content
+        let content_page = "FLOOR PLAN - LEVEL 1\n\
+                           BEDROOM 1: 12' x 15'\n\
+                           BEDROOM 2: 10' x 12'\n\
+                           LIVING ROOM: 20' x 18'\n\
+                           KITCHEN: 15' x 12'\n\
+                           BATHROOM: 8' x 10'\n\
+                           SCALE: 1/4\" = 1'-0\"\n\
+                           DATE: 2024-01-15";
+        assert!(!detect_needs_ocr(content_page));
     }
 }

@@ -217,10 +217,20 @@ impl OcrEngine {
     /// Check if a page needs OCR (doesn't have selectable text)
     ///
     /// This should be called before scheduling OCR to avoid unnecessary work.
-    pub fn needs_ocr(&self, _page_data: &[u8]) -> Result<bool, OcrError> {
-        // TODO: Implement text detection
-        // For now, assume all pages might need OCR
-        Ok(true)
+    /// Pages with minimal or no selectable text are considered to need OCR.
+    ///
+    /// The actual detection logic is implemented in the render crate's
+    /// `detect_needs_ocr` function, which checks for sufficient text content.
+    ///
+    /// # Arguments
+    /// * `extracted_text` - Text already extracted from the page (if any)
+    ///
+    /// # Returns
+    /// * `true` if the page needs OCR (no or minimal text)
+    /// * `false` if the page has sufficient selectable text
+    pub fn needs_ocr(&self, extracted_text: &str) -> bool {
+        // Delegate to the render crate's detection function
+        pdf_editor_render::detect_needs_ocr(extracted_text)
     }
 
     /// Perform OCR on a page image
@@ -495,5 +505,26 @@ mod tests {
 
         let error = OcrError::LanguageNotFound("eng".to_string());
         assert_eq!(error.to_string(), "OCR language data not found: eng");
+    }
+
+    #[test]
+    fn test_ocr_engine_needs_ocr() {
+        use pdf_editor_render::detect_needs_ocr;
+
+        let config = OcrConfig::default();
+        let engine = OcrEngine::new(config).unwrap();
+
+        // Test various scenarios
+        assert!(engine.needs_ocr(""));
+        assert!(engine.needs_ocr("Page 1"));
+
+        // Sufficient text: 10+ words and 50+ chars
+        let sufficient_text = "This is a document with sufficient text content that should not require OCR processing.";
+        assert!(!engine.needs_ocr(sufficient_text));
+
+        // Test the detection function directly
+        assert!(detect_needs_ocr(""));
+        assert!(detect_needs_ocr("Page 1"));
+        assert!(!detect_needs_ocr(sufficient_text));
     }
 }

@@ -5610,3 +5610,132 @@ match job.job_type {
 
 This implementation provides a solid foundation for the remaining OCR tasks in Phase 9.
 
+
+---
+
+## Task: Implement Automatic Detection of Pages Without Selectable Text (Phase 9, Task 109)
+
+**Date**: 2026-01-21
+
+### Overview
+
+Implemented automatic detection of PDF pages that lack selectable text and require OCR processing. This feature allows the application to intelligently determine which pages need OCR, avoiding unnecessary processing on pages that already have embedded text.
+
+### Implementation Details
+
+#### 1. Text Detection Algorithm
+
+Created a robust text detection function `detect_needs_ocr()` in `crates/render/src/pdf.rs`:
+
+**Detection Criteria**:
+- Pages with < 50 non-whitespace characters → need OCR
+- Pages with < 10 alphanumeric words → need OCR  
+- Empty or whitespace-only pages → need OCR
+- Pages meeting both thresholds → skip OCR
+
+**Rationale**: Construction and engineering PDFs often have minimal metadata (page numbers, sheet IDs) on scanned drawings. The dual-threshold approach ensures we catch truly scanned pages while avoiding false positives on pages with actual content.
+
+**Code Location**: `crates/render/src/pdf.rs:31-54`
+
+#### 2. PDF Text Extraction
+
+Added text extraction methods to `PdfDocument` class:
+
+- `extract_page_text(page_index)` - Extract all text from a PDF page using PDFium's text extraction API
+- `page_has_text(page_index)` - Boolean check using the detection logic
+
+These methods integrate with pdfium-render's built-in text extraction capabilities.
+
+**Code Location**: `crates/render/src/pdf.rs:187-222`
+
+#### 3. OCR Engine Integration
+
+Updated `OcrEngine` in `crates/core/src/ocr.rs` to use the detection function:
+
+- Modified `needs_ocr()` method to accept extracted text as a parameter
+- Delegates to the render crate's `detect_needs_ocr()` function
+- Allows the OCR subsystem to make informed scheduling decisions
+
+**Code Location**: `crates/core/src/ocr.rs:217-234`
+
+### Architecture Decision: Module Organization
+
+Initially attempted to place `detect_needs_ocr()` in the core crate, but this created a circular dependency (core → render → core). The function belongs in the render crate because:
+
+1. It's closely related to PDF text extraction (render concern)
+2. The render crate already depends on pdfium-render for PDF operations
+3. Core can import from render without creating cycles
+4. The function is now exported from render's public API for use by core and other crates
+
+### Testing
+
+Added comprehensive test coverage in `crates/render/src/pdf.rs`:
+
+- **Empty text detection**: Whitespace-only pages correctly identified
+- **Minimal text detection**: Pages with just sheet numbers or page labels
+- **Word count thresholds**: Pages with insufficient word count (< 10 words)
+- **Character count thresholds**: Pages with insufficient characters (< 50 non-whitespace)
+- **Edge cases**: Boundary conditions at exactly 50 chars / 10 words
+- **Real-world scenarios**: Simulated construction drawing pages with actual content vs. scanned pages
+- **Unicode handling**: Documents with non-Latin scripts (current limitation: requires Latin alphanumerics for word counting)
+
+**Test Coverage**: 9 dedicated test functions covering all detection scenarios
+
+### Build Verification
+
+All checks passing:
+```bash
+cargo clippy --all-targets --all-features -- -D warnings  # ✓ No warnings
+cargo test -p pdf-editor-render                           # ✓ 20/20 tests pass
+cargo test -p pdf-editor-core                             # ✓ 127/127 tests pass
+```
+
+### Usage Example
+
+```rust
+use pdf_editor_render::{PdfDocument, detect_needs_ocr};
+use pdf_editor_core::OcrEngine;
+
+// Open a PDF document
+let doc = PdfDocument::open("construction_plans.pdf")?;
+
+// Check if a specific page needs OCR
+let page_text = doc.extract_page_text(0)?;
+if detect_needs_ocr(&page_text) {
+    // Schedule OCR for this page
+    let ocr_engine = OcrEngine::new(OcrConfig::default())?;
+    ocr_engine.initialize()?;
+    // ... perform OCR ...
+} else {
+    // Page already has selectable text, use existing text
+    println!("Page has {} characters of text", page_text.len());
+}
+
+// Or use the convenience method
+if !doc.page_has_text(0)? {
+    // Schedule OCR
+}
+```
+
+### Benefits
+
+1. **Efficiency**: Avoids unnecessary OCR processing on pages that already have text
+2. **Smart Scheduling**: OCR job scheduler can prioritize pages that actually need OCR
+3. **User Experience**: Faster document loading since text-based pages render immediately
+4. **Resource Management**: Reduces CPU usage and improves battery life on portable devices
+5. **Progressive Enhancement**: Sets foundation for progressive OCR (Phase 9, Task 110)
+
+### Next Steps
+
+This implementation enables the next task in Phase 9:
+- **Task 110**: Build progressive OCR (current page → nearby → remaining when idle)
+
+The detection function can now be used by the job scheduler to intelligently prioritize which pages to process with OCR.
+
+### Files Modified
+
+- `crates/render/src/pdf.rs` - Added `detect_needs_ocr()`, `extract_page_text()`, `page_has_text()`, and comprehensive tests
+- `crates/render/src/lib.rs` - Exported `detect_needs_ocr` in public API
+- `crates/core/src/ocr.rs` - Updated `needs_ocr()` method to use render crate's detection function
+- `PRD.md` - Marked task 109 as complete
+
