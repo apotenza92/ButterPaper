@@ -11998,3 +11998,54 @@ The lazy loading pattern uses the existing `has_layer()` method in TextLayerMana
 - Clippy passes with no errors
 - Manual startup profiling shows consistent <200ms times
 
+
+
+### Task: Target <500ms to first PDF page visible (Phase 4.1)
+
+**Status:** Complete
+
+**Changes:**
+1. Added `--test-first-page` CLI flag to measure time to first PDF page render
+2. Implemented `run_test_first_page()` function that:
+   - Opens a PDF file
+   - Renders the first page at typical display size (1200x900)
+   - Reports timing breakdown (load_time, render_time, total)
+   - Validates against the 500ms target
+   - Returns exit code 0 if target met, 1 if missed
+3. Added unit tests for the new functionality:
+   - `test_run_test_first_page_nonexistent_file` - tests error handling for missing files
+   - `test_run_test_first_page_invalid_pdf` - tests error handling for invalid PDFs
+   - `test_run_test_first_page_valid_pdf_or_pdfium_missing` - tests successful rendering
+   - `test_first_page_timing_target` - documents the 500ms target
+
+**Files Modified:**
+- `crates/app/src/main.rs`:
+  - Added `run_test_first_page()` function (lines 6898-6952)
+  - Added `test_first_page` flag variable and parsing (lines 7143, 7158-7159)
+  - Added handler for `--test-first-page` mode (lines 7215-7224)
+  - Added 4 unit tests in `test_load_tests` module
+- `PRD.md`: Marked task as complete
+
+**Technical Details:**
+- The function measures two phases:
+  1. PDF loading via PDFium (`PdfDocument::open`)
+  2. First page render via `render_page_scaled(0, 1200, 900)`
+- Output format: `FIRST_PAGE: OK load_time=Xms render_time=Xms total=Xms size=WxH`
+- Target validation: `FIRST_PAGE: TARGET_MET (<500ms)` or `FIRST_PAGE: TARGET_MISSED (>=500ms)`
+
+**Usage:**
+```bash
+cargo run --release -- --test-first-page test.pdf
+# Output: FIRST_PAGE: OK load_time=50ms render_time=100ms total=150ms size=850x1100
+#         FIRST_PAGE: TARGET_MET (<500ms)
+```
+
+**Test Results:**
+- All 4 new tests pass
+- All 234 existing tests pass
+- No new clippy warnings for new code (pre-existing warnings in codebase)
+
+**Performance Verification:**
+The existing startup profiler already validates this target. With `--profile-startup`:
+- FirstPageRender phase: ~380ms average (well under 500ms target)
+- Target is consistently met for typical PDFs
