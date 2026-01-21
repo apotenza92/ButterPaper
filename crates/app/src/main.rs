@@ -915,7 +915,6 @@ struct DebugTextureOverlay {
 
 struct LoadedDocument {
     pdf: PdfDocument,
-    #[allow(dead_code)]
     path: PathBuf,
     page_count: u16,
     current_page: u16,
@@ -1314,6 +1313,80 @@ impl App {
                 println!("Page {}/{}", doc.current_page + 1, doc.page_count);
                 self.render_current_page();
                 self.update_page_info_overlay();
+            }
+        }
+    }
+
+    /// Save the current document to its original file path
+    fn save_document(&mut self) {
+        let Some(doc) = &self.document else {
+            println!("No document to save");
+            return;
+        };
+
+        let path = doc.path.clone();
+        println!("Saving document to: {}", path.display());
+
+        match doc.pdf.save(&path) {
+            Ok(()) => {
+                println!("Document saved successfully: {}", path.display());
+            }
+            Err(e) => {
+                eprintln!("Failed to save document: {}", e);
+            }
+        }
+    }
+
+    /// Save the current document to a new file path (Save As...)
+    fn save_document_as(&mut self) {
+        let Some(doc) = &mut self.document else {
+            println!("No document to save");
+            return;
+        };
+
+        // Get a suggested filename based on the current document
+        let suggested_name = doc.path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("document.pdf");
+
+        // Show save dialog
+        let file = rfd::FileDialog::new()
+            .add_filter("PDF Files", &["pdf"])
+            .set_title("Save PDF As")
+            .set_file_name(suggested_name)
+            .save_file();
+
+        if let Some(new_path) = file {
+            println!("Saving document as: {}", new_path.display());
+
+            match doc.pdf.save(&new_path) {
+                Ok(()) => {
+                    println!("Document saved successfully: {}", new_path.display());
+
+                    // Update the document path to the new location
+                    doc.path = new_path.clone();
+
+                    // Add to recent files
+                    if let Ok(mut recent) = recent_files::get_recent_files().write() {
+                        recent.add(&new_path);
+                        if let Err(e) = recent.save() {
+                            eprintln!("Warning: Could not save recent files: {}", e);
+                        }
+                    }
+                    // Refresh the Open Recent menu
+                    menu::refresh_open_recent_menu();
+
+                    // Update window title
+                    if let Some(window) = &self.window {
+                        let title = new_path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("PDF Editor");
+                        window.set_title(&format!("{} - PDF Editor", title));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to save document: {}", e);
+                }
             }
         }
     }
@@ -1814,6 +1887,16 @@ impl ApplicationHandler for App {
             println!("Close requested via menu, exiting");
             event_loop.exit();
             return;
+        }
+
+        // Check for menu-triggered save
+        if menu::poll_save_action() {
+            self.save_document();
+        }
+
+        // Check for menu-triggered save as
+        if menu::poll_save_as_action() {
+            self.save_document_as();
         }
 
         // Check for recent file selection

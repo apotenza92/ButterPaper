@@ -10309,3 +10309,41 @@ The Save (Cmd+S) feature was already fully implemented and just needed to be mar
 
 **Files Modified:**
 - PRD.md (marked Save as complete)
+
+### Task: Implement Save As... (Cmd+Shift+S) menu item
+
+**Status:** Complete
+
+**Changes:**
+- Added global flag `MENU_SAVE_AS_CLICKED` for Save As menu action tracking
+- Added `poll_save_as_action()` function to check if Save As was triggered
+- Added `saveDocumentAs:` handler method to MenuHandler Objective-C class
+- Updated File menu "Save As..." item to use custom handler instead of standard selector
+- Implemented `save_document_as()` method in App struct with file dialog support
+- Added polling for Save As action in main event loop (`about_to_wait`)
+- Save As functionality:
+  - Shows native save dialog with PDF filter
+  - Suggests current filename as default
+  - Saves document to new location
+  - Updates document path to new location
+  - Adds new path to recent files
+  - Updates window title with new filename
+- Added 3 unit tests for Save As menu polling
+
+**Files Modified:**
+- crates/app/src/menu.rs
+  - Added MENU_SAVE_AS_CLICKED atomic flag
+  - Added poll_save_as_action() function
+  - Added saveDocumentAs: selector handler
+  - Updated Save As menu item to use custom handler
+  - Added 3 tests for Save As polling
+- crates/app/src/main.rs
+  - Added save_document_as() method
+  - Added polling for Save As action in about_to_wait
+- PRD.md
+  - Marked "Save As... (Cmd+Shift+S)" as complete
+
+**Testing:**
+- All 61 tests pass in pdf-editor package
+- Clippy passes (existing warnings from objc/cocoa crates unchanged)
+

@@ -36,6 +36,12 @@ static MENU_OPEN_CLICKED: AtomicBool = AtomicBool::new(false);
 /// Global flag indicating "Close" menu item was clicked
 static MENU_CLOSE_CLICKED: AtomicBool = AtomicBool::new(false);
 
+/// Global flag indicating "Save" menu item was clicked
+static MENU_SAVE_CLICKED: AtomicBool = AtomicBool::new(false);
+
+/// Global flag indicating "Save As..." menu item was clicked
+static MENU_SAVE_AS_CLICKED: AtomicBool = AtomicBool::new(false);
+
 /// Global flag indicating "Clear Menu" in Open Recent was clicked
 static MENU_CLEAR_RECENT_CLICKED: AtomicBool = AtomicBool::new(false);
 
@@ -53,6 +59,16 @@ pub fn poll_open_action() -> bool {
 /// Check if the "Close" menu action was triggered and reset the flag
 pub fn poll_close_action() -> bool {
     MENU_CLOSE_CLICKED.swap(false, Ordering::SeqCst)
+}
+
+/// Check if the "Save" menu action was triggered and reset the flag
+pub fn poll_save_action() -> bool {
+    MENU_SAVE_CLICKED.swap(false, Ordering::SeqCst)
+}
+
+/// Check if the "Save As..." menu action was triggered and reset the flag
+pub fn poll_save_as_action() -> bool {
+    MENU_SAVE_AS_CLICKED.swap(false, Ordering::SeqCst)
 }
 
 /// Check if "Clear Menu" was clicked and reset the flag
@@ -154,6 +170,24 @@ unsafe fn register_menu_handler_class() -> *const Class {
     decl.add_method(
         sel!(closeWindow:),
         close_window as extern "C" fn(&Object, Sel, id),
+    );
+
+    // Add the saveDocument: method
+    extern "C" fn save_document(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_SAVE_CLICKED.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(saveDocument:),
+        save_document as extern "C" fn(&Object, Sel, id),
+    );
+
+    // Add the saveDocumentAs: method
+    extern "C" fn save_document_as(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_SAVE_AS_CLICKED.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(saveDocumentAs:),
+        save_document_as as extern "C" fn(&Object, Sel, id),
     );
 
     // Add the clearRecentFiles: method
@@ -530,23 +564,25 @@ unsafe fn add_file_menu(main_menu: id) {
         handler,
     ));
 
-    // Save (Cmd+S) - disabled until we have save functionality
-    let save_item = menu_item(
+    // Save (Cmd+S)
+    // Uses our custom MenuHandler to set a flag that the event loop polls
+    file_menu.addItem_(menu_item_with_target(
         "Save",
-        selector("saveDocument:"),
+        sel!(saveDocument:),
         "s",
         NSEventModifierFlags::NSCommandKeyMask,
-    );
-    file_menu.addItem_(save_item);
+        handler,
+    ));
 
     // Save As... (Cmd+Shift+S)
-    let save_as_item = menu_item(
+    // Uses our custom MenuHandler to set a flag that the event loop polls
+    file_menu.addItem_(menu_item_with_target(
         "Save As...",
-        selector("saveDocumentAs:"),
+        sel!(saveDocumentAs:),
         "s",
         NSEventModifierFlags::NSCommandKeyMask | NSEventModifierFlags::NSShiftKeyMask,
-    );
-    file_menu.addItem_(save_as_item);
+        handler,
+    ));
 
     file_menu.addItem_(separator_item());
 
@@ -940,5 +976,65 @@ mod tests {
 
         let result = poll_open_recent_action();
         assert!(result.is_none(), "Should return None for out-of-bounds index");
+    }
+
+    #[test]
+    fn test_poll_save_action_initially_false() {
+        // Ensure the flag starts as false (it may have been set by a previous test)
+        // Poll it to reset, then check again
+        let _ = poll_save_action();
+        assert!(!poll_save_action(), "poll_save_action should return false when no action triggered");
+    }
+
+    #[test]
+    fn test_poll_save_action_resets_after_poll() {
+        // Manually set the flag and verify polling resets it
+        MENU_SAVE_CLICKED.store(true, Ordering::SeqCst);
+        assert!(poll_save_action(), "First poll should return true");
+        assert!(!poll_save_action(), "Second poll should return false (flag was reset)");
+    }
+
+    #[test]
+    fn test_poll_save_action_atomic_swap() {
+        // Verify the atomic swap behavior
+        MENU_SAVE_CLICKED.store(false, Ordering::SeqCst);
+        assert!(!poll_save_action());
+
+        MENU_SAVE_CLICKED.store(true, Ordering::SeqCst);
+        // Multiple concurrent reads would all see true until first swap
+        let result = poll_save_action();
+        assert!(result);
+        // After swap, subsequent reads see false
+        assert!(!poll_save_action());
+    }
+
+    #[test]
+    fn test_poll_save_as_action_initially_false() {
+        // Ensure the flag starts as false (it may have been set by a previous test)
+        // Poll it to reset, then check again
+        let _ = poll_save_as_action();
+        assert!(!poll_save_as_action(), "poll_save_as_action should return false when no action triggered");
+    }
+
+    #[test]
+    fn test_poll_save_as_action_resets_after_poll() {
+        // Manually set the flag and verify polling resets it
+        MENU_SAVE_AS_CLICKED.store(true, Ordering::SeqCst);
+        assert!(poll_save_as_action(), "First poll should return true");
+        assert!(!poll_save_as_action(), "Second poll should return false (flag was reset)");
+    }
+
+    #[test]
+    fn test_poll_save_as_action_atomic_swap() {
+        // Verify the atomic swap behavior
+        MENU_SAVE_AS_CLICKED.store(false, Ordering::SeqCst);
+        assert!(!poll_save_as_action());
+
+        MENU_SAVE_AS_CLICKED.store(true, Ordering::SeqCst);
+        // Multiple concurrent reads would all see true until first swap
+        let result = poll_save_as_action();
+        assert!(result);
+        // After swap, subsequent reads see false
+        assert!(!poll_save_as_action());
     }
 }
