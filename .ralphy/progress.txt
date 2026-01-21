@@ -5948,3 +5948,166 @@ This implementation enables the next tasks in Phase 9:
 
 The progressive OCR system provides the foundation for these features by managing OCR results and ensuring pages are processed in optimal order.
 
+
+---
+
+## Task 111: Create invisible text layer aligned to page coordinates
+
+**Date**: 2026-01-21
+**Status**: ✅ Complete
+
+### Implementation Summary
+
+Implemented a comprehensive invisible text layer system for storing OCR results with precise page coordinate alignment. This enables text search and selection on scanned PDFs without visible text overlays.
+
+### New Module: `text_layer.rs`
+
+Created a new module in `crates/core/src/text_layer.rs` (638 lines) with the following components:
+
+#### Core Data Structures
+
+1. **`TextSpan`**: Positioned text with bounding box
+   - Text content with page-coordinate-aligned bounding box
+   - Confidence score and font size from OCR
+   - Point containment and rectangle overlap checking
+
+2. **`TextBoundingBox`**: Page coordinate bounding box
+   - Bottom-left origin (PDF coordinate system)
+   - Width and height in points (1/72 inch)
+   - Overlap detection and intersection area calculation
+
+3. **`PageTextLayer`**: Text layer for a single page
+   - Collection of text spans in reading order
+   - Full text content for fast search
+   - Source tracking (OCR vs native PDF text)
+   - Confidence scoring
+
+4. **`TextLayerManager`**: Document-wide text layer management
+   - Thread-safe storage (Arc<RwLock<HashMap>>)
+   - Per-page text layer storage and retrieval
+   - Document-wide text search
+   - Coverage statistics
+
+#### Key Features
+
+**Text Search**:
+- Case-insensitive search across spans
+- Returns match positions with bounding boxes
+- Document-wide search support
+- Character position tracking
+
+**Text Selection**:
+- Find spans in rectangular selection area
+- Find span at specific point
+- Get bounding boxes for character range
+- Supports multi-span selection
+
+**OCR Integration**:
+- Direct conversion from `OcrResult` to `PageTextLayer`
+- Preserves text block positions and confidence
+- Automatic text concatenation
+- Distinguishes OCR vs native text
+
+**Statistics and Monitoring**:
+- `TextLayerStats` for coverage tracking
+- Pages with layers count
+- OCR vs native text breakdown
+- Reliability metrics
+
+### Architecture Alignment
+
+The text layer system integrates seamlessly with existing architecture:
+
+1. **Page Coordinates**: Uses same coordinate system as annotations (`PageCoordinate`)
+2. **OCR Results**: Directly consumes `OcrResult` and `TextBlock` structures
+3. **Thread Safety**: Consistent with other managers (RwLock pattern)
+4. **Progressive OCR**: Ready for integration with `ProgressiveOcr` scheduler
+
+### Public API
+
+Exported from `crates/core/src/lib.rs`:
+- `PageTextLayer`
+- `SearchMatch`
+- `TextBoundingBox`
+- `TextLayerManager`
+- `TextLayerStats`
+- `TextSpan`
+
+### Testing
+
+Implemented comprehensive test suite (17 tests) covering:
+
+- Text bounding box creation and operations
+- Point containment testing
+- Rectangle overlap detection
+- Text span creation and manipulation
+- Page text layer creation from spans
+- OCR result conversion
+- Text search functionality
+- Point and rectangle queries
+- Text layer manager operations
+- Document-wide search
+- Statistics calculation
+- Coverage tracking
+
+All tests pass successfully.
+
+### Code Quality
+
+- ✅ Passes `cargo clippy` with `-D warnings`
+- ✅ All 17 tests pass
+- ✅ Comprehensive documentation with examples
+- ✅ Thread-safe implementation
+- ✅ Type-safe API design
+
+### Files Modified
+
+- `crates/core/src/text_layer.rs` - New text layer module (638 lines)
+- `crates/core/src/lib.rs` - Exported text layer types
+- `PRD.md` - Marked task 111 as complete
+
+### Integration Example
+
+```rust
+use pdf_editor_core::{TextLayerManager, PageTextLayer};
+
+// Create text layer manager
+let manager = TextLayerManager::new(doc.page_count());
+
+// When OCR completes for a page
+manager.add_from_ocr(&ocr_result);
+
+// Search for text
+let matches = manager.search_all("drawing");
+for (page_index, page_matches) in matches {
+    for search_match in page_matches {
+        println!("Found on page {}: {} at {:?}", 
+            page_index, search_match.text, search_match.bbox);
+    }
+}
+
+// Get statistics
+let stats = manager.stats();
+println!("Coverage: {:.0}%", stats.coverage_percent());
+```
+
+### Technical Design Decisions
+
+1. **Coordinate System**: Uses PDF standard (bottom-left origin, points)
+2. **Search Strategy**: Full-text index per page for performance
+3. **Thread Safety**: RwLock for concurrent reads, exclusive writes
+4. **Memory Model**: Cloneable layers for snapshot isolation
+5. **Confidence Tracking**: Preserved from OCR for quality metrics
+
+### Next Steps
+
+This implementation enables the next task in Phase 9:
+- **Task 112**: Make OCR output searchable and selectable
+
+The text layer system provides the foundation by:
+- Storing positioned text from OCR
+- Enabling efficient text search
+- Supporting text selection queries
+- Tracking coverage and quality metrics
+
+The invisible text layer is now ready for UI integration to enable search and selection features on scanned PDFs.
