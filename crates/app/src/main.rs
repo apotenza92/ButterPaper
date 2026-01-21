@@ -1236,6 +1236,12 @@ struct App {
     /// Selection highlight renderer for text selection overlays
     #[cfg(target_os = "macos")]
     selection_highlight_renderer: Option<selection_highlight::SelectionHighlightRenderer>,
+    /// Click tracking for double/triple click detection
+    last_click_time: Instant,
+    /// Number of consecutive clicks
+    click_count: u8,
+    /// Position of last click (for detecting if click is in same location)
+    last_click_pos: (f32, f32),
 }
 
 impl App {
@@ -1296,6 +1302,9 @@ impl App {
             text_selection_active: false,
             #[cfg(target_os = "macos")]
             selection_highlight_renderer: None,
+            last_click_time: now,
+            click_count: 0,
+            last_click_pos: (0.0, 0.0),
         }
     }
 
@@ -3223,10 +3232,55 @@ impl ApplicationHandler for App {
 
                                 // Start text selection if text selection mode is active
                                 if self.text_selection_active {
+                                    // Detect double/triple click
+                                    let now = Instant::now();
+                                    let click_threshold = Duration::from_millis(400);
+                                    let distance_threshold = 5.0; // pixels
+
+                                    let dx = x - self.last_click_pos.0;
+                                    let dy = y - self.last_click_pos.1;
+                                    let distance = (dx * dx + dy * dy).sqrt();
+
+                                    // Check if this is a multi-click (same position, within time threshold)
+                                    if now.duration_since(self.last_click_time) < click_threshold
+                                        && distance < distance_threshold
+                                    {
+                                        self.click_count = (self.click_count % 3) + 1;
+                                    } else {
+                                        self.click_count = 1;
+                                    }
+
+                                    self.last_click_time = now;
+                                    self.last_click_pos = (x, y);
+
                                     if let Some(ref mut search_manager) = self.text_search_manager {
                                         let page_index = self.input_handler.viewport().page_index;
                                         let page_coord = self.input_handler.screen_to_page(x, y);
-                                        search_manager.start_selection(page_index, page_coord);
+
+                                        match self.click_count {
+                                            2 => {
+                                                // Double-click: select word
+                                                if let Some(text) = search_manager.select_word_at_point(page_index, page_coord) {
+                                                    println!("TEXT_SELECTION: Double-click selected word: \"{}\"", text);
+                                                    if let Some(window) = &self.window {
+                                                        window.request_redraw();
+                                                    }
+                                                }
+                                            }
+                                            3 => {
+                                                // Triple-click: select line
+                                                if let Some(text) = search_manager.select_line_at_point(page_index, page_coord) {
+                                                    println!("TEXT_SELECTION: Triple-click selected line: \"{}\"", text);
+                                                    if let Some(window) = &self.window {
+                                                        window.request_redraw();
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                // Single click: start drag selection
+                                                search_manager.start_selection(page_index, page_coord);
+                                            }
+                                        }
                                     }
                                 } else {
                                     self.input_handler.on_mouse_down(x, y);

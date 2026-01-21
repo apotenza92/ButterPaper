@@ -12,7 +12,7 @@
 
 use pdf_editor_core::annotation::PageCoordinate;
 use pdf_editor_core::text_edit::TextEditManager;
-use pdf_editor_core::text_layer::{SearchMatch, TextBoundingBox, TextLayerManager};
+use pdf_editor_core::text_layer::{SearchMatch, TextBoundingBox, TextLayerManager, TextSpan};
 use std::sync::Arc;
 
 /// Text selection state
@@ -60,12 +60,7 @@ impl TextSelection {
         let max_x = self.start_point.x.max(end_point.x);
         let max_y = self.start_point.y.max(end_point.y);
 
-        self.selection_rect = TextBoundingBox::new(
-            min_x,
-            min_y,
-            max_x - min_x,
-            max_y - min_y,
-        );
+        self.selection_rect = TextBoundingBox::new(min_x, min_y, max_x - min_x, max_y - min_y);
     }
 
     /// Finalize the selection (user released mouse)
@@ -178,7 +173,8 @@ impl TextSearchManager {
         // Flatten results into SearchResult objects
         for (page_index, matches) in page_results {
             for search_match in matches {
-                self.search_results.push(SearchResult::new(page_index, search_match));
+                self.search_results
+                    .push(SearchResult::new(page_index, search_match));
             }
         }
 
@@ -268,7 +264,8 @@ impl TextSearchManager {
 
     /// Get the currently active search result
     pub fn get_active_result(&self) -> Option<&SearchResult> {
-        self.selected_result_index.and_then(|idx| self.search_results.get(idx))
+        self.selected_result_index
+            .and_then(|idx| self.search_results.get(idx))
     }
 
     /// Get the total number of search results
@@ -354,6 +351,77 @@ impl TextSearchManager {
         self.text_selection.as_ref().map(|s| s.text.as_str())
     }
 
+    /// Select a word at a specific point (for double-click)
+    ///
+    /// Finds the text span containing the point and selects its text.
+    /// Returns the selected text if successful.
+    pub fn select_word_at_point(&mut self, page_index: u16, point: PageCoordinate) -> Option<String> {
+        if let Some(layer) = self.text_layers.get_layer(page_index) {
+            if let Some(span) = layer.find_span_at_point(&point) {
+                // Create selection from the span's bounding box
+                let mut selection = TextSelection::new(page_index, PageCoordinate::new(span.bbox.x, span.bbox.y));
+                selection.update_end_point(PageCoordinate::new(
+                    span.bbox.x + span.bbox.width,
+                    span.bbox.y + span.bbox.height,
+                ));
+                selection.text = span.text.clone();
+                selection.finalize();
+                let text = selection.text.clone();
+                self.text_selection = Some(selection);
+                return Some(text);
+            }
+        }
+        None
+    }
+
+    /// Select a line at a specific point (for triple-click)
+    ///
+    /// Finds all text spans on the same horizontal line as the point and selects them.
+    /// Returns the selected text if successful.
+    pub fn select_line_at_point(&mut self, page_index: u16, point: PageCoordinate) -> Option<String> {
+        if let Some(layer) = self.text_layers.get_layer(page_index) {
+            // Find the span at the point to determine the line's Y position
+            if let Some(target_span) = layer.find_span_at_point(&point) {
+                // Get the vertical center of the target span
+                let target_y_center = target_span.bbox.y + target_span.bbox.height / 2.0;
+
+                // Find all spans that overlap vertically with the target span
+                // A span is on the same line if its vertical center is within the target's height
+                let line_spans: Vec<&TextSpan> = layer.spans.iter()
+                    .filter(|span| {
+                        let span_y_center = span.bbox.y + span.bbox.height / 2.0;
+                        // Check if spans are on the same line (within reasonable tolerance)
+                        let tolerance = target_span.bbox.height * 0.5;
+                        (span_y_center - target_y_center).abs() < tolerance
+                    })
+                    .collect();
+
+                if !line_spans.is_empty() {
+                    // Calculate bounding box for all spans on the line
+                    let min_x = line_spans.iter().map(|s| s.bbox.x).fold(f32::INFINITY, f32::min);
+                    let min_y = line_spans.iter().map(|s| s.bbox.y).fold(f32::INFINITY, f32::min);
+                    let max_x = line_spans.iter().map(|s| s.bbox.x + s.bbox.width).fold(f32::NEG_INFINITY, f32::max);
+                    let max_y = line_spans.iter().map(|s| s.bbox.y + s.bbox.height).fold(f32::NEG_INFINITY, f32::max);
+
+                    // Create selection from the combined bounding box
+                    let mut selection = TextSelection::new(page_index, PageCoordinate::new(min_x, min_y));
+                    selection.update_end_point(PageCoordinate::new(max_x, max_y));
+
+                    // Collect text from all spans on the line, sorted by x position
+                    let mut sorted_spans: Vec<_> = line_spans.iter().collect();
+                    sorted_spans.sort_by(|a, b| a.bbox.x.partial_cmp(&b.bbox.x).unwrap_or(std::cmp::Ordering::Equal));
+                    selection.text = sorted_spans.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+                    selection.finalize();
+
+                    let text = selection.text.clone();
+                    self.text_selection = Some(selection);
+                    return Some(text);
+                }
+            }
+        }
+        None
+    }
+
     /// Get highlight boxes for the current page
     ///
     /// Returns both search result highlights and text selection highlights.
@@ -416,9 +484,9 @@ impl HighlightType {
     /// Get the color for this highlight type (RGBA, normalized 0-1)
     pub fn color(&self) -> (f32, f32, f32, f32) {
         match self {
-            HighlightType::Search => (1.0, 1.0, 0.0, 0.3),      // Yellow, semi-transparent
+            HighlightType::Search => (1.0, 1.0, 0.0, 0.3), // Yellow, semi-transparent
             HighlightType::ActiveSearch => (1.0, 0.65, 0.0, 0.5), // Orange, more opaque
-            HighlightType::Selection => (0.2, 0.6, 1.0, 0.3),    // Blue, semi-transparent
+            HighlightType::Selection => (0.2, 0.6, 1.0, 0.3), // Blue, semi-transparent
         }
     }
 }
@@ -573,5 +641,130 @@ mod tests {
         assert!(search_color.3 > 0.0 && search_color.3 < 1.0);
         assert!(active_color.3 > 0.0 && active_color.3 < 1.0);
         assert!(selection_color.3 > 0.0 && selection_color.3 < 1.0);
+    }
+
+    #[test]
+    fn test_select_word_at_point() {
+        let mut search_mgr = create_test_manager();
+
+        // Select word "Hello" by clicking on it
+        let text = search_mgr.select_word_at_point(0, PageCoordinate::new(50.0, 20.0));
+        assert!(text.is_some());
+        assert_eq!(text.unwrap(), "Hello world");
+
+        // Verify selection state
+        let selection = search_mgr.get_selection().unwrap();
+        assert_eq!(selection.page_index, 0);
+        assert!(!selection.is_active); // Finalized
+        assert!(!selection.text.is_empty());
+    }
+
+    #[test]
+    fn test_select_word_at_point_outside_text() {
+        let mut search_mgr = create_test_manager();
+
+        // Try to select word at a point with no text
+        let text = search_mgr.select_word_at_point(0, PageCoordinate::new(500.0, 500.0));
+        assert!(text.is_none());
+        assert!(search_mgr.get_selection().is_none());
+    }
+
+    #[test]
+    fn test_select_line_at_point() {
+        let mut search_mgr = create_test_manager();
+
+        // Select line by clicking on "Hello" (first line)
+        let text = search_mgr.select_line_at_point(0, PageCoordinate::new(50.0, 20.0));
+        assert!(text.is_some());
+
+        // Should select "Hello world" (first span)
+        let selected = text.unwrap();
+        assert!(!selected.is_empty());
+
+        // Verify selection state
+        let selection = search_mgr.get_selection().unwrap();
+        assert_eq!(selection.page_index, 0);
+        assert!(!selection.is_active); // Finalized
+    }
+
+    #[test]
+    fn test_select_line_at_point_outside_text() {
+        let mut search_mgr = create_test_manager();
+
+        // Try to select line at a point with no text
+        let text = search_mgr.select_line_at_point(0, PageCoordinate::new(500.0, 500.0));
+        assert!(text.is_none());
+        assert!(search_mgr.get_selection().is_none());
+    }
+
+    fn create_multiline_test_manager() -> TextSearchManager {
+        let manager = TextLayerManager::new(2);
+
+        // Create test text layer with multiple lines on page 0
+        let spans = vec![
+            // Line 1: y = 10-30
+            TextSpan::new(
+                "First".to_string(),
+                TextBoundingBox::new(10.0, 10.0, 50.0, 20.0),
+                0.9,
+                12.0,
+            ),
+            TextSpan::new(
+                "line".to_string(),
+                TextBoundingBox::new(70.0, 10.0, 40.0, 20.0),
+                0.9,
+                12.0,
+            ),
+            TextSpan::new(
+                "here".to_string(),
+                TextBoundingBox::new(120.0, 10.0, 40.0, 20.0),
+                0.9,
+                12.0,
+            ),
+            // Line 2: y = 40-60
+            TextSpan::new(
+                "Second".to_string(),
+                TextBoundingBox::new(10.0, 40.0, 60.0, 20.0),
+                0.9,
+                12.0,
+            ),
+            TextSpan::new(
+                "line".to_string(),
+                TextBoundingBox::new(80.0, 40.0, 40.0, 20.0),
+                0.9,
+                12.0,
+            ),
+        ];
+        let layer = PageTextLayer::from_spans(0, spans);
+        manager.set_layer(layer);
+
+        TextSearchManager::new(Arc::new(manager))
+    }
+
+    #[test]
+    fn test_select_line_multiline() {
+        let mut search_mgr = create_multiline_test_manager();
+
+        // Select first line by clicking on "First"
+        let text = search_mgr.select_line_at_point(0, PageCoordinate::new(30.0, 20.0));
+        assert!(text.is_some());
+        let selected = text.unwrap();
+        // Should contain all words from first line
+        assert!(selected.contains("First"));
+        assert!(selected.contains("line"));
+        assert!(selected.contains("here"));
+        // Should NOT contain words from second line
+        assert!(!selected.contains("Second"));
+
+        // Select second line by clicking on "Second"
+        let text2 = search_mgr.select_line_at_point(0, PageCoordinate::new(30.0, 50.0));
+        assert!(text2.is_some());
+        let selected2 = text2.unwrap();
+        // Should contain all words from second line
+        assert!(selected2.contains("Second"));
+        assert!(selected2.contains("line"));
+        // Should NOT contain words from first line
+        assert!(!selected2.contains("First"));
+        assert!(!selected2.contains("here"));
     }
 }

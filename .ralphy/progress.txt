@@ -10916,3 +10916,47 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 3. Press Cmd+C to copy selected text to clipboard
 4. Paste into any application
 
+
+### Task: Implement double-click for word, triple-click for line selection (Phase 3.1)
+
+**Status:** Complete
+
+**Changes:**
+- Added `select_word_at_point()` method to TextSearchManager for double-click word selection
+- Added `select_line_at_point()` method to TextSearchManager for triple-click line selection
+- Added click tracking state to App struct:
+  - `last_click_time: Instant` - timestamp of last click
+  - `click_count: u8` - consecutive click counter (1/2/3)
+  - `last_click_pos: (f32, f32)` - position of last click
+- Implemented multi-click detection in mouse event handler:
+  - Click threshold: 400ms between clicks
+  - Distance threshold: 5 pixels (must click in same location)
+  - Click count cycles: 1 -> 2 -> 3 -> 1
+- Double-click (click_count=2): Selects the word/span at the click point
+- Triple-click (click_count=3): Selects entire line (all spans at same Y position)
+
+**Files Modified:**
+- crates/ui/src/text_selection.rs:
+  - Added `TextSpan` to imports
+  - Added `select_word_at_point()` method
+  - Added `select_line_at_point()` method
+  - Added 5 new unit tests for word/line selection
+- crates/app/src/main.rs:
+  - Added click tracking fields to App struct
+  - Initialized click tracking in App::new()
+  - Updated mouse click handler with multi-click detection logic
+
+**Technical Details:**
+- Word selection: Uses `find_span_at_point()` to find the span containing the click, creates selection from span's bounding box
+- Line selection: Finds all spans with similar Y position (within 0.5x target span height tolerance), combines them into single selection sorted by X position
+- Selection text is automatically populated and selection is marked as finalized
+
+**Testing:**
+- All 160 tests pass (155 existing + 5 new for word/line selection)
+- No new clippy warnings from added code
+- Tests cover:
+  - Word selection success case
+  - Word selection when clicking outside text
+  - Line selection success case
+  - Line selection when clicking outside text
+  - Multi-line document with distinct line selection
