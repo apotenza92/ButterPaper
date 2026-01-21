@@ -10883,3 +10883,36 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 **Testing:**
 - All 158 tests pass (155 existing + 3 new)
 - No new clippy warnings introduced
+
+### Task: Implement copy to clipboard (Cmd+C) for text selection (Phase 3.1)
+
+**Status:** Complete
+
+**Changes:**
+- Added `arboard` (v3.4) dependency for cross-platform clipboard access
+- Created new `crates/app/src/clipboard.rs` module with:
+  - `copy_to_clipboard()` function for copying text to system clipboard
+  - `ClipboardError` enum for proper error handling
+  - Unit tests (marked #[ignore] due to system clipboard access requirements in CI)
+- Added Cmd+C keyboard handler in `main.rs` to copy selected text
+- Integrated with existing `TextSearchManager::get_selected_text()` API
+
+**Files Created:**
+- crates/app/src/clipboard.rs
+
+**Files Modified:**
+- crates/app/Cargo.toml (added arboard dependency)
+- crates/app/src/main.rs (added clipboard module, Cmd+C handler, copy method)
+- PRD.md (marked task complete)
+
+**Testing:**
+- All 68 tests pass (3 clipboard tests ignored due to system access requirements)
+- Clippy passes with no new warnings
+- Build succeeds
+
+**Usage:**
+1. Open a PDF document
+2. Click and drag to select text
+3. Press Cmd+C to copy selected text to clipboard
+4. Paste into any application
+

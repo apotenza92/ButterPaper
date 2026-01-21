@@ -37,6 +37,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 #[allow(deprecated)]
 use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicy};
 
+mod clipboard;
 mod menu;
 mod recent_files;
 
@@ -2342,6 +2343,31 @@ impl App {
         println!("Thumbnails: {}", if self.show_thumbnails { "visible" } else { "hidden" });
     }
 
+    /// Copy the currently selected text to the system clipboard
+    fn copy_selected_text_to_clipboard(&mut self) {
+        if let Some(ref search_manager) = self.text_search_manager {
+            if let Some(text) = search_manager.get_selected_text() {
+                if text.is_empty() {
+                    println!("No text selected to copy");
+                    return;
+                }
+
+                match clipboard::copy_to_clipboard(text) {
+                    Ok(()) => {
+                        println!("Copied {} characters to clipboard", text.len());
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to copy to clipboard: {}", e);
+                    }
+                }
+            } else {
+                println!("No text selected to copy");
+            }
+        } else {
+            println!("Text selection not available (no document loaded)");
+        }
+    }
+
     /// Save the current document to its original file path
     fn save_document(&mut self) {
         let Some(doc) = &self.document else {
@@ -3281,6 +3307,9 @@ impl ApplicationHandler for App {
                         }
                         PhysicalKey::Code(KeyCode::KeyT) if is_cmd => {
                             self.toggle_thumbnails();
+                        }
+                        PhysicalKey::Code(KeyCode::KeyC) if is_cmd => {
+                            self.copy_selected_text_to_clipboard();
                         }
                         _ => {}
                     }

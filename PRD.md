@@ -310,7 +310,7 @@ Wire up existing TextSelection component.
 - [x] Click and drag to select text
 - [x] Use PDFium text extraction
 - [x] Render selection highlight rectangles
-- [ ] Copy to clipboard (Cmd+C)
+- [x] Copy to clipboard (Cmd+C)
 - [ ] Double-click for word, triple for line
 - [ ] Show cursor change on hover over text
 - [x] ~~Manual test: Verify text selection~~ (SKIP - requires human)
