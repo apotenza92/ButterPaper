@@ -107,7 +107,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 ### Phase 9: OCR Subsystem
 - [x] Integrate local OCR engine (Tesseract or similar)
 - [x] Implement automatic detection of pages without selectable text
-- [ ] Build progressive OCR (current page → nearby → remaining when idle)
+- [x] Build progressive OCR (current page → nearby → remaining when idle)
 - [ ] Create invisible text layer aligned to page coordinates
 - [ ] Make OCR output searchable and selectable
 

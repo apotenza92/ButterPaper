@@ -12,6 +12,7 @@ pub mod ocr;
 pub mod page_switch;
 pub mod persistence;
 pub mod preview;
+pub mod progressive_ocr;
 pub mod scale_detection;
 pub mod snapping;
 
@@ -34,6 +35,7 @@ pub use measurement::{
 };
 pub use ocr::{OcrConfig, OcrEngine, OcrError, OcrResult, TextBlock};
 pub use page_switch::{PageSwitchResult, PageSwitcher};
+pub use progressive_ocr::{ProgressiveOcr, ProgressiveOcrStats};
 pub use persistence::{
     delete_metadata, load_metadata, metadata_exists, metadata_path, save_metadata,
     PersistenceError, PersistenceResult,

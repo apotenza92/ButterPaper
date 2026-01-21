@@ -178,6 +178,7 @@ struct OcrEngineState {
 ///
 /// This engine runs OCR operations locally without any network dependencies.
 /// It's designed to be thread-safe and non-blocking.
+#[derive(Debug)]
 pub struct OcrEngine {
     state: Arc<Mutex<OcrEngineState>>,
 }

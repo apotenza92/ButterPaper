@@ -5739,3 +5739,212 @@ The detection function can now be used by the job scheduler to intelligently pri
 - `crates/core/src/ocr.rs` - Updated `needs_ocr()` method to use render crate's detection function
 - `PRD.md` - Marked task 109 as complete
 
+
+## Task 110: Build progressive OCR (current page → nearby → remaining when idle)
+
+**Date**: 2026-01-21
+**Status**: ✅ Complete
+
+### Summary
+
+Implemented a comprehensive progressive OCR scheduling system that manages OCR operations across PDF documents in an intelligent, priority-based manner. The system processes pages progressively based on user context: current page first, then nearby pages, and finally remaining pages when the system is idle.
+
+### Implementation Details
+
+#### Core Component: ProgressiveOcr Scheduler
+
+Created `crates/core/src/progressive_ocr.rs` with the following features:
+
+1. **Priority-Based Scheduling**
+   - Current page (highest priority)
+   - Nearby pages in expanding radius (current±1, current±2, etc.)
+   - Remaining pages in sequential order (lowest priority)
+
+2. **State Management**
+   - Tracks pages needing OCR
+   - Monitors pages currently being processed
+   - Records processed pages and caches results
+   - Maintains current page context for priority calculation
+
+3. **Progress Tracking**
+   - Real-time statistics on OCR progress
+   - Progress percentage calculation
+   - Completion status monitoring
+
+4. **Page State Lifecycle**
+   ```
+   Detected → Needs OCR → In Progress → Complete
+                    ↓
+                 Has Text (skip OCR)
+                    ↓
+                  Failed (retry)
+   ```
+
+5. **Key Features**
+   - Enable/disable progressive OCR
+   - Reset state for document changes
+   - Get next pages to process (respects priority)
+   - Cache OCR results for fast retrieval
+   - Thread-safe operation with Arc<Mutex>
+
+#### API Design
+
+```rust
+// Initialize progressive OCR
+let progressive_ocr = ProgressiveOcr::new(ocr_engine, total_pages);
+
+// Set current page (updates priority)
+progressive_ocr.set_current_page(5);
+
+// Mark pages that need OCR (from detection)
+progressive_ocr.mark_page_needs_ocr(0);
+progressive_ocr.mark_page_needs_ocr(5);
+
+// Get next pages to process (priority ordered)
+let pages = progressive_ocr.get_next_pages_to_process(5);
+// Returns: [5, 4, 6, 3, 7] (current, then nearby)
+
+// Track page lifecycle
+progressive_ocr.mark_page_in_progress(5);
+// ... perform OCR ...
+progressive_ocr.mark_page_complete(5, ocr_result);
+
+// Get progress statistics
+let stats = progressive_ocr.stats();
+println!("Progress: {:.0}%", stats.progress() * 100.0);
+```
+
+#### Integration Points
+
+The progressive OCR system integrates with existing components:
+
+1. **Job Scheduler Integration**
+   - Uses `JobType::RunOcr { page_index }` for OCR jobs
+   - Submitted at `JobPriority::Ocr` (lowest priority, idle)
+   - Pages are scheduled based on `get_next_pages_to_process()`
+
+2. **OCR Engine Integration**
+   - Wraps the existing `OcrEngine` from `crates/core/src/ocr.rs`
+   - Uses OCR configuration (progressive mode, max concurrent)
+   - Stores and retrieves `OcrResult` objects
+
+3. **Detection Integration**
+   - Works with `detect_needs_ocr()` from render crate
+   - Pages are marked as needing OCR after detection
+   - Pages with existing text skip OCR processing
+
+#### Scheduling Algorithm
+
+The algorithm ensures optimal user experience:
+
+```
+Priority 1: Current Page
+  - If current page needs OCR, process it first
+  - Ensures immediate results for what user is viewing
+
+Priority 2: Nearby Pages (Expanding Radius)
+  - Process current-1, current+1, current-2, current+2, ...
+  - Anticipates user navigation (scrolling, page turning)
+  - Prepares adjacent content in advance
+
+Priority 3: Remaining Pages (Sequential)
+  - Process all other pages in document order
+  - Runs during idle time (lowest job priority)
+  - Ensures complete document OCR eventually
+```
+
+#### Progressive OCR Statistics
+
+The `ProgressiveOcrStats` struct provides real-time monitoring:
+
+```rust
+pub struct ProgressiveOcrStats {
+    pub total_pages: u16,
+    pub pages_needing_ocr: usize,
+    pub pages_processed: usize,
+    pub pages_in_progress: usize,
+    pub current_page: u16,
+    pub enabled: bool,
+}
+
+impl ProgressiveOcrStats {
+    pub fn progress(&self) -> f32 { ... }  // 0.0 to 1.0
+    pub fn is_complete(&self) -> bool { ... }
+}
+```
+
+### Testing
+
+Implemented comprehensive test suite with 17 tests covering:
+
+- Progressive OCR creation and initialization
+- Current page setting and tracking
+- Page state transitions (needs OCR, in progress, complete, failed)
+- Priority ordering (current → nearby → remaining)
+- Boundary conditions (start/end of document)
+- Enable/disable functionality
+- Progress calculation
+- Statistics accuracy
+- State reset
+
+All tests pass successfully.
+
+### Code Quality
+
+- ✅ Passes `cargo clippy` with `-D warnings`
+- ✅ All tests pass
+- ✅ Comprehensive documentation with examples
+- ✅ Thread-safe implementation
+- ✅ Type-safe API design
+
+### Files Modified
+
+- `crates/core/src/progressive_ocr.rs` - New progressive OCR scheduler (680 lines)
+- `crates/core/src/lib.rs` - Exported `ProgressiveOcr` and `ProgressiveOcrStats`
+- `crates/core/src/ocr.rs` - Added `Debug` trait to `OcrEngine`
+- `PRD.md` - Marked task 110 as complete
+
+### Architecture Benefits
+
+1. **Non-Blocking**: OCR runs at lowest priority, never blocks UI
+2. **Context-Aware**: Prioritizes based on user's current page
+3. **Efficient**: Skips pages with existing text, caches results
+4. **Scalable**: Handles documents of any size
+5. **Extensible**: Easy to integrate with job scheduler and UI
+
+### Integration Example
+
+```rust
+// In document loader or page switcher
+let progressive_ocr = ProgressiveOcr::new(ocr_engine, doc.page_count());
+
+// When user changes page
+progressive_ocr.set_current_page(new_page);
+
+// In background job scheduler loop
+if scheduler.is_idle() {
+    let pages = progressive_ocr.get_next_pages_to_process(5);
+    for page in pages {
+        scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: page });
+        progressive_ocr.mark_page_in_progress(page);
+    }
+}
+
+// When OCR job completes
+progressive_ocr.mark_page_complete(page_index, ocr_result);
+
+// Show progress to user
+let stats = progressive_ocr.stats();
+if !stats.is_complete() {
+    println!("OCR: {:.0}% complete", stats.progress() * 100.0);
+}
+```
+
+### Next Steps
+
+This implementation enables the next tasks in Phase 9:
+- **Task 111**: Create invisible text layer aligned to page coordinates
+- **Task 112**: Make OCR output searchable and selectable
+
+The progressive OCR system provides the foundation for these features by managing OCR results and ensuring pages are processed in optimal order.
+
