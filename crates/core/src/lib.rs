@@ -18,6 +18,7 @@ pub mod scale_detection;
 pub mod snapping;
 pub mod text_edit;
 pub mod text_layer;
+pub mod text_layout;
 
 pub use annotation::{
     Annotation, AnnotationCollection, AnnotationGeometry, AnnotationId, AnnotationMetadata,
@@ -52,4 +53,7 @@ pub use text_edit::{
 };
 pub use text_layer::{
     PageTextLayer, SearchMatch, TextBoundingBox, TextLayerManager, TextLayerStats, TextSpan,
+};
+pub use text_layout::{
+    LayoutAdjustment, LayoutConfig, LayoutStrategy, TextLayoutAdjuster,
 };
