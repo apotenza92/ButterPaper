@@ -95,6 +95,8 @@ pub enum ToolbarButton {
     HighlightTool,
     CommentTool,
     MeasureTool,
+    /// Freehand drawing/pen tool
+    FreedrawTool,
 }
 
 impl ToolbarButton {
@@ -294,6 +296,33 @@ impl ToolbarButton {
                 Primitive::Rectangle {
                     rect: Rect::new(center_x + half_icon * 0.6, center_y - half_icon * 0.3, 1.5, half_icon * 0.3),
                     color: Color::rgba(0.1, 0.1, 0.1, 1.0),
+                },
+            ],
+
+            // Freedraw tool: pen/pencil shape
+            ToolbarButton::FreedrawTool => vec![
+                // Pen body (diagonal line)
+                Primitive::Polygon {
+                    points: vec![
+                        [center_x - half_icon * 0.7, center_y + half_icon * 0.7],
+                        [center_x - half_icon * 0.4, center_y + half_icon * 0.7],
+                        [center_x + half_icon * 0.7, center_y - half_icon * 0.5],
+                        [center_x + half_icon * 0.5, center_y - half_icon * 0.7],
+                    ],
+                    fill_color: Some(color),
+                    stroke_color: color,
+                    stroke_width: 0.0,
+                },
+                // Pen tip
+                Primitive::Polygon {
+                    points: vec![
+                        [center_x - half_icon * 0.7, center_y + half_icon * 0.7],
+                        [center_x - half_icon * 0.4, center_y + half_icon * 0.7],
+                        [center_x - half_icon * 0.9, center_y + half_icon * 0.9],
+                    ],
+                    fill_color: Some(color),
+                    stroke_color: color,
+                    stroke_width: 0.0,
                 },
             ],
         }
@@ -774,7 +803,8 @@ impl Toolbar {
         x = self.add_button(&mut new_node, ToolbarButton::TextSelectTool, x, button_y);
         x = self.add_button(&mut new_node, ToolbarButton::HighlightTool, x, button_y);
         x = self.add_button(&mut new_node, ToolbarButton::CommentTool, x, button_y);
-        let _ = self.add_button(&mut new_node, ToolbarButton::MeasureTool, x, button_y);
+        x = self.add_button(&mut new_node, ToolbarButton::MeasureTool, x, button_y);
+        let _ = self.add_button(&mut new_node, ToolbarButton::FreedrawTool, x, button_y);
 
         self.scene_node = Arc::new(new_node);
     }
@@ -1278,6 +1308,7 @@ mod tests {
             ToolbarButton::HighlightTool,
             ToolbarButton::CommentTool,
             ToolbarButton::MeasureTool,
+            ToolbarButton::FreedrawTool,
         ];
 
         let color = Color::rgb(1.0, 1.0, 1.0);
@@ -1805,5 +1836,79 @@ mod tests {
                 hover_count, button
             );
         }
+    }
+
+    // FreedrawTool tests
+
+    #[test]
+    fn test_toolbar_freedraw_tool_icon() {
+        let color = Color::rgb(1.0, 1.0, 1.0);
+        let primitives = ToolbarButton::FreedrawTool.icon_primitives(0.0, 0.0, 32.0, color);
+
+        // FreedrawTool should have at least one polygon for pen shape
+        assert!(
+            !primitives.is_empty(),
+            "FreedrawTool should have icon primitives"
+        );
+
+        // Should contain polygon primitives for the pen body and tip
+        let polygon_count = primitives
+            .iter()
+            .filter(|p| matches!(p, Primitive::Polygon { .. }))
+            .count();
+        assert!(
+            polygon_count >= 1,
+            "FreedrawTool icon should have polygon primitives for pen shape"
+        );
+    }
+
+    #[test]
+    fn test_toolbar_select_freedraw_tool() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Initially not FreedrawTool
+        assert_ne!(
+            toolbar.selected_tool(),
+            Some(ToolbarButton::FreedrawTool)
+        );
+
+        // Select FreedrawTool
+        toolbar.set_selected_tool(ToolbarButton::FreedrawTool);
+        assert_eq!(
+            toolbar.selected_tool(),
+            Some(ToolbarButton::FreedrawTool)
+        );
+    }
+
+    #[test]
+    fn test_toolbar_freedraw_tool_in_button_list() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // FreedrawTool button should exist in the button states
+        let has_freedraw = toolbar
+            .button_states
+            .iter()
+            .any(|(btn, _, _)| *btn == ToolbarButton::FreedrawTool);
+
+        assert!(
+            has_freedraw,
+            "FreedrawTool should be included in toolbar buttons"
+        );
+    }
+
+    #[test]
+    fn test_toolbar_freedraw_tool_hover() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Set hover on FreedrawTool
+        toolbar.set_button_hover(ToolbarButton::FreedrawTool, true);
+
+        // Verify FreedrawTool is hovered
+        let state = toolbar
+            .button_states
+            .iter()
+            .find(|(b, _, _)| *b == ToolbarButton::FreedrawTool)
+            .map(|(_, s, _)| *s);
+        assert_eq!(state, Some(ButtonState::Hover));
     }
 }

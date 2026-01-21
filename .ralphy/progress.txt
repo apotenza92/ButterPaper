@@ -11363,3 +11363,52 @@ Created a GPU-rendered note popup component that displays annotation content whe
 - Click outside popup or press Escape to close
 - Text wraps to fit popup width
 - Popup stays within viewport bounds
+
+### Task: Implement freehand drawing tool (Phase 3.3)
+
+**Status:** Complete
+
+**Changes:**
+- Added FreedrawTool to ToolbarButton enum in crates/ui/src/toolbar.rs
+- Created pen/pencil icon for the toolbar button using polygon primitives
+- Added FreedrawTool button to the toolbar UI
+- Implemented freehand drawing state machine in crates/app/src/main.rs:
+  - Added `freehand_drawing_points: Vec<PageCoordinate>` to track points while drawing
+  - Added `is_drawing: bool` flag to track drawing state
+  - Added `freehand_drawing_page: u16` to track which page the drawing started on
+  - Created `start_freehand_drawing()` method to begin drawing on mouse down
+  - Created `continue_freehand_drawing()` method to add points during mouse move
+  - Created `finish_freehand_drawing()` method to create annotation on mouse up
+- Added keyboard shortcut 'P' for Pen tool (Bluebeam-compatible)
+- Mouse event handling:
+  - Mouse down with FreedrawTool selected starts drawing
+  - Mouse move while drawing adds points to the path
+  - Mouse up finishes drawing and creates Freehand annotation
+- The existing rendering pipeline already handles Freehand → Polyline conversion
+
+**Files Modified:**
+- crates/ui/src/toolbar.rs (added FreedrawTool enum variant, icon, button, and tests)
+- crates/app/src/main.rs (added drawing state machine and event handling)
+- crates/core/src/annotation.rs (added comprehensive tests for Freehand annotations)
+- PRD.md (marked task as complete)
+
+**Tests Added:**
+- test_toolbar_freedraw_tool_icon - verifies icon has polygon primitives
+- test_toolbar_select_freedraw_tool - verifies tool selection
+- test_toolbar_freedraw_tool_in_button_list - verifies button is in toolbar
+- test_toolbar_freedraw_tool_hover - verifies hover state
+- test_freehand_bounding_box - verifies bounding box calculation
+- test_freehand_bounding_box_empty - verifies empty points handling
+- test_freehand_hit_testing - verifies hit test along path
+- test_freehand_hit_testing_complex_path - verifies multi-segment path hit testing
+- test_freehand_annotation_creation - verifies annotation creation
+- test_freehand_annotation_in_collection - verifies collection management
+- test_freehand_serialization - verifies serialization/deserialization
+
+**Test Results:** All 486+ tests pass
+
+**Notes:**
+- Uses existing AnnotationGeometry::Freehand type which was already defined
+- Uses existing rendering pipeline (compositor.rs already handles Freehand → Polyline)
+- Drawing creates red markup style annotations for visibility
+- Keyboard shortcut 'P' matches Bluebeam's Pen tool shortcut

@@ -1350,4 +1350,203 @@ mod tests {
             Some("Test note content".to_string())
         );
     }
+
+    // Freehand drawing tests
+
+    #[test]
+    fn test_freehand_bounding_box() {
+        let points = vec![
+            PageCoordinate::new(10.0, 20.0),
+            PageCoordinate::new(50.0, 80.0),
+            PageCoordinate::new(30.0, 40.0),
+        ];
+        let geometry = AnnotationGeometry::Freehand { points };
+
+        let (min_x, min_y, max_x, max_y) = geometry.bounding_box();
+        assert_eq!(min_x, 10.0);
+        assert_eq!(min_y, 20.0);
+        assert_eq!(max_x, 50.0);
+        assert_eq!(max_y, 80.0);
+    }
+
+    #[test]
+    fn test_freehand_bounding_box_empty() {
+        let geometry = AnnotationGeometry::Freehand { points: vec![] };
+        let (min_x, min_y, max_x, max_y) = geometry.bounding_box();
+        assert_eq!(min_x, 0.0);
+        assert_eq!(min_y, 0.0);
+        assert_eq!(max_x, 0.0);
+        assert_eq!(max_y, 0.0);
+    }
+
+    #[test]
+    fn test_freehand_hit_testing() {
+        let points = vec![
+            PageCoordinate::new(0.0, 0.0),
+            PageCoordinate::new(100.0, 100.0),
+        ];
+        let freehand = Annotation::new(
+            0,
+            AnnotationGeometry::Freehand { points },
+            AnnotationStyle::red_markup(),
+        );
+
+        // Point near the line should hit
+        let point_near = PageCoordinate::new(50.0, 50.0);
+        assert!(freehand.hit_test(&point_near, 5.0));
+
+        // Point far from the line should not hit
+        let point_far = PageCoordinate::new(200.0, 0.0);
+        assert!(!freehand.hit_test(&point_far, 5.0));
+    }
+
+    #[test]
+    fn test_freehand_hit_testing_complex_path() {
+        let points = vec![
+            PageCoordinate::new(0.0, 0.0),
+            PageCoordinate::new(50.0, 0.0),
+            PageCoordinate::new(50.0, 50.0),
+            PageCoordinate::new(100.0, 50.0),
+        ];
+        let freehand = Annotation::new(
+            0,
+            AnnotationGeometry::Freehand { points },
+            AnnotationStyle::new(),
+        );
+
+        // Point near the first segment (horizontal)
+        let point_seg1 = PageCoordinate::new(25.0, 0.0);
+        assert!(freehand.hit_test(&point_seg1, 5.0));
+
+        // Point near the second segment (vertical)
+        let point_seg2 = PageCoordinate::new(50.0, 25.0);
+        assert!(freehand.hit_test(&point_seg2, 5.0));
+
+        // Point near the third segment (horizontal)
+        let point_seg3 = PageCoordinate::new(75.0, 50.0);
+        assert!(freehand.hit_test(&point_seg3, 5.0));
+
+        // Point in the interior (not near any line)
+        let point_interior = PageCoordinate::new(25.0, 25.0);
+        assert!(!freehand.hit_test(&point_interior, 3.0));
+    }
+
+    #[test]
+    fn test_freehand_annotation_creation() {
+        let page_index = 0u16;
+        let points = vec![
+            PageCoordinate::new(10.0, 10.0),
+            PageCoordinate::new(50.0, 50.0),
+            PageCoordinate::new(100.0, 30.0),
+        ];
+
+        let geometry = AnnotationGeometry::Freehand {
+            points: points.clone(),
+        };
+        let style = AnnotationStyle::red_markup();
+        let annotation = Annotation::new(page_index, geometry, style);
+
+        // Verify annotation properties
+        assert_eq!(annotation.page_index(), page_index);
+        assert!(annotation.is_visible());
+        assert!(!annotation.is_selected());
+
+        // Verify geometry contains the points
+        match annotation.geometry() {
+            AnnotationGeometry::Freehand { points: stored } => {
+                assert_eq!(stored.len(), 3);
+                assert_eq!(stored[0].x, 10.0);
+                assert_eq!(stored[0].y, 10.0);
+                assert_eq!(stored[2].x, 100.0);
+                assert_eq!(stored[2].y, 30.0);
+            }
+            _ => panic!("Expected Freehand geometry"),
+        }
+    }
+
+    #[test]
+    fn test_freehand_annotation_in_collection() {
+        let mut collection = AnnotationCollection::new();
+
+        // Create freehand annotations on different pages
+        let freehand1 = Annotation::new(
+            0,
+            AnnotationGeometry::Freehand {
+                points: vec![
+                    PageCoordinate::new(0.0, 0.0),
+                    PageCoordinate::new(100.0, 100.0),
+                ],
+            },
+            AnnotationStyle::red_markup(),
+        );
+
+        let freehand2 = Annotation::new(
+            0,
+            AnnotationGeometry::Freehand {
+                points: vec![
+                    PageCoordinate::new(50.0, 50.0),
+                    PageCoordinate::new(150.0, 150.0),
+                ],
+            },
+            AnnotationStyle::red_markup(),
+        );
+
+        let freehand3 = Annotation::new(
+            1, // Different page
+            AnnotationGeometry::Freehand {
+                points: vec![
+                    PageCoordinate::new(20.0, 20.0),
+                    PageCoordinate::new(80.0, 80.0),
+                ],
+            },
+            AnnotationStyle::new(),
+        );
+
+        collection.add(freehand1);
+        collection.add(freehand2);
+        collection.add(freehand3);
+
+        // Verify collection counts
+        assert_eq!(collection.len(), 3);
+        assert_eq!(collection.get_page_annotations(0).len(), 2);
+        assert_eq!(collection.get_page_annotations(1).len(), 1);
+        assert_eq!(collection.get_page_annotations(2).len(), 0);
+    }
+
+    #[test]
+    fn test_freehand_serialization() {
+        let points = vec![
+            PageCoordinate::new(10.0, 20.0),
+            PageCoordinate::new(30.0, 40.0),
+            PageCoordinate::new(50.0, 60.0),
+        ];
+        let geometry = AnnotationGeometry::Freehand {
+            points: points.clone(),
+        };
+        let style = AnnotationStyle::red_markup();
+        let annotation = Annotation::new(0, geometry, style);
+
+        // Convert to serializable
+        let serializable: SerializableAnnotation = (&annotation).into();
+
+        // Verify geometry is preserved
+        match &serializable.geometry {
+            AnnotationGeometry::Freehand { points: stored } => {
+                assert_eq!(stored.len(), 3);
+                assert_eq!(stored[0].x, 10.0);
+                assert_eq!(stored[1].y, 40.0);
+                assert_eq!(stored[2].x, 50.0);
+            }
+            _ => panic!("Expected Freehand geometry"),
+        }
+
+        // Convert back
+        let restored: Annotation = serializable.into();
+        match restored.geometry() {
+            AnnotationGeometry::Freehand { points: stored } => {
+                assert_eq!(stored.len(), 3);
+            }
+            _ => panic!("Expected Freehand geometry after restoration"),
+        }
+    }
 }

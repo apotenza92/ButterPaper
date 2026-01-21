@@ -1275,6 +1275,12 @@ struct App {
     note_popup_texture: Option<NotePopupTexture>,
     /// Annotation collection for the current document
     annotations: AnnotationCollection,
+    /// Freehand drawing state - tracks points while drawing
+    freehand_drawing_points: Vec<PageCoordinate>,
+    /// Whether the user is currently drawing (mouse button is held down)
+    is_drawing: bool,
+    /// The page index where freehand drawing started
+    freehand_drawing_page: u16,
 }
 
 impl App {
@@ -1348,6 +1354,9 @@ impl App {
             #[cfg(target_os = "macos")]
             note_popup_texture: None,
             annotations: AnnotationCollection::new(),
+            freehand_drawing_points: Vec::new(),
+            is_drawing: false,
+            freehand_drawing_page: 0,
         }
     }
 
@@ -3005,6 +3014,93 @@ impl App {
         );
     }
 
+    /// Start freehand drawing at the specified screen position
+    ///
+    /// This is called when the user clicks with the FreedrawTool selected.
+    fn start_freehand_drawing(&mut self, screen_x: f32, screen_y: f32) {
+        // Get current page from document
+        let page_index = match &self.document {
+            Some(doc) => doc.current_page,
+            None => {
+                println!("No document loaded - cannot start drawing");
+                return;
+            }
+        };
+
+        // Convert screen coordinates to page coordinates
+        let page_coord = self.input_handler.screen_to_page(screen_x, screen_y);
+
+        // Initialize drawing state
+        self.freehand_drawing_points.clear();
+        self.freehand_drawing_points.push(PageCoordinate::new(page_coord.x, page_coord.y));
+        self.is_drawing = true;
+        self.freehand_drawing_page = page_index;
+
+        println!(
+            "Started freehand drawing on page {} at ({:.1}, {:.1})",
+            page_index + 1,
+            page_coord.x,
+            page_coord.y
+        );
+    }
+
+    /// Continue freehand drawing with a new point at the specified screen position
+    ///
+    /// This is called when the user moves the mouse while drawing.
+    fn continue_freehand_drawing(&mut self, screen_x: f32, screen_y: f32) {
+        if !self.is_drawing {
+            return;
+        }
+
+        // Convert screen coordinates to page coordinates
+        let page_coord = self.input_handler.screen_to_page(screen_x, screen_y);
+
+        // Add point to the drawing path
+        self.freehand_drawing_points.push(PageCoordinate::new(page_coord.x, page_coord.y));
+    }
+
+    /// Finish freehand drawing and create the annotation
+    ///
+    /// This is called when the user releases the mouse button.
+    fn finish_freehand_drawing(&mut self) {
+        if !self.is_drawing {
+            return;
+        }
+
+        self.is_drawing = false;
+
+        // Need at least 2 points to create a meaningful stroke
+        if self.freehand_drawing_points.len() < 2 {
+            println!("Drawing cancelled - not enough points");
+            self.freehand_drawing_points.clear();
+            return;
+        }
+
+        // Create Freehand geometry from collected points
+        let geometry = AnnotationGeometry::Freehand {
+            points: self.freehand_drawing_points.clone(),
+        };
+
+        // Create default pen style - red markup for visibility
+        let style = AnnotationStyle::red_markup();
+
+        // Create the annotation
+        let annotation = Annotation::new(self.freehand_drawing_page, geometry, style);
+
+        // Add to the collection
+        self.annotations.add(annotation);
+
+        let num_points = self.freehand_drawing_points.len();
+        println!(
+            "Created freehand annotation on page {} with {} points",
+            self.freehand_drawing_page + 1,
+            num_points
+        );
+
+        // Clear the drawing state
+        self.freehand_drawing_points.clear();
+    }
+
     /// Handle a click on a note annotation - shows the popup with note content
     fn handle_note_click(&mut self, screen_x: f32, screen_y: f32) {
         // Get current page
@@ -3634,7 +3730,8 @@ impl App {
             | ToolbarButton::HandTool
             | ToolbarButton::HighlightTool
             | ToolbarButton::CommentTool
-            | ToolbarButton::MeasureTool => {
+            | ToolbarButton::MeasureTool
+            | ToolbarButton::FreedrawTool => {
                 self.toolbar.set_selected_tool(button);
                 self.text_selection_active = false;
             }
@@ -4308,6 +4405,15 @@ impl ApplicationHandler for App {
                 let y = position.y as f32;
                 self.input_handler.on_mouse_move(x, y);
 
+                // Update freehand drawing if in progress
+                if self.is_drawing {
+                    self.continue_freehand_drawing(x, y);
+                    // Request redraw to show drawing in progress
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                }
+
                 // Update text selection if in text selection mode and dragging
                 if self.text_selection_active {
                     if let Some(ref mut search_manager) = self.text_search_manager {
@@ -4489,6 +4595,13 @@ impl ApplicationHandler for App {
                                     if let Some(window) = &self.window {
                                         window.request_redraw();
                                     }
+                                } else if self.toolbar.selected_tool() == Some(ToolbarButton::FreedrawTool) {
+                                    // FreedrawTool: start freehand drawing
+                                    self.start_freehand_drawing(x, y);
+                                    // Request redraw to show drawing in progress
+                                    if let Some(window) = &self.window {
+                                        window.request_redraw();
+                                    }
                                 } else {
                                     // Check if note popup is visible and click is on close button
                                     if self.note_popup.is_visible() {
@@ -4538,6 +4651,12 @@ impl ApplicationHandler for App {
                                             println!("TEXT_SELECTION: Copied {} characters to clipboard", selected_text.len());
                                         }
                                     }
+                                }
+                            } else if self.is_drawing {
+                                // Finish freehand drawing if in progress
+                                self.finish_freehand_drawing();
+                                if let Some(window) = &self.window {
+                                    window.request_redraw();
                                 }
                             } else {
                                 self.input_handler.on_mouse_up();
@@ -4670,6 +4789,12 @@ impl ApplicationHandler for App {
                             self.toolbar.set_selected_tool(ToolbarButton::CommentTool);
                             self.text_selection_active = false;
                             println!("Note tool selected - click to place a note");
+                        }
+                        PhysicalKey::Code(KeyCode::KeyP) if !is_cmd && !is_shift => {
+                            // P = Pen tool (freehand drawing)
+                            self.toolbar.set_selected_tool(ToolbarButton::FreedrawTool);
+                            self.text_selection_active = false;
+                            println!("Pen tool selected - click and drag to draw");
                         }
                         _ => {}
                     }

@@ -337,7 +337,7 @@ Wire up existing annotation system.
 - [x] Comment/note tool (click to place)
 - [x] Render note icons
 - [x] Click note to show popup
-- [ ] Freehand drawing tool
+- [x] Freehand drawing tool
 - [ ] Render strokes
 - [ ] Save annotations to PDF
 - [ ] Load annotations from PDF
