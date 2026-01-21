@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 pdf-editor-cache = { path = "../cache" }
+pdf-editor-core = { path = "../core" }
 pdf-editor-render = { path = "../render" }
 pdf-editor-scheduler = { path = "../scheduler" }
 

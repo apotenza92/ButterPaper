@@ -8,8 +8,9 @@
 //
 // And produces a SceneGraph for GPU rendering.
 
-use crate::scene::{NodeId, Primitive, Rect, SceneGraph, SceneNode};
+use crate::scene::{Color, NodeId, Primitive, Rect, SceneGraph, SceneNode};
 use pdf_editor_cache::gpu::GpuTextureCache;
+use pdf_editor_core::annotation::{Annotation, AnnotationGeometry, PageCoordinate};
 use pdf_editor_render::tile::{TileCoordinate, TileId, TileProfile, TILE_SIZE};
 use pdf_editor_scheduler::Viewport;
 use std::sync::Arc;
@@ -40,6 +41,9 @@ pub struct ViewportCompositor {
 
     /// Current viewport state (cached to detect changes)
     current_viewport: Option<Viewport>,
+
+    /// Annotations to render (Phase 7 - will be replaced with AnnotationCollection reference)
+    annotations: Vec<Annotation>,
 }
 
 impl ViewportCompositor {
@@ -86,6 +90,7 @@ impl ViewportCompositor {
             guide_layer_id,
             label_layer_id,
             current_viewport: None,
+            annotations: Vec::new(),
         }
     }
 
@@ -172,16 +177,33 @@ impl ViewportCompositor {
         self.update_layer(0, Arc::new(tile_layer));
     }
 
-    /// Rebuild annotation layer (Phase 7 - placeholder)
-    fn rebuild_annotation_layer(&mut self, _viewport: &Viewport) {
-        // Phase 7 will add:
-        // - Query annotation database for visible annotations
-        // - Convert annotation geometry to GPU primitives
-        // - Apply viewport transform to annotation coordinates
-        // - Render as lines, rectangles, circles, etc.
+    /// Rebuild annotation layer (Phase 7)
+    fn rebuild_annotation_layer(&mut self, viewport: &Viewport) {
+        let mut annotation_primitives = Vec::new();
 
-        // For now, create empty layer
-        let annotation_layer = SceneNode::new();
+        // Filter annotations for current page and visible ones
+        let visible_annotations: Vec<&Annotation> = self
+            .annotations
+            .iter()
+            .filter(|a| a.page_index() == viewport.page_index && a.is_visible())
+            .collect();
+
+        // Convert each annotation to GPU primitives
+        for annotation in visible_annotations {
+            // Check if annotation is within viewport bounds (with some margin)
+            let (min_x, min_y, max_x, max_y) = annotation.bounding_box();
+            if is_in_viewport(min_x, min_y, max_x, max_y, viewport) {
+                if let Some(primitive) =
+                    annotation_to_primitive(annotation.geometry(), annotation.style(), viewport)
+                {
+                    annotation_primitives.push(primitive);
+                }
+            }
+        }
+
+        // Update annotation layer node
+        let mut annotation_layer = SceneNode::new();
+        annotation_layer.set_primitives(annotation_primitives);
 
         self.update_layer(1, Arc::new(annotation_layer));
     }
@@ -349,6 +371,178 @@ fn viewport_equals(a: &Viewport, b: &Viewport) -> bool {
         && a.width == b.width
         && a.height == b.height
         && a.zoom_level == b.zoom_level
+}
+
+/// Transform page coordinate to screen coordinate based on viewport
+fn transform_page_to_screen(coord: &PageCoordinate, viewport: &Viewport) -> [f32; 2] {
+    let zoom_scale = viewport.zoom_level as f32 / 100.0;
+    [
+        (coord.x * zoom_scale) - viewport.x,
+        (coord.y * zoom_scale) - viewport.y,
+    ]
+}
+
+/// Check if bounding box intersects with viewport (with margin)
+fn is_in_viewport(
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+    viewport: &Viewport,
+) -> bool {
+    let zoom_scale = viewport.zoom_level as f32 / 100.0;
+    let margin = 100.0; // Extra margin in page coordinates
+
+    let bbox_left = min_x * zoom_scale;
+    let bbox_right = max_x * zoom_scale;
+    let bbox_top = min_y * zoom_scale;
+    let bbox_bottom = max_y * zoom_scale;
+
+    let viewport_left = viewport.x - margin;
+    let viewport_right = viewport.x + viewport.width + margin;
+    let viewport_top = viewport.y - margin;
+    let viewport_bottom = viewport.y + viewport.height + margin;
+
+    bbox_right >= viewport_left
+        && bbox_left <= viewport_right
+        && bbox_bottom >= viewport_top
+        && bbox_top <= viewport_bottom
+}
+
+/// Convert annotation color to scene graph color
+fn convert_color(color: &pdf_editor_core::annotation::Color) -> Color {
+    let (r, g, b, a) = color.to_normalized();
+    Color { r, g, b, a }
+}
+
+/// Convert annotation geometry to GPU primitive
+fn annotation_to_primitive(
+    geometry: &AnnotationGeometry,
+    style: &pdf_editor_core::annotation::AnnotationStyle,
+    viewport: &Viewport,
+) -> Option<Primitive> {
+    let stroke_color = convert_color(&style.stroke_color);
+    let stroke_width = style.stroke_width;
+
+    match geometry {
+        AnnotationGeometry::Line { start, end } => {
+            let start_screen = transform_page_to_screen(start, viewport);
+            let end_screen = transform_page_to_screen(end, viewport);
+            Some(Primitive::Line {
+                start: start_screen,
+                end: end_screen,
+                width: stroke_width,
+                color: stroke_color,
+            })
+        }
+        AnnotationGeometry::Polyline { points } => {
+            let screen_points: Vec<[f32; 2]> = points
+                .iter()
+                .map(|p| transform_page_to_screen(p, viewport))
+                .collect();
+            Some(Primitive::Polyline {
+                points: screen_points,
+                width: stroke_width,
+                color: stroke_color,
+                closed: false,
+            })
+        }
+        AnnotationGeometry::Polygon { points } => {
+            let screen_points: Vec<[f32; 2]> = points
+                .iter()
+                .map(|p| transform_page_to_screen(p, viewport))
+                .collect();
+            Some(Primitive::Polygon {
+                points: screen_points,
+                fill_color: style.fill_color.as_ref().map(convert_color),
+                stroke_color,
+                stroke_width,
+            })
+        }
+        AnnotationGeometry::Rectangle {
+            top_left,
+            bottom_right,
+        } => {
+            let top_left_screen = transform_page_to_screen(top_left, viewport);
+            let bottom_right_screen = transform_page_to_screen(bottom_right, viewport);
+
+            // Convert rectangle to polygon for consistent stroke/fill handling
+            let points = vec![
+                top_left_screen,
+                [bottom_right_screen[0], top_left_screen[1]],
+                bottom_right_screen,
+                [top_left_screen[0], bottom_right_screen[1]],
+            ];
+
+            Some(Primitive::Polygon {
+                points,
+                fill_color: style.fill_color.as_ref().map(convert_color),
+                stroke_color,
+                stroke_width,
+            })
+        }
+        AnnotationGeometry::Circle { center, radius } => {
+            let center_screen = transform_page_to_screen(center, viewport);
+            let zoom_scale = viewport.zoom_level as f32 / 100.0;
+            let radius_screen = radius * zoom_scale;
+
+            Some(Primitive::Circle {
+                center: center_screen,
+                radius: radius_screen,
+                color: stroke_color,
+            })
+        }
+        AnnotationGeometry::Ellipse {
+            center,
+            radius_x,
+            radius_y,
+        } => {
+            let center_screen = transform_page_to_screen(center, viewport);
+            let zoom_scale = viewport.zoom_level as f32 / 100.0;
+            let radius_x_screen = radius_x * zoom_scale;
+            let radius_y_screen = radius_y * zoom_scale;
+
+            Some(Primitive::Ellipse {
+                center: center_screen,
+                radius_x: radius_x_screen,
+                radius_y: radius_y_screen,
+                fill_color: style.fill_color.as_ref().map(convert_color),
+                stroke_color,
+                stroke_width,
+            })
+        }
+        AnnotationGeometry::Freehand { points } => {
+            let screen_points: Vec<[f32; 2]> = points
+                .iter()
+                .map(|p| transform_page_to_screen(p, viewport))
+                .collect();
+            Some(Primitive::Polyline {
+                points: screen_points,
+                width: stroke_width,
+                color: stroke_color,
+                closed: false,
+            })
+        }
+        AnnotationGeometry::Arrow { start, end } => {
+            let start_screen = transform_page_to_screen(start, viewport);
+            let end_screen = transform_page_to_screen(end, viewport);
+            let zoom_scale = viewport.zoom_level as f32 / 100.0;
+            let head_size = 10.0 * zoom_scale; // Fixed arrowhead size in screen space
+
+            Some(Primitive::Arrow {
+                start: start_screen,
+                end: end_screen,
+                width: stroke_width,
+                color: stroke_color,
+                head_size,
+            })
+        }
+        AnnotationGeometry::Text { .. } => {
+            // Text rendering will be implemented in a future phase
+            // Requires text rasterization to texture and TexturedQuad primitive
+            None
+        }
+    }
 }
 
 #[cfg(test)]

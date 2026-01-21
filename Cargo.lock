@@ -1110,6 +1110,7 @@ dependencies = [
  "metal",
  "objc",
  "pdf-editor-cache",
+ "pdf-editor-core",
  "pdf-editor-render",
  "pdf-editor-scheduler",
 ]

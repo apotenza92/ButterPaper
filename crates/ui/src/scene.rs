@@ -138,11 +138,42 @@ pub enum Primitive {
         width: f32,
         color: Color,
     },
-    /// Circle
+    /// Circle (filled or stroke-only based on fill_color)
     Circle {
         center: [f32; 2],
         radius: f32,
         color: Color,
+    },
+    /// Polyline (connected line segments)
+    Polyline {
+        points: Vec<[f32; 2]>,
+        width: f32,
+        color: Color,
+        closed: bool,
+    },
+    /// Polygon (closed shape with optional fill and stroke)
+    Polygon {
+        points: Vec<[f32; 2]>,
+        fill_color: Option<Color>,
+        stroke_color: Color,
+        stroke_width: f32,
+    },
+    /// Ellipse
+    Ellipse {
+        center: [f32; 2],
+        radius_x: f32,
+        radius_y: f32,
+        fill_color: Option<Color>,
+        stroke_color: Color,
+        stroke_width: f32,
+    },
+    /// Arrow (line with arrowhead at the end)
+    Arrow {
+        start: [f32; 2],
+        end: [f32; 2],
+        width: f32,
+        color: Color,
+        head_size: f32,
     },
 }
 

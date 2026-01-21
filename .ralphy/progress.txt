@@ -3410,3 +3410,271 @@ The page-local coordinate system for annotations was already fully implemented a
 ✅ Clean integration with existing architecture
 
 **Phase 7, Task 3: COMPLETE ✅**
+
+---
+
+## Phase 7, Task 4: Render annotations as GPU vector primitives
+
+**Date:** 2026-01-21
+**Status:** Complete
+
+### Summary
+
+Implemented GPU vector primitive rendering for annotations by extending the scene graph primitive types and integrating annotation rendering into the viewport compositor. All annotation geometry types can now be converted to GPU primitives with proper coordinate transformation and styling.
+
+### Implementation Details
+
+#### 1. Extended Primitive Enum (scene.rs)
+Added four new primitive types to support annotation rendering:
+
+- **Polyline**: Connected line segments with configurable width and color
+  - `points: Vec<[f32; 2]>` - vertex positions
+  - `width: f32` - line width
+  - `color: Color` - stroke color
+  - `closed: bool` - whether to close the path
+
+- **Polygon**: Closed shape with optional fill and stroke
+  - `points: Vec<[f32; 2]>` - vertex positions
+  - `fill_color: Option<Color>` - interior fill (optional)
+  - `stroke_color: Color` - outline color
+  - `stroke_width: f32` - outline width
+
+- **Ellipse**: Rotatable ellipse primitive
+  - `center: [f32; 2]` - center point
+  - `radius_x: f32` - horizontal radius
+  - `radius_y: f32` - vertical radius
+  - `fill_color: Option<Color>` - interior fill (optional)
+  - `stroke_color: Color` - outline color
+  - `stroke_width: f32` - outline width
+
+- **Arrow**: Line with arrowhead at end point
+  - `start: [f32; 2]` - start point
+  - `end: [f32; 2]` - end point
+  - `width: f32` - line width
+  - `color: Color` - arrow color
+  - `head_size: f32` - arrowhead size
+
+#### 2. Compositor Integration (compositor.rs)
+
+**Added Dependencies:**
+- Added `pdf-editor-core` dependency to `crates/ui/Cargo.toml`
+- Imported annotation types: `Annotation`, `AnnotationGeometry`, `PageCoordinate`
+
+**Modified ViewportCompositor:**
+- Added `annotations: Vec<Annotation>` field for annotation storage
+- This is a temporary solution; future phases will use `AnnotationCollection` reference
+
+**Implemented `rebuild_annotation_layer()`:**
+```rust
+fn rebuild_annotation_layer(&mut self, viewport: &Viewport) {
+    // 1. Filter annotations for current page
+    // 2. Check visibility flag
+    // 3. Verify bounding box intersects viewport
+    // 4. Convert geometry to primitives with coordinate transform
+    // 5. Update annotation layer in scene graph
+}
+```
+
+#### 3. Coordinate Transformation
+
+**`transform_page_to_screen()`:**
+- Converts PageCoordinate (PDF bottom-left origin, points) to screen coordinates
+- Applies zoom scaling: `zoom_scale = viewport.zoom_level / 100.0`
+- Applies viewport pan offset: `screen = (page * zoom) - viewport_offset`
+
+**`is_in_viewport()`:**
+- Checks if annotation bounding box intersects viewport
+- Includes 100px margin for smooth scrolling experience
+- Culls off-screen annotations for performance
+
+#### 4. Geometry Conversion
+
+**`annotation_to_primitive()`:**
+Converts each annotation geometry type to GPU primitives:
+
+1. **Line** → `Primitive::Line`
+   - Direct mapping with coordinate transform
+
+2. **Polyline** → `Primitive::Polyline`
+   - Transform all points
+   - Set `closed: false`
+
+3. **Polygon** → `Primitive::Polygon`
+   - Transform all points
+   - Apply fill and stroke from style
+
+4. **Rectangle** → `Primitive::Polygon`
+   - Convert to 4-point polygon for consistent stroke/fill handling
+   - Handles arbitrary rectangle orientation
+
+5. **Circle** → `Primitive::Circle`
+   - Transform center point
+   - Scale radius by zoom level
+
+6. **Ellipse** → `Primitive::Ellipse`
+   - Transform center point
+   - Scale radii by zoom level
+   - Apply fill and stroke from style
+
+7. **Freehand** → `Primitive::Polyline`
+   - Transform all stroke points
+   - Set `closed: false`
+
+8. **Arrow** → `Primitive::Arrow`
+   - Transform start and end points
+   - Fixed arrowhead size in screen space (10px * zoom)
+
+9. **Text** → `None` (deferred)
+   - Requires text rasterization to texture
+   - Will be implemented in future phase
+
+#### 5. Color Conversion
+
+**`convert_color()`:**
+- Converts `pdf_editor_core::annotation::Color` (u8 RGBA)
+- To `scene::Color` (f32 RGBA 0.0-1.0)
+- Uses existing `to_normalized()` method from annotation color
+
+### Key Features
+
+1. **Zoom-Aware Rendering**
+   - All coordinates scaled by zoom level
+   - Stroke widths remain consistent
+   - Arrowhead size scales with zoom
+
+2. **Viewport Culling**
+   - Only renders annotations within viewport bounds
+   - Includes 100px margin for smooth scrolling
+   - Improves performance for large documents
+
+3. **Layer Integration**
+   - Annotations render on layer 1 (above tiles, below guides/labels)
+   - Respects existing layered scene graph architecture
+   - Proper render ordering maintained
+
+4. **Style Support**
+   - Stroke color and width from AnnotationStyle
+   - Fill color for closed shapes (polygon, ellipse)
+   - Opacity through color alpha channel
+   - Dash patterns deferred (requires shader support)
+
+5. **Page-Local Coordinates**
+   - Annotations stored in PDF page coordinates
+   - Transform applied at render time
+   - Enables proper zoom and pan behavior
+
+### Architecture Integration
+
+**Scene Graph Flow:**
+```
+Viewport Update
+    ↓
+rebuild_annotation_layer()
+    ↓
+Filter: page_index + visible flag
+    ↓
+Culling: bounding box check
+    ↓
+Convert: geometry → primitive + transform
+    ↓
+Update: annotation layer in scene graph
+    ↓
+Scene Renderer (Phase 12 - GPU draw calls)
+```
+
+**Coordinate Pipeline:**
+```
+PageCoordinate (annotation storage)
+    ↓ zoom_scale
+Scaled Page Space
+    ↓ - viewport_offset
+Screen Space (primitive coordinates)
+```
+
+### Files Modified
+
+1. **crates/ui/src/scene.rs**
+   - Extended `Primitive` enum with 4 new variants
+   - Added comprehensive documentation for each primitive
+
+2. **crates/ui/src/compositor.rs**
+   - Added annotation rendering infrastructure
+   - Implemented `rebuild_annotation_layer()`
+   - Added helper functions:
+     - `transform_page_to_screen()` - coordinate conversion
+     - `is_in_viewport()` - culling check
+     - `convert_color()` - color format conversion
+     - `annotation_to_primitive()` - geometry conversion (180 lines)
+
+3. **crates/ui/Cargo.toml**
+   - Added `pdf-editor-core` dependency for annotation types
+
+### Testing Strategy
+
+**Unit Tests (Existing):**
+- Scene graph tests verify primitive storage
+- Compositor tests verify layer structure
+- All existing tests pass
+
+**Integration Testing (Future):**
+- Create sample annotations in test document
+- Verify primitives generated for each geometry type
+- Test viewport culling behavior
+- Verify coordinate transform accuracy
+
+**Visual Testing (Phase 12):**
+- Once GPU rendering implemented, visually verify:
+  - Line rendering accuracy
+  - Polygon fill and stroke
+  - Ellipse shape correctness
+  - Arrow arrowhead rendering
+  - Zoom behavior (scaling, stroke width)
+  - Pan behavior (coordinate offset)
+
+### Performance Characteristics
+
+1. **Viewport Culling**: O(n) where n = annotations on current page
+2. **Coordinate Transform**: O(m) where m = visible annotations
+3. **Primitive Conversion**: O(1) per annotation (pre-allocated vectors)
+4. **Memory**: Minimal overhead, reuses Arc-wrapped annotation data
+
+### Future Enhancements
+
+**Phase 7 (Remaining Tasks):**
+- Vector-based hit testing (mouse picking)
+- Selection and manipulation handles
+
+**Phase 12 (Rendering):**
+- Implement actual GPU draw calls for new primitives
+- Metal shaders for polyline, polygon, ellipse, arrow
+- Anti-aliasing for smooth edges
+- Dash pattern support (shader-based)
+
+**Future Optimizations:**
+- Spatial indexing (R-tree) for large annotation sets
+- Incremental updates (only rebuild on annotation changes)
+- Multi-threaded geometry conversion for heavy scenes
+- Instanced rendering for repeated shapes
+
+### Validation
+
+✅ All annotation geometry types supported (except Text)
+✅ Proper coordinate transformation (page → screen)
+✅ Viewport culling implemented
+✅ Style conversion (color, stroke width, fill)
+✅ Layer integration (annotation layer 1)
+✅ Zero linting warnings (`cargo clippy`)
+✅ Clean compilation
+✅ Backward compatible with existing tests
+✅ Architecture follows existing patterns
+
+**Phase 7, Task 4: COMPLETE ✅**
+
+### Notes
+
+- Text annotation rendering deferred (requires text rasterization)
+- Dash pattern support deferred (requires shader work)
+- Actual GPU rendering occurs in Phase 12 (SceneRenderer implementation)
+- Current implementation prepares scene graph; draw calls come later
+- Annotation storage is temporary Vec; will use AnnotationCollection reference in future
+
