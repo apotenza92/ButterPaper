@@ -10515,3 +10515,41 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 - Icon primitives use basic shapes (rectangles, circles, polygons) for simple geometric icons
 - Ready for integration with main application once button click handling is wired up
 
+
+### Task: Wire up toolbar navigation buttons (Previous/Next page)
+
+**Status:** Complete
+
+**Changes:**
+- Added Toolbar instance to App struct in main.rs
+- Integrated toolbar with the window event handling:
+  - Updated viewport width on window resize
+  - Added hit testing for toolbar button clicks on mouse press
+  - Added hover state updates on mouse move
+- Implemented `handle_toolbar_button` method to dispatch button actions:
+  - PrevPage: calls `prev_page()` for page navigation
+  - NextPage: calls `next_page()` for page navigation
+  - ZoomOut/ZoomIn: calls input handler zoom methods
+  - FitPage/FitWidth: resets zoom to 100% (placeholder for full implementation)
+  - Tool buttons: sets the selected tool on the toolbar
+- Created toolbar texture rendering for visual display:
+  - Added `ToolbarTexture` struct for Metal texture storage
+  - Implemented `update_toolbar_texture()` to render toolbar to texture
+  - Implemented `draw_toolbar_buttons()` to draw all button backgrounds and icons
+  - Implemented geometric icon rendering: triangles for prev/next, +/- for zoom, rectangles, circles
+  - Added helper methods: `draw_triangle()`, `point_in_triangle()`, `draw_filled_circle()`
+- Toolbar texture rendered at top of window in render pass
+- Toolbar initialized on Metal layer setup and updated on window resize
+
+**Tests:** All 102 tests pass
+**Linting:** Clippy passes with warnings only (deprecated cocoa APIs, function argument count)
+
+**Files Modified:**
+- crates/app/src/main.rs (added toolbar integration, texture rendering)
+- PRD.md (marked icon rendering and navigation buttons as complete)
+
+**Architecture Notes:**
+- Toolbar buttons are functional via hit testing and event dispatch
+- Visual rendering uses CPU-based pixel buffer creation, blitted to Metal texture
+- Button icons use simple geometric shapes (triangles, rectangles, circles, lines)
+- Page number input field is still pending (requires text input handling)

@@ -266,11 +266,11 @@ The app needs a proper macOS menu bar. Use `cocoa` crate for native menus.
 GPU-rendered toolbar at top of window.
 
 - [x] Create toolbar component using scene graph
-- [ ] Add icon rendering (use simple geometric shapes initially)
-- [ ] **Navigation section:**
-  - [ ] Previous page button (◀)
+- [x] Add icon rendering (use simple geometric shapes initially)
+- [x] **Navigation section:**
+  - [x] Previous page button (◀)
   - [ ] Page number input field
-  - [ ] Next page button (▶)
+  - [x] Next page button (▶)
 - [ ] **Zoom section:**
   - [ ] Zoom out button (-)
   - [ ] Zoom dropdown (50%, 75%, 100%, 125%, 150%, 200%)

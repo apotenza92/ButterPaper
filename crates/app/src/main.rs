@@ -7,6 +7,7 @@ use pdf_editor_ui::gpu;
 use pdf_editor_ui::input::InputHandler;
 use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::SceneGraph;
+use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -913,6 +914,13 @@ struct DebugTextureOverlay {
     height: u32,
 }
 
+#[cfg(target_os = "macos")]
+struct ToolbarTexture {
+    texture: metal::Texture,
+    width: u32,
+    height: u32,
+}
+
 struct LoadedDocument {
     pdf: PdfDocument,
     path: PathBuf,
@@ -958,6 +966,11 @@ struct App {
     last_logged_viewport: Option<ViewportLogState>,
     /// Enable debug texture overlay (--debug-texture flag)
     debug_texture: bool,
+    /// GPU-rendered toolbar
+    toolbar: Toolbar,
+    /// Toolbar texture for rendering
+    #[cfg(target_os = "macos")]
+    toolbar_texture: Option<ToolbarTexture>,
 }
 
 impl App {
@@ -965,6 +978,7 @@ impl App {
         let scene_graph = SceneGraph::new();
         let now = Instant::now();
         let input_handler = InputHandler::new(1200.0, 800.0);
+        let toolbar = Toolbar::new(1200.0);
 
         Self {
             window: None,
@@ -994,6 +1008,9 @@ impl App {
             debug_viewport: false,
             last_logged_viewport: None,
             debug_texture: false,
+            toolbar,
+            #[cfg(target_os = "macos")]
+            toolbar_texture: None,
         }
     }
 
@@ -1295,6 +1312,367 @@ impl App {
     #[cfg(not(target_os = "macos"))]
     fn update_debug_texture_overlay(&mut self) {}
 
+    /// Update the toolbar texture for rendering
+    #[cfg(target_os = "macos")]
+    fn update_toolbar_texture(&mut self) {
+        let Some(device) = &self.device else { return; };
+        let window_size = self.window.as_ref().map(|w| w.inner_size()).unwrap_or_default();
+        let width = window_size.width;
+        let height = TOOLBAR_HEIGHT as u32;
+
+        if width == 0 {
+            return;
+        }
+
+        // Create BGRA pixel buffer for toolbar
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+        // Fill with toolbar background color (dark gray, semi-transparent)
+        // BGRA format: 0x2E2E2EFA (46, 46, 46, 250)
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 4) as usize;
+                pixels[idx] = 46;      // B
+                pixels[idx + 1] = 46;  // G
+                pixels[idx + 2] = 46;  // R
+                pixels[idx + 3] = 250; // A (almost opaque)
+            }
+        }
+
+        // Draw bottom border (lighter line)
+        let border_y = height - 1;
+        for x in 0..width {
+            let idx = ((border_y * width + x) * 4) as usize;
+            pixels[idx] = 77;      // B
+            pixels[idx + 1] = 77;  // G
+            pixels[idx + 2] = 77;  // R
+            pixels[idx + 3] = 255; // A
+        }
+
+        // Draw toolbar buttons using simple geometric shapes
+        self.draw_toolbar_buttons(&mut pixels, width, height);
+
+        // Create Metal texture
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(width as u64);
+        texture_desc.set_height(height as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: width as u64,
+                height: height as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            pixels.as_ptr() as *const _,
+            (width * 4) as u64,
+        );
+
+        self.toolbar_texture = Some(ToolbarTexture {
+            texture,
+            width,
+            height,
+        });
+    }
+
+    /// Draw toolbar buttons onto the pixel buffer
+    #[cfg(target_os = "macos")]
+    fn draw_toolbar_buttons(&self, pixels: &mut [u8], tex_width: u32, tex_height: u32) {
+        let button_size = 32u32;
+        let button_spacing = 4u32;
+        let padding = 8u32;
+        let button_y = (tex_height - button_size) / 2;
+
+        // Button definitions: (x_offset, icon_type, is_selected)
+        let buttons = [
+            // Navigation section
+            (padding, "prev", false),
+            (padding + button_size + button_spacing, "next", false),
+            // Separator at padding + 2*(button_size + button_spacing) + button_spacing
+            // Zoom section
+            (padding + 2 * (button_size + button_spacing) + button_spacing * 4 + 1, "zoom_out", false),
+            (padding + 3 * (button_size + button_spacing) + button_spacing * 4 + 1, "zoom_in", false),
+            (padding + 4 * (button_size + button_spacing) + button_spacing * 4 + 1, "fit_page", false),
+            (padding + 5 * (button_size + button_spacing) + button_spacing * 4 + 1, "fit_width", false),
+            // Another separator, then tools
+            (padding + 6 * (button_size + button_spacing) + button_spacing * 8 + 2, "select", true),
+            (padding + 7 * (button_size + button_spacing) + button_spacing * 8 + 2, "hand", false),
+            (padding + 8 * (button_size + button_spacing) + button_spacing * 8 + 2, "text", false),
+            (padding + 9 * (button_size + button_spacing) + button_spacing * 8 + 2, "highlight", false),
+            (padding + 10 * (button_size + button_spacing) + button_spacing * 8 + 2, "comment", false),
+            (padding + 11 * (button_size + button_spacing) + button_spacing * 8 + 2, "measure", false),
+        ];
+
+        for (x, icon_type, is_selected) in buttons {
+            self.draw_button(pixels, tex_width, x, button_y, button_size, icon_type, is_selected);
+        }
+
+        // Draw separators
+        let sep_x1 = padding + 2 * (button_size + button_spacing) + button_spacing;
+        let sep_x2 = padding + 6 * (button_size + button_spacing) + button_spacing * 5 + 1;
+        for sep_x in [sep_x1, sep_x2] {
+            for y in 8..tex_height - 8 {
+                let idx = ((y * tex_width + sep_x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx] = 77;      // B
+                    pixels[idx + 1] = 77;  // G
+                    pixels[idx + 2] = 77;  // R
+                    pixels[idx + 3] = 255; // A
+                }
+            }
+        }
+    }
+
+    /// Draw a single toolbar button
+    #[cfg(target_os = "macos")]
+    fn draw_button(&self, pixels: &mut [u8], tex_width: u32, x: u32, y: u32, size: u32, icon_type: &str, is_selected: bool) {
+        // Button background color
+        let (bg_r, bg_g, bg_b) = if is_selected {
+            (51, 102, 178) // Active blue
+        } else {
+            (64, 64, 64) // Normal dark gray
+        };
+
+        // Draw button background
+        for by in y..y + size {
+            for bx in x..x + size {
+                let idx = ((by * tex_width + bx) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx] = bg_b;     // B
+                    pixels[idx + 1] = bg_g; // G
+                    pixels[idx + 2] = bg_r; // R
+                    pixels[idx + 3] = 255;  // A
+                }
+            }
+        }
+
+        // Draw icon (white)
+        let icon_color = (230u8, 230u8, 230u8); // Light gray/white
+        let center_x = x + size / 2;
+        let center_y = y + size / 2;
+        let icon_size = size * 5 / 10; // 50% of button size
+        let half_icon = icon_size / 2;
+
+        match icon_type {
+            "prev" => {
+                // Left-pointing triangle
+                self.draw_triangle(
+                    pixels, tex_width,
+                    (center_x + half_icon / 2, center_y - half_icon),
+                    (center_x + half_icon / 2, center_y + half_icon),
+                    (center_x - half_icon * 7 / 10, center_y),
+                    icon_color,
+                );
+            }
+            "next" => {
+                // Right-pointing triangle
+                self.draw_triangle(
+                    pixels, tex_width,
+                    (center_x - half_icon / 2, center_y - half_icon),
+                    (center_x - half_icon / 2, center_y + half_icon),
+                    (center_x + half_icon * 7 / 10, center_y),
+                    icon_color,
+                );
+            }
+            "zoom_out" => {
+                // Minus sign
+                for bx in (center_x - half_icon)..=(center_x + half_icon) {
+                    for by in (center_y - 1)..=(center_y + 1) {
+                        let idx = ((by * tex_width + bx) * 4) as usize;
+                        if idx + 3 < pixels.len() {
+                            pixels[idx] = icon_color.2;
+                            pixels[idx + 1] = icon_color.1;
+                            pixels[idx + 2] = icon_color.0;
+                            pixels[idx + 3] = 255;
+                        }
+                    }
+                }
+            }
+            "zoom_in" => {
+                // Plus sign (horizontal)
+                for bx in (center_x - half_icon)..=(center_x + half_icon) {
+                    for by in (center_y - 1)..=(center_y + 1) {
+                        let idx = ((by * tex_width + bx) * 4) as usize;
+                        if idx + 3 < pixels.len() {
+                            pixels[idx] = icon_color.2;
+                            pixels[idx + 1] = icon_color.1;
+                            pixels[idx + 2] = icon_color.0;
+                            pixels[idx + 3] = 255;
+                        }
+                    }
+                }
+                // Plus sign (vertical)
+                for by in (center_y - half_icon)..=(center_y + half_icon) {
+                    for bx in (center_x - 1)..=(center_x + 1) {
+                        let idx = ((by * tex_width + bx) * 4) as usize;
+                        if idx + 3 < pixels.len() {
+                            pixels[idx] = icon_color.2;
+                            pixels[idx + 1] = icon_color.1;
+                            pixels[idx + 2] = icon_color.0;
+                            pixels[idx + 3] = 255;
+                        }
+                    }
+                }
+            }
+            "fit_page" | "fit_width" => {
+                // Simple rectangle icon
+                let rect_w = if icon_type == "fit_width" { icon_size * 12 / 10 } else { icon_size };
+                let rect_h = if icon_type == "fit_width" { icon_size * 6 / 10 } else { icon_size * 12 / 10 };
+                let rect_x = center_x - rect_w / 2;
+                let rect_y = center_y - rect_h / 2;
+                // Draw rectangle outline
+                for bx in rect_x..rect_x + rect_w {
+                    for by in [rect_y, rect_y + rect_h - 1] {
+                        let idx = ((by * tex_width + bx) * 4) as usize;
+                        if idx + 3 < pixels.len() {
+                            pixels[idx] = icon_color.2;
+                            pixels[idx + 1] = icon_color.1;
+                            pixels[idx + 2] = icon_color.0;
+                            pixels[idx + 3] = 255;
+                        }
+                    }
+                }
+                for by in rect_y..rect_y + rect_h {
+                    for bx in [rect_x, rect_x + rect_w - 1] {
+                        let idx = ((by * tex_width + bx) * 4) as usize;
+                        if idx + 3 < pixels.len() {
+                            pixels[idx] = icon_color.2;
+                            pixels[idx + 1] = icon_color.1;
+                            pixels[idx + 2] = icon_color.0;
+                            pixels[idx + 3] = 255;
+                        }
+                    }
+                }
+            }
+            "select" => {
+                // Arrow cursor - simplified as a triangle pointing up-left
+                self.draw_triangle(
+                    pixels, tex_width,
+                    (center_x - half_icon / 2, center_y - half_icon),
+                    (center_x - half_icon / 2, center_y + half_icon * 6 / 10),
+                    (center_x + half_icon / 2, center_y + half_icon / 10),
+                    icon_color,
+                );
+            }
+            "hand" => {
+                // Circle for palm
+                self.draw_filled_circle(pixels, tex_width, center_x, center_y + half_icon / 5, half_icon * 7 / 10, icon_color);
+            }
+            "text" => {
+                // I-beam cursor (simplified as vertical line with horizontal bars)
+                // Top bar
+                for bx in (center_x - half_icon * 6 / 10)..=(center_x + half_icon * 6 / 10) {
+                    let by = center_y - half_icon;
+                    let idx = ((by * tex_width + bx) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx] = icon_color.2;
+                        pixels[idx + 1] = icon_color.1;
+                        pixels[idx + 2] = icon_color.0;
+                        pixels[idx + 3] = 255;
+                    }
+                }
+                // Bottom bar
+                for bx in (center_x - half_icon * 6 / 10)..=(center_x + half_icon * 6 / 10) {
+                    let by = center_y + half_icon;
+                    let idx = ((by * tex_width + bx) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx] = icon_color.2;
+                        pixels[idx + 1] = icon_color.1;
+                        pixels[idx + 2] = icon_color.0;
+                        pixels[idx + 3] = 255;
+                    }
+                }
+                // Vertical stem
+                for by in (center_y - half_icon)..=(center_y + half_icon) {
+                    for bx in (center_x - 1)..=(center_x) {
+                        let idx = ((by * tex_width + bx) * 4) as usize;
+                        if idx + 3 < pixels.len() {
+                            pixels[idx] = icon_color.2;
+                            pixels[idx + 1] = icon_color.1;
+                            pixels[idx + 2] = icon_color.0;
+                            pixels[idx + 3] = 255;
+                        }
+                    }
+                }
+            }
+            "highlight" | "comment" | "measure" => {
+                // Simple filled circle as placeholder
+                self.draw_filled_circle(pixels, tex_width, center_x, center_y, half_icon * 6 / 10, icon_color);
+            }
+            _ => {}
+        }
+    }
+
+    /// Draw a filled triangle
+    #[cfg(target_os = "macos")]
+    fn draw_triangle(&self, pixels: &mut [u8], tex_width: u32, p1: (u32, u32), p2: (u32, u32), p3: (u32, u32), color: (u8, u8, u8)) {
+        // Simple scanline fill algorithm
+        let min_x = p1.0.min(p2.0).min(p3.0);
+        let max_x = p1.0.max(p2.0).max(p3.0);
+        let min_y = p1.1.min(p2.1).min(p3.1);
+        let max_y = p1.1.max(p2.1).max(p3.1);
+
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                if self.point_in_triangle(x as f32, y as f32,
+                    p1.0 as f32, p1.1 as f32,
+                    p2.0 as f32, p2.1 as f32,
+                    p3.0 as f32, p3.1 as f32) {
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx] = color.2;     // B
+                        pixels[idx + 1] = color.1; // G
+                        pixels[idx + 2] = color.0; // R
+                        pixels[idx + 3] = 255;     // A
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if a point is inside a triangle using barycentric coordinates
+    #[cfg(target_os = "macos")]
+    fn point_in_triangle(&self, px: f32, py: f32, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32) -> bool {
+        let area = 0.5 * (-y2 * x3 + y1 * (-x2 + x3) + x1 * (y2 - y3) + x2 * y3);
+        let s = (y1 * x3 - x1 * y3 + (y3 - y1) * px + (x1 - x3) * py) / (2.0 * area);
+        let t = (x1 * y2 - y1 * x2 + (y1 - y2) * px + (x2 - x1) * py) / (2.0 * area);
+        s >= 0.0 && t >= 0.0 && (s + t) <= 1.0
+    }
+
+    /// Draw a filled circle
+    #[cfg(target_os = "macos")]
+    fn draw_filled_circle(&self, pixels: &mut [u8], tex_width: u32, cx: u32, cy: u32, radius: u32, color: (u8, u8, u8)) {
+        let r2 = (radius * radius) as i32;
+        for dy in -(radius as i32)..=(radius as i32) {
+            for dx in -(radius as i32)..=(radius as i32) {
+                if dx * dx + dy * dy <= r2 {
+                    let x = (cx as i32 + dx) as u32;
+                    let y = (cy as i32 + dy) as u32;
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx] = color.2;     // B
+                        pixels[idx + 1] = color.1; // G
+                        pixels[idx + 2] = color.0; // R
+                        pixels[idx + 3] = 255;     // A
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn update_toolbar_texture(&mut self) {}
+
     fn next_page(&mut self) {
         if let Some(doc) = &mut self.document {
             if doc.current_page + 1 < doc.page_count {
@@ -1504,6 +1882,44 @@ impl App {
         );
     }
 
+    /// Handle toolbar button clicks
+    fn handle_toolbar_button(&mut self, button: ToolbarButton) {
+        match button {
+            ToolbarButton::PrevPage => {
+                self.prev_page();
+            }
+            ToolbarButton::NextPage => {
+                self.next_page();
+            }
+            ToolbarButton::ZoomOut => {
+                self.input_handler.zoom_out();
+                self.update_page_info_overlay();
+            }
+            ToolbarButton::ZoomIn => {
+                self.input_handler.zoom_in();
+                self.update_page_info_overlay();
+            }
+            ToolbarButton::FitPage => {
+                // For now, reset to 100% - full implementation would calculate fit
+                self.input_handler.zoom_reset();
+                self.update_page_info_overlay();
+            }
+            ToolbarButton::FitWidth => {
+                // For now, reset to 100% - full implementation would calculate fit
+                self.input_handler.zoom_reset();
+                self.update_page_info_overlay();
+            }
+            ToolbarButton::SelectTool
+            | ToolbarButton::HandTool
+            | ToolbarButton::TextSelectTool
+            | ToolbarButton::HighlightTool
+            | ToolbarButton::CommentTool
+            | ToolbarButton::MeasureTool => {
+                self.toolbar.set_selected_tool(button);
+            }
+        }
+    }
+
     fn update(&mut self) {
         let now = Instant::now();
         self.delta_time = now.duration_since(self.last_update);
@@ -1623,6 +2039,9 @@ impl App {
         self.loading_spinner = Some(spinner);
         self.device = Some(device);
         self.command_queue = Some(command_queue);
+
+        // Initialize toolbar texture
+        self.update_toolbar_texture();
     }
 
     fn render(&mut self) {
@@ -1840,6 +2259,33 @@ impl App {
                         }
                     }
 
+                    // Render toolbar at the top of the window
+                    if let Some(toolbar_tex) = &self.toolbar_texture {
+                        let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                        let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                        let src_size = metal::MTLSize {
+                            width: toolbar_tex.width.min(drawable_width as u32) as u64,
+                            height: toolbar_tex.height as u64,
+                            depth: 1,
+                        };
+                        let dest_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+
+                        blit_encoder.copy_from_texture(
+                            &toolbar_tex.texture,
+                            0,
+                            0,
+                            src_origin,
+                            src_size,
+                            drawable.texture(),
+                            0,
+                            0,
+                            dest_origin,
+                        );
+
+                        blit_encoder.end_encoding();
+                    }
+
                     command_buffer.present_drawable(drawable);
                     command_buffer.commit();
                 }
@@ -1903,6 +2349,8 @@ impl ApplicationHandler for App {
 
                 self.input_handler
                     .set_viewport_dimensions(size.width as f32, size.height as f32);
+                self.toolbar.set_viewport_width(size.width as f32);
+                self.update_toolbar_texture();
 
                 if self.document.is_some() {
                     if let Some(doc) = &mut self.document {
@@ -1923,15 +2371,27 @@ impl ApplicationHandler for App {
                 self.render();
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.input_handler
-                    .on_mouse_move(position.x as f32, position.y as f32);
+                let x = position.x as f32;
+                let y = position.y as f32;
+                self.input_handler.on_mouse_move(x, y);
+
+                // Update toolbar hover state
+                if let Some(button) = self.toolbar.hit_test(x, y) {
+                    self.toolbar.set_button_hover(button, true);
+                }
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if button == MouseButton::Left {
                     match state {
                         ElementState::Pressed => {
                             let (x, y) = self.input_handler.mouse_position();
-                            self.input_handler.on_mouse_down(x, y);
+
+                            // Check for toolbar button click first
+                            if let Some(button) = self.toolbar.hit_test(x, y) {
+                                self.handle_toolbar_button(button);
+                            } else {
+                                self.input_handler.on_mouse_down(x, y);
+                            }
                         }
                         ElementState::Released => {
                             self.input_handler.on_mouse_up();
