@@ -4,6 +4,7 @@
 //! - Mouse drag for panning (smooth scrolling)
 //! - Mouse wheel for zooming (with zoom centering on cursor position)
 //! - Keyboard shortcuts for navigation
+//! - Vector-based hit testing for annotation selection
 //!
 //! The input handler maintains velocity-based smooth interpolation for
 //! natural-feeling pan and zoom animations.
@@ -12,6 +13,8 @@
 //! to optimize tile cache efficiency. Smooth interpolation provides seamless transitions
 //! between discrete levels.
 
+use pdf_editor_core::annotation::{AnnotationCollection, AnnotationId};
+use pdf_editor_core::PageCoordinate;
 use pdf_editor_scheduler::Viewport;
 use std::time::Duration;
 
@@ -52,6 +55,12 @@ pub struct InputHandler {
     /// Viewport dimensions (screen size in pixels)
     viewport_width: f32,
     viewport_height: f32,
+
+    /// Currently selected annotation (if any)
+    selected_annotation: Option<AnnotationId>,
+
+    /// Hit test tolerance in page coordinates (points)
+    hit_test_tolerance: f32,
 }
 
 /// Pan state with velocity interpolation
@@ -119,6 +128,8 @@ impl InputHandler {
             mouse_pressed: false,
             viewport_width,
             viewport_height,
+            selected_annotation: None,
+            hit_test_tolerance: 5.0, // 5 points in page coordinates
         }
     }
 
@@ -356,6 +367,78 @@ impl InputHandler {
     /// Navigate to previous page
     pub fn prev_page(&mut self) {
         self.go_to_page(self.viewport.page_index.saturating_sub(1));
+    }
+
+    /// Convert screen coordinates to page coordinates
+    ///
+    /// # Arguments
+    /// * `screen_x` - X coordinate in screen space (pixels)
+    /// * `screen_y` - Y coordinate in screen space (pixels)
+    ///
+    /// # Returns
+    /// Page coordinate accounting for zoom and pan
+    pub fn screen_to_page(&self, screen_x: f32, screen_y: f32) -> PageCoordinate {
+        let zoom_scale = self.viewport.zoom_level as f32 / 100.0;
+        PageCoordinate::new(
+            (screen_x + self.viewport.x) / zoom_scale,
+            (screen_y + self.viewport.y) / zoom_scale,
+        )
+    }
+
+    /// Get the currently selected annotation ID
+    pub fn selected_annotation(&self) -> Option<AnnotationId> {
+        self.selected_annotation
+    }
+
+    /// Set the selected annotation
+    pub fn set_selected_annotation(&mut self, id: Option<AnnotationId>) {
+        self.selected_annotation = id;
+    }
+
+    /// Get the hit test tolerance in page coordinates
+    pub fn hit_test_tolerance(&self) -> f32 {
+        self.hit_test_tolerance
+    }
+
+    /// Set the hit test tolerance in page coordinates
+    pub fn set_hit_test_tolerance(&mut self, tolerance: f32) {
+        self.hit_test_tolerance = tolerance;
+    }
+
+    /// Perform hit test on annotations at current mouse position
+    ///
+    /// Returns the topmost annotation at the mouse position, or None if no hit.
+    /// This should be called with an AnnotationCollection to test against.
+    pub fn hit_test_at_mouse(
+        &self,
+        annotations: &AnnotationCollection,
+    ) -> Option<AnnotationId> {
+        let page_coord = self.screen_to_page(self.mouse_position.0, self.mouse_position.1);
+        let hits = annotations.hit_test(
+            self.viewport.page_index,
+            &page_coord,
+            self.hit_test_tolerance,
+        );
+
+        // Return the topmost annotation (first in the list, which is sorted by layer descending)
+        hits.first().map(|annotation| annotation.id())
+    }
+
+    /// Handle mouse click for annotation selection
+    ///
+    /// Call this on mouse down when not panning (e.g., when Ctrl/Cmd is not pressed).
+    /// Returns true if an annotation was selected, false otherwise.
+    pub fn handle_annotation_selection(
+        &mut self,
+        annotations: &AnnotationCollection,
+    ) -> bool {
+        if let Some(hit_id) = self.hit_test_at_mouse(annotations) {
+            self.selected_annotation = Some(hit_id);
+            true
+        } else {
+            self.selected_annotation = None;
+            false
+        }
     }
 }
 
@@ -667,5 +750,180 @@ mod tests {
 
         handler.zoom_out();
         assert_eq!(handler.zoom_state.target_zoom, 25);
+    }
+
+    #[test]
+    fn test_screen_to_page_at_100_zoom() {
+        let handler = InputHandler::new(1024.0, 768.0);
+        // At 100% zoom with no pan, screen coords should equal page coords
+        let page_coord = handler.screen_to_page(100.0, 200.0);
+        assert!((page_coord.x - 100.0).abs() < 0.001);
+        assert!((page_coord.y - 200.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_screen_to_page_at_200_zoom() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        handler.viewport.zoom_level = 200; // 2x zoom
+
+        // At 2x zoom, screen pixels are half the size in page coordinates
+        let page_coord = handler.screen_to_page(100.0, 200.0);
+        assert!((page_coord.x - 50.0).abs() < 0.001);
+        assert!((page_coord.y - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_screen_to_page_with_pan() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        handler.viewport.x = 50.0; // Pan offset
+        handler.viewport.y = 100.0;
+
+        // With pan, page coordinates should account for viewport offset
+        let page_coord = handler.screen_to_page(0.0, 0.0);
+        assert!((page_coord.x - 50.0).abs() < 0.001);
+        assert!((page_coord.y - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_screen_to_page_with_zoom_and_pan() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        handler.viewport.zoom_level = 200; // 2x zoom
+        handler.viewport.x = 100.0; // Pan offset
+        handler.viewport.y = 200.0;
+
+        // Screen point (0, 0) with 2x zoom and pan
+        let page_coord = handler.screen_to_page(0.0, 0.0);
+        // (0 + 100) / 2.0 = 50.0
+        // (0 + 200) / 2.0 = 100.0
+        assert!((page_coord.x - 50.0).abs() < 0.001);
+        assert!((page_coord.y - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_hit_test_tolerance() {
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        assert_eq!(handler.hit_test_tolerance(), 5.0);
+
+        handler.set_hit_test_tolerance(10.0);
+        assert_eq!(handler.hit_test_tolerance(), 10.0);
+    }
+
+    #[test]
+    fn test_selected_annotation() {
+        use pdf_editor_core::annotation::AnnotationId;
+
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        assert_eq!(handler.selected_annotation(), None);
+
+        let id = AnnotationId::new_v4();
+        handler.set_selected_annotation(Some(id));
+        assert_eq!(handler.selected_annotation(), Some(id));
+
+        handler.set_selected_annotation(None);
+        assert_eq!(handler.selected_annotation(), None);
+    }
+
+    #[test]
+    fn test_hit_test_at_mouse() {
+        use pdf_editor_core::annotation::{
+            Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle,
+        };
+
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        let mut collection = AnnotationCollection::new();
+
+        // Create a line annotation at (100, 100) to (200, 200) on page 0
+        let geometry = AnnotationGeometry::Line {
+            start: PageCoordinate::new(100.0, 100.0),
+            end: PageCoordinate::new(200.0, 200.0),
+        };
+        let annotation = Annotation::new(0, geometry, AnnotationStyle::new());
+        let annotation_id = annotation.id();
+        collection.add(annotation);
+
+        // Position mouse at the midpoint of the line (150, 150)
+        handler.on_mouse_move(150.0, 150.0);
+
+        // Should hit the annotation
+        let hit = handler.hit_test_at_mouse(&collection);
+        assert_eq!(hit, Some(annotation_id));
+
+        // Move mouse away from the line
+        handler.on_mouse_move(500.0, 500.0);
+
+        // Should not hit anything
+        let hit = handler.hit_test_at_mouse(&collection);
+        assert_eq!(hit, None);
+    }
+
+    #[test]
+    fn test_handle_annotation_selection() {
+        use pdf_editor_core::annotation::{
+            Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle,
+        };
+
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        let mut collection = AnnotationCollection::new();
+
+        // Create a rectangle annotation
+        let geometry = AnnotationGeometry::Rectangle {
+            top_left: PageCoordinate::new(50.0, 50.0),
+            bottom_right: PageCoordinate::new(150.0, 150.0),
+        };
+        let annotation = Annotation::new(0, geometry, AnnotationStyle::new());
+        let annotation_id = annotation.id();
+        collection.add(annotation);
+
+        // Position mouse inside the rectangle
+        handler.on_mouse_move(100.0, 100.0);
+
+        // Should select the annotation
+        let selected = handler.handle_annotation_selection(&collection);
+        assert!(selected);
+        assert_eq!(handler.selected_annotation(), Some(annotation_id));
+
+        // Move mouse outside the rectangle
+        handler.on_mouse_move(200.0, 200.0);
+
+        // Should deselect
+        let selected = handler.handle_annotation_selection(&collection);
+        assert!(!selected);
+        assert_eq!(handler.selected_annotation(), None);
+    }
+
+    #[test]
+    fn test_hit_test_with_multiple_layers() {
+        use pdf_editor_core::annotation::{
+            Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle,
+        };
+
+        let mut handler = InputHandler::new(1024.0, 768.0);
+        let mut collection = AnnotationCollection::new();
+
+        // Create two overlapping annotations at the same location
+        let geometry1 = AnnotationGeometry::Circle {
+            center: PageCoordinate::new(100.0, 100.0),
+            radius: 50.0,
+        };
+        let mut annotation1 = Annotation::new(0, geometry1, AnnotationStyle::new());
+        annotation1.set_layer(1);
+
+        let geometry2 = AnnotationGeometry::Circle {
+            center: PageCoordinate::new(100.0, 100.0),
+            radius: 50.0,
+        };
+        let mut annotation2 = Annotation::new(0, geometry2, AnnotationStyle::new());
+        annotation2.set_layer(2); // Higher layer (on top)
+        let id2 = annotation2.id();
+
+        collection.add(annotation1);
+        collection.add(annotation2);
+
+        // Position mouse at the center
+        handler.on_mouse_move(100.0, 100.0);
+
+        // Should hit the topmost annotation (layer 2)
+        let hit = handler.hit_test_at_mouse(&collection);
+        assert_eq!(hit, Some(id2));
     }
 }
