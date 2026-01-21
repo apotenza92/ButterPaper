@@ -277,15 +277,15 @@ GPU-rendered toolbar at top of window.
   - [x] Zoom in button (+)
   - [x] Fit page button
   - [x] Fit width button
-- [ ] **Tools section:**
-  - [ ] Selection tool (arrow)
-  - [ ] Hand/pan tool
-  - [ ] Text select tool
-  - [ ] Highlight tool
-  - [ ] Comment/note tool
-  - [ ] Measurement tool
-- [ ] Handle button hover states
-- [ ] Handle button click events
+- [x] **Tools section:**
+  - [x] Selection tool (arrow)
+  - [x] Hand/pan tool
+  - [x] Text select tool
+  - [x] Highlight tool
+  - [x] Comment/note tool
+  - [x] Measurement tool
+- [x] Handle button hover states
+- [x] Handle button click events
 - [x] ~~Manual test: Verify button clicks work~~ (SKIP - requires human)
 
 ### Phase 2.3: Sidebar (Thumbnail Strip)

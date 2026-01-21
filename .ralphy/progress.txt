@@ -10639,3 +10639,30 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 - Clicking anywhere outside the dropdown or its menu closes it
 - Hover highlighting provides visual feedback for menu item selection
 - ZOOM_LEVELS constant is shared between toolbar and can be used for discrete zoom stepping
+
+### Task: Implement toolbar button hover states and click events (Phase 2.2)
+
+**Status:** Complete
+
+**Changes:**
+- Fixed button hover state handling to properly clear hover states when moving away from buttons
+- Added `clear_all_hover_states()` method to Toolbar for clearing all button hover states at once
+- Modified `set_button_hover()` to clear hover states from other buttons when hovering a new button
+- Updated main.rs to call `clear_all_hover_states()` when cursor is not over any toolbar button
+- The Tools section buttons (Selection, Hand, Text Select, Highlight, Comment, Measurement) were already implemented with icons and click handling
+
+**Files Modified:**
+- crates/ui/src/toolbar.rs (added hover clearing logic and new method, plus 4 new tests)
+- crates/app/src/main.rs (added call to clear hover states when not over buttons)
+- PRD.md (marked Phase 2.2 Tools section, hover states, and click events as complete)
+
+**Tests Added:**
+- test_toolbar_hover_clears_other_buttons - verifies hovering a new button clears previous hover
+- test_toolbar_clear_all_hover_states - verifies clear_all_hover_states() works correctly
+- test_toolbar_clear_all_hover_no_rebuild_when_no_hover - verifies no unnecessary rebuilds
+- test_toolbar_hover_only_one_button_at_a_time - verifies only one button can be hovered at once
+
+**Test Results:**
+- All 137 workspace tests pass
+- All 48 toolbar tests pass
+- Clippy linting passes (only pre-existing cocoa deprecation warnings)

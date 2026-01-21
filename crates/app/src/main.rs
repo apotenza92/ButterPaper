@@ -2381,6 +2381,9 @@ impl ApplicationHandler for App {
                 // Update toolbar hover state
                 if let Some(button) = self.toolbar.hit_test(x, y) {
                     self.toolbar.set_button_hover(button, true);
+                } else {
+                    // Clear all hover states when not over any button
+                    self.toolbar.clear_all_hover_states();
                 }
 
                 // Update zoom dropdown hover state if open

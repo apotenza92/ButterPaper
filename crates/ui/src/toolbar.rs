@@ -631,7 +631,7 @@ impl Toolbar {
             ButtonState::Normal
         };
 
-        // Find and update the button state
+        // Find and update the button state, and clear hover from other buttons
         let mut changed = false;
         for (btn, state, _) in &mut self.button_states {
             if *btn == button {
@@ -639,7 +639,10 @@ impl Toolbar {
                     *state = new_state;
                     changed = true;
                 }
-                break;
+            } else if hovering && *state == ButtonState::Hover {
+                // Clear hover state from other buttons when hovering a new one
+                *state = ButtonState::Normal;
+                changed = true;
             }
         }
 
@@ -662,6 +665,21 @@ impl Toolbar {
                     }
                 }
             }
+        }
+    }
+
+    /// Clear all button hover states
+    pub fn clear_all_hover_states(&mut self) {
+        let mut changed = false;
+        for (_, state, _) in &mut self.button_states {
+            if *state == ButtonState::Hover {
+                *state = ButtonState::Normal;
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.rebuild();
         }
     }
 
@@ -1682,5 +1700,110 @@ mod tests {
             primitives_closed,
             primitives_open
         );
+    }
+
+    #[test]
+    fn test_toolbar_hover_clears_other_buttons() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Set hover on ZoomIn button
+        toolbar.set_button_hover(ToolbarButton::ZoomIn, true);
+
+        // Verify ZoomIn is hovered
+        let zoom_in_state = toolbar
+            .button_states
+            .iter()
+            .find(|(b, _, _)| *b == ToolbarButton::ZoomIn)
+            .map(|(_, s, _)| *s);
+        assert_eq!(zoom_in_state, Some(ButtonState::Hover));
+
+        // Now hover ZoomOut button
+        toolbar.set_button_hover(ToolbarButton::ZoomOut, true);
+
+        // Verify ZoomOut is now hovered
+        let zoom_out_state = toolbar
+            .button_states
+            .iter()
+            .find(|(b, _, _)| *b == ToolbarButton::ZoomOut)
+            .map(|(_, s, _)| *s);
+        assert_eq!(zoom_out_state, Some(ButtonState::Hover));
+
+        // Verify ZoomIn is no longer hovered
+        let zoom_in_state = toolbar
+            .button_states
+            .iter()
+            .find(|(b, _, _)| *b == ToolbarButton::ZoomIn)
+            .map(|(_, s, _)| *s);
+        assert_eq!(zoom_in_state, Some(ButtonState::Normal));
+    }
+
+    #[test]
+    fn test_toolbar_clear_all_hover_states() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Set hover on multiple buttons
+        toolbar.set_button_hover(ToolbarButton::ZoomIn, true);
+
+        // Verify at least one button is hovered
+        let has_hover = toolbar
+            .button_states
+            .iter()
+            .any(|(_, s, _)| *s == ButtonState::Hover);
+        assert!(has_hover, "Should have at least one hovered button");
+
+        // Clear all hover states
+        toolbar.clear_all_hover_states();
+
+        // Verify no buttons are hovered
+        let has_hover = toolbar
+            .button_states
+            .iter()
+            .any(|(_, s, _)| *s == ButtonState::Hover);
+        assert!(!has_hover, "Should have no hovered buttons after clearing");
+    }
+
+    #[test]
+    fn test_toolbar_clear_all_hover_no_rebuild_when_no_hover() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Get the scene node pointer (no buttons are hovered initially)
+        let node_ptr = Arc::as_ptr(toolbar.scene_node());
+
+        // Clear all hover states when none are hovered - should not rebuild
+        toolbar.clear_all_hover_states();
+
+        // Scene node should be the same (no rebuild occurred)
+        assert_eq!(Arc::as_ptr(toolbar.scene_node()), node_ptr);
+    }
+
+    #[test]
+    fn test_toolbar_hover_only_one_button_at_a_time() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Hover multiple buttons in sequence
+        let buttons = [
+            ToolbarButton::PrevPage,
+            ToolbarButton::NextPage,
+            ToolbarButton::SelectTool,
+            ToolbarButton::HandTool,
+        ];
+
+        for &button in &buttons {
+            toolbar.set_button_hover(button, true);
+
+            // Count how many buttons are hovered
+            let hover_count = toolbar
+                .button_states
+                .iter()
+                .filter(|(_, s, _)| *s == ButtonState::Hover)
+                .count();
+
+            // Only one button should be hovered at a time
+            assert_eq!(
+                hover_count, 1,
+                "Only one button should be hovered, but {} are hovered after hovering {:?}",
+                hover_count, button
+            );
+        }
     }
 }
