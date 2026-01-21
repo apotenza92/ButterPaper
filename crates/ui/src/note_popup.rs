@@ -7,6 +7,7 @@
 //! - Close button
 
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneNode};
+use crate::theme::current_theme;
 use std::sync::Arc;
 
 /// Default popup width
@@ -54,14 +55,15 @@ pub struct NotePopupConfig {
 
 impl Default for NotePopupConfig {
     fn default() -> Self {
+        let theme = current_theme();
         Self {
-            background_color: Color::rgba(1.0, 1.0, 0.85, 0.98), // Light yellow
-            title_bar_color: Color::rgba(0.95, 0.9, 0.7, 1.0),   // Slightly darker yellow
-            border_color: Color::rgba(0.7, 0.65, 0.4, 1.0),       // Golden brown border
-            text_color: Color::rgba(0.1, 0.1, 0.1, 1.0),          // Dark text
-            muted_text_color: Color::rgba(0.4, 0.4, 0.4, 1.0),    // Gray text
-            close_button_color: Color::rgba(0.6, 0.55, 0.35, 1.0),
-            close_button_hover_color: Color::rgba(0.8, 0.3, 0.3, 1.0),
+            background_color: theme.colors.note_background,
+            title_bar_color: theme.colors.note_title_bar,
+            border_color: theme.colors.note_border,
+            text_color: theme.colors.note_text,
+            muted_text_color: theme.colors.text_disabled,
+            close_button_color: Color::rgba(0.6, 0.55, 0.35, 1.0), // Note-specific close button
+            close_button_hover_color: Color::rgba(0.8, 0.3, 0.3, 1.0), // Red on hover
         }
     }
 }

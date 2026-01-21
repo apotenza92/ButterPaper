@@ -8,6 +8,7 @@
 //! - Keyboard support (Enter to confirm, Escape to cancel)
 
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneNode};
+use crate::theme::current_theme;
 use std::sync::Arc;
 
 /// Dialog width
@@ -76,18 +77,19 @@ pub struct CalibrationDialogConfig {
 
 impl Default for CalibrationDialogConfig {
     fn default() -> Self {
+        let theme = current_theme();
         Self {
-            background_color: Color::rgba(0.18, 0.18, 0.18, 0.98),
-            title_bar_color: Color::rgba(0.22, 0.22, 0.22, 1.0),
-            border_color: Color::rgba(0.35, 0.35, 0.35, 1.0),
-            input_background_color: Color::rgba(0.1, 0.1, 0.1, 1.0),
-            input_border_color: Color::rgba(0.4, 0.4, 0.4, 1.0),
-            input_focused_border_color: Color::rgba(0.3, 0.5, 0.8, 1.0),
-            text_color: Color::rgba(0.9, 0.9, 0.9, 1.0),
-            button_color: Color::rgba(0.28, 0.28, 0.28, 1.0),
-            button_hover_color: Color::rgba(0.38, 0.38, 0.38, 1.0),
-            ok_button_color: Color::rgba(0.2, 0.5, 0.3, 1.0),
-            cancel_button_color: Color::rgba(0.5, 0.25, 0.25, 1.0),
+            background_color: theme.colors.background_tertiary,
+            title_bar_color: theme.colors.background_elevated,
+            border_color: theme.colors.border_primary,
+            input_background_color: theme.colors.background_input,
+            input_border_color: theme.colors.border_primary,
+            input_focused_border_color: theme.colors.border_focused,
+            text_color: theme.colors.text_primary,
+            button_color: theme.colors.button_normal,
+            button_hover_color: theme.colors.button_hover,
+            ok_button_color: theme.colors.accent_success,
+            cancel_button_color: theme.colors.accent_error,
         }
     }
 }

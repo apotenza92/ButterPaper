@@ -4,6 +4,7 @@
 //! zoom controls, and tool selection buttons.
 
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneNode};
+use crate::theme::current_theme;
 use std::sync::Arc;
 
 /// Height of the toolbar in pixels
@@ -60,16 +61,17 @@ pub struct ToolbarConfig {
 
 impl Default for ToolbarConfig {
     fn default() -> Self {
+        let theme = current_theme();
         Self {
-            background_color: Color::rgba(0.18, 0.18, 0.18, 0.98),
-            separator_color: Color::rgba(0.3, 0.3, 0.3, 1.0),
-            button_color: Color::rgba(0.25, 0.25, 0.25, 1.0),
-            button_hover_color: Color::rgba(0.35, 0.35, 0.35, 1.0),
-            button_active_color: Color::rgba(0.2, 0.4, 0.7, 1.0),
-            button_icon_color: Color::rgba(0.9, 0.9, 0.9, 1.0),
-            button_size: 32.0,
-            button_spacing: 4.0,
-            padding: 8.0,
+            background_color: theme.colors.background_tertiary,
+            separator_color: theme.colors.separator,
+            button_color: theme.colors.button_normal,
+            button_hover_color: theme.colors.button_hover,
+            button_active_color: theme.colors.button_active,
+            button_icon_color: theme.colors.button_icon,
+            button_size: theme.sizes.button_size,
+            button_spacing: theme.spacing.sm,
+            padding: theme.spacing.md,
             visible: true,
         }
     }

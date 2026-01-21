@@ -8,6 +8,7 @@
 //! - Close button
 
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneNode};
+use crate::theme::current_theme;
 use std::sync::Arc;
 
 /// Height of the search bar in pixels
@@ -64,17 +65,18 @@ pub struct SearchBarConfig {
 
 impl Default for SearchBarConfig {
     fn default() -> Self {
+        let theme = current_theme();
         Self {
-            background_color: Color::rgba(0.15, 0.15, 0.15, 0.98),
-            input_background_color: Color::rgba(0.1, 0.1, 0.1, 1.0),
-            input_border_color: Color::rgba(0.35, 0.35, 0.35, 1.0),
-            input_focused_border_color: Color::rgba(0.3, 0.5, 0.8, 1.0),
-            button_color: Color::rgba(0.25, 0.25, 0.25, 1.0),
-            button_hover_color: Color::rgba(0.35, 0.35, 0.35, 1.0),
-            button_icon_color: Color::rgba(0.9, 0.9, 0.9, 1.0),
-            text_color: Color::rgba(0.9, 0.9, 0.9, 1.0),
-            placeholder_color: Color::rgba(0.5, 0.5, 0.5, 1.0),
-            padding: 8.0,
+            background_color: theme.colors.background_secondary,
+            input_background_color: theme.colors.background_input,
+            input_border_color: theme.colors.border_primary,
+            input_focused_border_color: theme.colors.border_focused,
+            button_color: theme.colors.button_normal,
+            button_hover_color: theme.colors.button_hover,
+            button_icon_color: theme.colors.button_icon,
+            text_color: theme.colors.text_primary,
+            placeholder_color: theme.colors.text_muted,
+            padding: theme.spacing.md,
             visible: false,
         }
     }

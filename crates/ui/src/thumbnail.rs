@@ -8,6 +8,7 @@
 //! macOS scrolling behavior.
 
 use crate::scene::{Color, NodeId, Primitive, Rect, SceneNode};
+use crate::theme::current_theme;
 use pdf_editor_cache::gpu::GpuTextureCache;
 use pdf_editor_render::tile::{TileCoordinate, TileId, TileProfile};
 use std::collections::HashSet;
@@ -47,15 +48,16 @@ pub struct ThumbnailConfig {
 
 impl Default for ThumbnailConfig {
     fn default() -> Self {
+        let theme = current_theme();
         Self {
-            thumbnail_width: 120.0,
-            thumbnail_height: 160.0,
-            spacing: 8.0,
+            thumbnail_width: theme.sizes.thumbnail_width,
+            thumbnail_height: theme.sizes.thumbnail_height,
+            spacing: theme.spacing.md,
             position: StripPosition::Left,
-            background_color: Color::rgba(0.15, 0.15, 0.15, 0.95),
-            border_color: Color::rgba(0.4, 0.4, 0.4, 1.0),
-            selected_border_color: Color::rgba(0.3, 0.6, 1.0, 1.0),
-            border_width: 2.0,
+            background_color: theme.colors.background_secondary,
+            border_color: theme.colors.border_primary,
+            selected_border_color: theme.colors.border_selected,
+            border_width: theme.sizes.border_width_focused,
             visible: true,
         }
     }

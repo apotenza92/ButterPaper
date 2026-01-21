@@ -12337,3 +12337,50 @@ pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_
 - Thread-safe design supports concurrent cache operations
 - Proactive eviction recommendations prevent hard failures
 - `CacheMonitor` provides a unified view for the application to query cache health
+
+### Task: Implement consistent visual style (Phase 4.3)
+
+**Status:** Complete
+
+**Changes:**
+- Created centralized theme module (`crates/ui/src/theme.rs`) with semantic color tokens
+- Implemented `ThemeColors` struct with organized color categories:
+  - Background colors (primary, secondary, tertiary, elevated, input)
+  - Text colors (primary, secondary, muted, disabled)
+  - Accent colors (primary, secondary, success, warning, error)
+  - Border colors (primary, secondary, focused, selected)
+  - Button colors (normal, hover, active, icon)
+  - Special colors (note popup yellow theme)
+- Implemented `ThemeSpacing` struct with consistent spacing values (xs=2, sm=4, md=8, lg=16, xl=24, xxl=32)
+- Implemented `ThemeSizes` struct with consistent UI element sizes (toolbar height, button sizes, etc.)
+- Created both dark and light theme presets with `Theme::dark()` and `Theme::light()`
+- Added global theme accessor via `current_theme()` function
+- Updated all UI component configs to use theme values:
+  - toolbar.rs: Updated ToolbarConfig to use theme colors and spacing
+  - search_bar.rs: Updated SearchBarConfig to use theme colors
+  - thumbnail.rs: Updated ThumbnailConfig to use theme colors and sizes
+  - calibration_dialog.rs: Updated CalibrationDialogConfig to use theme colors
+  - note_popup.rs: Updated NotePopupConfig to use theme colors
+- Added comprehensive tests for theme module (9 tests covering color values, spacing, and sizes)
+- All 242 UI tests pass
+- Linting passes for all library crates
+
+**Files Created:**
+- crates/ui/src/theme.rs
+
+**Files Modified:**
+- crates/ui/src/lib.rs (added theme module)
+- crates/ui/src/toolbar.rs (use theme colors)
+- crates/ui/src/search_bar.rs (use theme colors)
+- crates/ui/src/thumbnail.rs (use theme colors)
+- crates/ui/src/calibration_dialog.rs (use theme colors)
+- crates/ui/src/note_popup.rs (use theme colors)
+- PRD.md (marked task complete)
+
+**Benefits:**
+- Consistent color palette across all UI components
+- Semantic color tokens make it easy to understand color purpose
+- Foundation ready for dark/light mode toggle (Theme::light() is implemented)
+- Single source of truth for colors, spacing, and sizes
+- Easy to adjust visual style by modifying theme.rs
+
