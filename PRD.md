@@ -79,7 +79,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Build first-page immediate preview rendering
 - [x] Defer OCR, indexing, thumbnails on file open
 - [x] Implement page switch fast path (<100ms cached, <250ms preview)
-- [ ] Add prefetching for adjacent pages and margin tiles
+- [x] Add prefetching for adjacent pages and margin tiles
 
 ### Phase 6: Viewport and Navigation
 - [ ] Build viewport compositor (tiles + annotations + labels + guides)

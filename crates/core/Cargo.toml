@@ -8,3 +8,4 @@ repository.workspace = true
 [dependencies]
 pdf-editor-render = { path = "../render" }
 pdf-editor-cache = { path = "../cache" }
+pdf-editor-scheduler = { path = "../scheduler" }

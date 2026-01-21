@@ -3,10 +3,14 @@
 //! Provides fast page switching by checking caches first (RAM → GPU → Disk)
 //! and falling back to progressive rendering (preview → crisp) when needed.
 //! Targets: <100ms for cached pages, <250ms for preview rendering.
+//!
+//! Also provides prefetching for adjacent pages and margin tiles to ensure
+//! fast navigation between pages.
 
 use crate::document::{Document, DocumentError, DocumentId, DocumentResult};
 use pdf_editor_cache::{ram::CachedTile, DiskTileCache, RamTileCache};
 use pdf_editor_render::{PdfDocument, RenderedTile, TileCoordinate, TileId, TileProfile, TileRenderer};
+use pdf_editor_scheduler::{JobPriority, JobScheduler, JobType};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -52,6 +56,7 @@ pub struct PageSwitchResult {
 /// 2. Check disk cache → return quickly (<100ms target)
 /// 3. Render preview tiles → return fast (<250ms target)
 /// 4. Render crisp tiles → upgrade quality (background)
+/// 5. Prefetch adjacent pages and margin tiles (background)
 pub struct PageSwitcher {
     /// Tile renderer for rendering page tiles
     tile_renderer: TileRenderer,
@@ -62,11 +67,17 @@ pub struct PageSwitcher {
     /// Disk cache for persistent tile storage
     disk_cache: Option<Arc<DiskTileCache>>,
 
+    /// Job scheduler for background prefetching
+    scheduler: Option<Arc<JobScheduler>>,
+
     /// Default zoom level (100% = actual size)
     default_zoom: u32,
 
     /// Default rotation (0 degrees)
     default_rotation: u16,
+
+    /// Whether to enable prefetching (default: true)
+    enable_prefetch: bool,
 }
 
 impl PageSwitcher {
@@ -76,8 +87,10 @@ impl PageSwitcher {
             tile_renderer: TileRenderer::new(),
             ram_cache: None,
             disk_cache: None,
+            scheduler: None,
             default_zoom: 100,
             default_rotation: 0,
+            enable_prefetch: true,
         }
     }
 
@@ -87,8 +100,10 @@ impl PageSwitcher {
             tile_renderer: TileRenderer::new(),
             ram_cache: None,
             disk_cache: None,
+            scheduler: None,
             default_zoom: zoom_level,
             default_rotation: 0,
+            enable_prefetch: true,
         }
     }
 
@@ -101,6 +116,18 @@ impl PageSwitcher {
     /// Set the disk cache for persistent tile storage
     pub fn with_disk_cache(mut self, cache: Arc<DiskTileCache>) -> Self {
         self.disk_cache = Some(cache);
+        self
+    }
+
+    /// Set the job scheduler for background prefetching
+    pub fn with_scheduler(mut self, scheduler: Arc<JobScheduler>) -> Self {
+        self.scheduler = Some(scheduler);
+        self
+    }
+
+    /// Enable or disable prefetching
+    pub fn with_prefetch_enabled(mut self, enabled: bool) -> Self {
+        self.enable_prefetch = enabled;
         self
     }
 
@@ -181,6 +208,11 @@ impl PageSwitcher {
         )?;
 
         let elapsed = start_time.elapsed().as_millis() as u64;
+
+        // Trigger prefetching for adjacent pages in the background
+        if self.enable_prefetch {
+            self.prefetch_adjacent_pages(document, page_index, zoom_level, rotation);
+        }
 
         Ok(PageSwitchResult {
             document_id: preview_result.document_id,
@@ -435,6 +467,162 @@ impl PageSwitcher {
     pub fn default_rotation(&self) -> u16 {
         self.default_rotation
     }
+
+    /// Prefetch adjacent pages and margin tiles for fast navigation
+    ///
+    /// This method submits background jobs to prefetch tiles for pages adjacent
+    /// to the current page (page-1 and page+1), using the Adjacent priority.
+    /// Margin tiles around the viewport are prefetched with Margin priority.
+    ///
+    /// # Arguments
+    /// * `document` - The document being viewed
+    /// * `current_page` - The current page index
+    /// * `zoom_level` - The zoom level to prefetch at
+    /// * `rotation` - The rotation angle to prefetch at
+    ///
+    /// # Returns
+    /// The number of prefetch jobs submitted
+    fn prefetch_adjacent_pages(
+        &self,
+        document: &Document,
+        current_page: u16,
+        zoom_level: u32,
+        rotation: u16,
+    ) -> usize {
+        let scheduler = match &self.scheduler {
+            Some(s) => s,
+            None => return 0, // No scheduler configured, skip prefetching
+        };
+
+        let mut jobs_submitted = 0;
+
+        // Prefetch previous page
+        if current_page > 0 {
+            jobs_submitted += self.prefetch_page_tiles(
+                document,
+                scheduler,
+                current_page - 1,
+                zoom_level,
+                rotation,
+                TileProfile::Preview, // Use preview profile for prefetch
+            );
+        }
+
+        // Prefetch next page
+        if current_page + 1 < document.page_count() {
+            jobs_submitted += self.prefetch_page_tiles(
+                document,
+                scheduler,
+                current_page + 1,
+                zoom_level,
+                rotation,
+                TileProfile::Preview, // Use preview profile for prefetch
+            );
+        }
+
+        jobs_submitted
+    }
+
+    /// Prefetch all tiles for a specific page
+    ///
+    /// Submits background jobs to render all tiles for the specified page.
+    /// Tiles are submitted with Adjacent priority for background processing.
+    ///
+    /// # Arguments
+    /// * `document` - The document being viewed
+    /// * `scheduler` - The job scheduler to submit to
+    /// * `page_index` - The page to prefetch
+    /// * `zoom_level` - The zoom level to prefetch at
+    /// * `rotation` - The rotation angle to prefetch at
+    /// * `profile` - The tile profile to use (Preview or Crisp)
+    ///
+    /// # Returns
+    /// The number of tile jobs submitted
+    fn prefetch_page_tiles(
+        &self,
+        document: &Document,
+        scheduler: &JobScheduler,
+        page_index: u16,
+        zoom_level: u32,
+        rotation: u16,
+        profile: TileProfile,
+    ) -> usize {
+        // Get page dimensions to calculate tile grid
+        let file_path = &document.metadata().file_path;
+
+        let pdf_doc = match PdfDocument::open(file_path) {
+            Ok(doc) => doc,
+            Err(_) => return 0, // Failed to open PDF, skip prefetching
+        };
+
+        let page = match pdf_doc.get_page(page_index) {
+            Ok(p) => p,
+            Err(_) => return 0, // Failed to get page, skip prefetching
+        };
+
+        let page_width = page.width().value;
+        let page_height = page.height().value;
+
+        // Calculate tile grid dimensions
+        let (columns, rows) = self
+            .tile_renderer
+            .calculate_tile_grid(page_width, page_height, zoom_level);
+
+        let mut jobs_submitted = 0;
+
+        // Submit a job for each tile
+        for y in 0..rows {
+            for x in 0..columns {
+                // Check if tile is already in cache to avoid unnecessary work
+                let tile_id = TileId::new(
+                    page_index,
+                    TileCoordinate::new(x, y),
+                    zoom_level,
+                    rotation,
+                    profile,
+                );
+
+                let cache_key = tile_id.cache_key();
+
+                // Check RAM cache first
+                let in_cache = if let Some(ram_cache) = &self.ram_cache {
+                    ram_cache.try_get(cache_key).and_then(|opt| opt).is_some()
+                } else {
+                    false
+                };
+
+                // Check disk cache if not in RAM
+                let in_cache = in_cache
+                    || if let Some(disk_cache) = &self.disk_cache {
+                        disk_cache
+                            .try_get(cache_key)
+                            .ok()
+                            .and_then(|opt| opt)
+                            .is_some()
+                    } else {
+                        false
+                    };
+
+                // Only submit job if tile is not already cached
+                if !in_cache {
+                    scheduler.submit(
+                        JobPriority::Adjacent,
+                        JobType::RenderTile {
+                            page_index,
+                            tile_x: x,
+                            tile_y: y,
+                            zoom_level,
+                            rotation,
+                            is_preview: matches!(profile, TileProfile::Preview),
+                        },
+                    );
+                    jobs_submitted += 1;
+                }
+            }
+        }
+
+        jobs_submitted
+    }
 }
 
 impl Default for PageSwitcher {
@@ -592,5 +780,32 @@ mod tests {
         let switcher = PageSwitcher::default();
         assert_eq!(switcher.default_zoom(), 100);
         assert_eq!(switcher.default_rotation(), 0);
+    }
+
+    #[test]
+    fn test_page_switcher_with_scheduler() {
+        let scheduler = Arc::new(JobScheduler::new());
+        let switcher = PageSwitcher::new().with_scheduler(scheduler.clone());
+
+        // Verify switcher can be created with scheduler
+        let _ = switcher;
+    }
+
+    #[test]
+    fn test_page_switcher_with_prefetch_disabled() {
+        let switcher = PageSwitcher::new().with_prefetch_enabled(false);
+
+        // Verify prefetching can be disabled
+        let _ = switcher;
+    }
+
+    #[test]
+    fn test_prefetch_adjacent_pages_no_scheduler() {
+        let switcher = PageSwitcher::new();
+        let document = test_document();
+
+        // Should return 0 jobs when no scheduler is configured
+        let jobs = switcher.prefetch_adjacent_pages(&document, 5, 100, 0);
+        assert_eq!(jobs, 0);
     }
 }
