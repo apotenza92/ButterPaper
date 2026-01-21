@@ -4,9 +4,11 @@
 
 pub mod document;
 pub mod loader;
+pub mod preview;
 
 pub use document::{
     Document, DocumentError, DocumentId, DocumentManager, DocumentMetadata, DocumentResult,
     DocumentState,
 };
 pub use loader::{DocumentLoader, LoaderConfig};
+pub use preview::{AsyncPreviewRenderer, PreviewRenderer, PreviewResult, PreviewHandle};

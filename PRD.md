@@ -76,7 +76,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 
 ### Phase 5: Document Loading
 - [x] Implement fast file open (metadata only initially)
-- [ ] Build first-page immediate preview rendering
+- [x] Build first-page immediate preview rendering
 - [ ] Defer OCR, indexing, thumbnails on file open
 - [ ] Implement page switch fast path (<100ms cached, <250ms preview)
 - [ ] Add prefetching for adjacent pages and margin tiles
