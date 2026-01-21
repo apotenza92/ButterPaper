@@ -15,6 +15,7 @@ pub mod measurement;
 pub mod ocr;
 pub mod page_switch;
 pub mod pdf_export;
+pub mod progressive_page;
 pub mod persistence;
 pub mod preview;
 pub mod progressive_ocr;
@@ -48,6 +49,9 @@ pub use measurement::{
 };
 pub use ocr::{OcrConfig, OcrEngine, OcrError, OcrResult, TextBlock};
 pub use page_switch::{PageSwitchResult, PageSwitcher};
+pub use progressive_page::{
+    LoadingProgress, LoadingStage, ProgressiveLoadState, ProgressivePageLoader,
+};
 pub use pdf_export::{
     export_flattened_pdf, generate_appearance_stream, save_pdf_with_annotations, ExportOptions,
     PdfExportError, PdfExportResult,

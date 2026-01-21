@@ -12245,3 +12245,46 @@ pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_
 - All 115 scheduler unit tests pass
 - All 11 scheduler doc tests pass
 - Clippy passes with -D warnings
+
+### Task: Implement progressive page loading for large PDFs (Phase 4.2)
+
+**Status:** Complete
+
+**Changes:**
+- Created new `progressive_page` module in `pdf-editor-core` crate
+- Implemented `ProgressivePageLoader` struct with frame-budget-aware tile loading
+- Key features:
+  - Chunked tile loading that respects frame budgets to prevent UI freezes
+  - Two-stage progressive quality: preview tiles first, then upgrade to crisp
+  - Background prefetching of adjacent pages
+  - Cancellation support when viewport changes
+  - Cache integration (RAM and disk caches)
+- Implemented `ProgressiveLoadState` to track loading progress across frames
+- Implemented `LoadingProgress` struct with percentage tracking and stage information
+- Added `LoadingStage` enum: NotStarted, LoadingPreview, UpgradingToCrisp, Complete, Cancelled
+- Performance targets:
+  - First visible content: <100ms (immediate feedback)
+  - Preview tiles complete: <250ms (fast visual)
+  - Crisp upgrade: Background (no UI blocking)
+- Added 14 comprehensive unit tests covering:
+  - Loader creation and configuration
+  - Invalid page handling
+  - Loading state transitions
+  - Progress tracking
+  - Cancellation
+  - Tile preference (crisp over preview)
+- All tests pass (271 tests in core crate, full workspace passes)
+- Clippy passes with no warnings
+
+**Files Created:**
+- crates/core/src/progressive_page.rs
+
+**Files Modified:**
+- crates/core/src/lib.rs (added module export)
+- PRD.md (marked task complete)
+
+**Exports Added:**
+- `LoadingProgress`
+- `LoadingStage`
+- `ProgressiveLoadState`
+- `ProgressivePageLoader`
