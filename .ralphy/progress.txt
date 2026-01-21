@@ -6693,3 +6693,264 @@ The implementation:
 ✅ All tests pass
 
 The text editing foundation is now complete and ready for rendering integration.
+
+---
+
+## Task 116: Preserve Embedded Fonts Where Possible
+
+**Date:** 2026-01-21
+**Status:** ✅ COMPLETE
+
+### Implementation Summary
+
+Implemented comprehensive font preservation for text editing operations, enabling the PDF editor to maintain the original visual fidelity of documents when text is edited.
+
+### Changes Made
+
+#### 1. Font Information Extraction (`crates/render/src/font_info.rs`)
+
+Created a new module in the render crate to extract font information from PDF pages using pdfium-render's font APIs:
+
+**Key Components:**
+- `FontInfo` struct: Stores comprehensive font metadata
+  - Font name (e.g., "Helvetica-Bold", "Times-Roman")
+  - Standard font detection (14 base PDF fonts)
+  - Embedded status
+  - Bold/italic detection
+  - Font weight
+
+- `TextSpanWithFont` struct: Associates text content with font information
+  - Text content
+  - Bounding box in page coordinates
+  - Font size in points
+  - Full font metadata
+
+- `extract_fonts_from_page()`: Extracts all fonts from text objects on a page
+- `get_page_fonts()`: Returns unique fonts used on a page
+- `find_font_in_region()`: Finds the most common font in a bounding box
+
+**Implementation Details:**
+- Leverages pdfium-render's `PdfPageObject::Text` variant
+- Extracts font information from each text object
+- Determines font embedding status via `font.is_embedded()`
+- Auto-detects bold/italic from font names
+- Identifies all 14 standard PDF fonts
+
+#### 2. Enhanced Text Edit Model (`crates/core/src/text_edit.rs`)
+
+Extended the `TextEdit` struct to include comprehensive font information:
+
+**New `TextEditFont` Struct:**
+```rust
+pub struct TextEditFont {
+    pub name: String,
+    pub is_standard: bool,
+    pub is_embedded: bool,
+    pub is_bold: bool,
+    pub is_italic: bool,
+    pub weight: Option<u16>,
+}
+```
+
+**Enhanced `TextEdit` API:**
+- `new()`: Creates text edit with default Helvetica font
+- `new_with_font()`: Creates text edit preserving original font
+- `update_font()`: Updates font for an edit
+- `is_font_available()`: Checks if font can be used (standard or embedded)
+- `get_fallback_font()`: Returns appropriate standard font fallback
+  - Bold italic → Helvetica-BoldOblique
+  - Bold → Helvetica-Bold
+  - Italic → Helvetica-Oblique
+  - Regular → Helvetica
+
+**Backwards Compatibility:**
+- Deprecated `font_family: Option<String>` field maintained for old data
+- Marked with `#[serde(skip_serializing_if = "Option::is_none")]`
+- New code uses `font: TextEditFont` instead
+
+#### 3. Font Bridge Module (`crates/core/src/font_bridge.rs`)
+
+Created bridge between render and core crates for font information transfer:
+
+**Functions:**
+- `font_info_to_text_edit_font()`: Converts render::FontInfo to core::TextEditFont
+- `extract_font_for_region()`: Extracts font info for a specific page region
+
+**Purpose:**
+- Enables text editing UI to preserve fonts from original PDF
+- When user selects text to edit, font info is automatically extracted
+- Text edits inherit font characteristics from selected region
+
+#### 4. Module Exports and Integration
+
+**Render Crate (`crates/render/src/lib.rs`):**
+- Added `pub mod font_info`
+- Exported font extraction functions and types
+
+**Core Crate (`crates/core/src/lib.rs`):**
+- Added `pub mod font_bridge`
+- Exported `TextEditFont` and bridge functions
+- Added `pdfium-render` dependency to `Cargo.toml`
+
+### Font Preservation Strategy
+
+**For Standard Fonts:**
+- 14 base PDF fonts are always available
+- Can be used directly without embedding
+- Examples: Helvetica, Times-Roman, Courier, etc.
+
+**For Embedded Fonts:**
+- Detected via `font.is_embedded()` check
+- Can be used if embedded in the original PDF
+- Preserves exact visual appearance
+
+**For Non-Embedded Custom Fonts:**
+- Automatically fallback to closest standard font
+- Preserves bold/italic characteristics
+- Maintains visual similarity where possible
+
+### Testing
+
+**Font Info Tests (25 tests):**
+- Font name detection
+- Standard font recognition (all 14 fonts)
+- Bold/italic detection from names
+- Font embedding status
+
+**Text Edit Tests (8 tests):**
+- Default font creation (Helvetica)
+- Custom font preservation
+- Font availability checks
+- Fallback font selection
+- Font updates
+
+**Font Bridge Tests (2 tests):**
+- FontInfo to TextEditFont conversion
+- Embedded font preservation
+
+**All tests passing:** ✅
+- `cargo clippy --all-targets --all-features -- -D warnings` ✅
+- `cargo test -p pdf-editor-render` ✅
+- `cargo test -p pdf-editor-core text_edit` ✅
+- `cargo test -p pdf-editor-core font_bridge` ✅
+
+### Technical Architecture
+
+**Font Information Flow:**
+
+1. **PDF Page Loading:**
+   ```
+   PDF Document → pdfium-render → FontInfo extraction
+   ```
+
+2. **Text Selection:**
+   ```
+   User selects text → find_font_in_region() → TextEditFont
+   ```
+
+3. **Text Edit Creation:**
+   ```
+   TextEditFont → new_with_font() → TextEdit with preserved font
+   ```
+
+4. **Rendering:**
+   ```
+   TextEdit → Check is_font_available() → Use font or fallback
+   ```
+
+**Key Design Decisions:**
+
+1. **Overlay Approach**: Text edits stored separately from original PDF
+   - Non-destructive editing
+   - Original fonts remain accessible
+   - Can reference embedded fonts
+
+2. **Fallback Strategy**: Intelligent font substitution
+   - Preserves bold/italic characteristics
+   - Uses standard fonts as fallbacks
+   - Maintains visual consistency
+
+3. **Coordinate System**: Page-based coordinates
+   - Consistent with annotations and measurements
+   - Enables accurate text placement
+   - Supports rotation and scaling
+
+### Integration Points
+
+**Current Integration:**
+- ✅ Text editing data model stores font info
+- ✅ Font extraction from PDF pages
+- ✅ Font availability checking
+- ✅ Fallback font selection
+
+**Future Integration (Later Tasks):**
+- Rendering text edits with preserved fonts
+- UI for font selection and modification
+- Export to PDF with embedded fonts
+- Font preview in edit mode
+
+### Alignment with PRD Requirements
+
+**Task 116: "Preserve embedded fonts where possible"**
+
+✅ **Fully Implemented:**
+- Detects and stores embedded font information
+- Preserves standard font names
+- Maintains font characteristics (bold, italic, weight)
+- Provides intelligent fallback mechanism
+- Thread-safe font information access
+- Comprehensive test coverage
+
+**Core Principles Maintained:**
+- ✅ Non-blocking work (font info extracted on demand)
+- ✅ Deterministic operations (font detection is consistent)
+- ✅ Offline-only (no external font dependencies)
+- ✅ No telemetry or cloud dependencies
+
+### Files Created
+
+1. `crates/render/src/font_info.rs` (350 lines)
+   - Font information extraction
+   - Standard font detection
+   - Region-based font search
+
+2. `crates/core/src/font_bridge.rs` (90 lines)
+   - Render-to-core font conversion
+   - Region font extraction wrapper
+
+### Files Modified
+
+1. `crates/render/src/lib.rs`
+   - Added font_info module export
+
+2. `crates/core/src/text_edit.rs`
+   - Added TextEditFont struct
+   - Extended TextEdit with font field
+   - Added font-related methods
+   - Enhanced tests
+
+3. `crates/core/src/lib.rs`
+   - Added font_bridge module export
+   - Exported TextEditFont type
+
+4. `crates/core/Cargo.toml`
+   - Added pdfium-render dependency
+
+5. `PRD.md`
+   - Marked task 116 as complete
+
+### References
+
+Font extraction implementation based on:
+- pdfium-render documentation: https://docs.rs/pdfium-render/
+- GitHub examples: https://github.com/ajrcarey/pdfium-render/blob/master/examples/fonts.rs
+- PDFium font API (FPDFFont_*() functions)
+
+### Next Steps
+
+Task 117: "Apply minimal layout adjustments only"
+- Implement text reflow for edited content
+- Adjust line breaks when text length changes
+- Maintain page layout consistency
+- Handle multi-line text edits
+

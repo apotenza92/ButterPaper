@@ -21,6 +21,76 @@ impl Default for TextEditId {
     }
 }
 
+/// Font information for text edits
+///
+/// Stores comprehensive font information extracted from the PDF or specified by the user.
+/// This enables text edits to preserve the original font characteristics where possible.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TextEditFont {
+    /// Font name (e.g., "Helvetica", "Times-Roman", "Arial-BoldMT")
+    pub name: String,
+
+    /// Whether this is one of the 14 standard PDF fonts
+    pub is_standard: bool,
+
+    /// Whether the font is embedded in the PDF
+    pub is_embedded: bool,
+
+    /// Whether the font is bold
+    pub is_bold: bool,
+
+    /// Whether the font is italic
+    pub is_italic: bool,
+
+    /// Font weight (if available)
+    pub weight: Option<u16>,
+}
+
+impl TextEditFont {
+    /// Create a new font with standard characteristics
+    pub fn new(name: String) -> Self {
+        let is_bold = name.to_lowercase().contains("bold");
+        let is_italic = name.to_lowercase().contains("italic") || name.to_lowercase().contains("oblique");
+
+        Self {
+            name,
+            is_standard: false,
+            is_embedded: false,
+            is_bold,
+            is_italic,
+            weight: None,
+        }
+    }
+
+    /// Create a default font (Helvetica)
+    pub fn default_font() -> Self {
+        let mut font = Self::new("Helvetica".to_string());
+        font.is_standard = true;
+        font
+    }
+
+    /// Check if this is one of the 14 standard PDF fonts
+    pub fn check_is_standard(&mut self) {
+        self.is_standard = matches!(
+            self.name.as_str(),
+            "Courier"
+                | "Courier-Bold"
+                | "Courier-Oblique"
+                | "Courier-BoldOblique"
+                | "Helvetica"
+                | "Helvetica-Bold"
+                | "Helvetica-Oblique"
+                | "Helvetica-BoldOblique"
+                | "Times-Roman"
+                | "Times-Bold"
+                | "Times-Italic"
+                | "Times-BoldItalic"
+                | "Symbol"
+                | "ZapfDingbats"
+        );
+    }
+}
+
 /// Represents a single text edit operation on a PDF page
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextEdit {
@@ -42,7 +112,12 @@ pub struct TextEdit {
     /// Font size in points (preserved from original or user-specified)
     pub font_size: f32,
 
-    /// Font family name (if known from original text)
+    /// Font information (preserved from original text where possible)
+    pub font: TextEditFont,
+
+    /// Font family name (deprecated, use font.name instead)
+    /// Kept for backwards compatibility with existing serialized data
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
 
     /// RGB color for the edited text (0.0 to 1.0)
@@ -65,7 +140,7 @@ pub struct TextEdit {
 }
 
 impl TextEdit {
-    /// Create a new text edit
+    /// Create a new text edit with default font
     pub fn new(
         page_index: u16,
         bbox: TextBoundingBox,
@@ -85,6 +160,7 @@ impl TextEdit {
             original_text,
             edited_text,
             font_size,
+            font: TextEditFont::default_font(),
             font_family: None,
             color: [0.0, 0.0, 0.0], // Default to black text
             visible: true,
@@ -93,6 +169,79 @@ impl TextEdit {
             author: None,
             notes: None,
         }
+    }
+
+    /// Create a new text edit with specified font
+    pub fn new_with_font(
+        page_index: u16,
+        bbox: TextBoundingBox,
+        original_text: String,
+        edited_text: String,
+        font_size: f32,
+        font: TextEditFont,
+    ) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let font_family_name = font.name.clone();
+
+        Self {
+            id: TextEditId::new(),
+            page_index,
+            bbox,
+            original_text,
+            edited_text,
+            font_size,
+            font,
+            font_family: Some(font_family_name),
+            color: [0.0, 0.0, 0.0], // Default to black text
+            visible: true,
+            created_at: now,
+            modified_at: now,
+            author: None,
+            notes: None,
+        }
+    }
+
+    /// Update the font for this edit
+    pub fn update_font(&mut self, font: TextEditFont) {
+        self.font = font;
+        self.font_family = Some(self.font.name.clone());
+        self.modified_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+    }
+
+    /// Get whether the font is available for use
+    /// Standard or embedded fonts can be used; others require fallback
+    pub fn is_font_available(&self) -> bool {
+        self.font.is_standard || self.font.is_embedded
+    }
+
+    /// Get a suitable fallback font if the current font is not available
+    pub fn get_fallback_font(&self) -> TextEditFont {
+        // If the font is available, return it as-is
+        if self.is_font_available() {
+            return self.font.clone();
+        }
+
+        // Otherwise, choose an appropriate standard font based on characteristics
+        let font_name = if self.font.is_bold && self.font.is_italic {
+            "Helvetica-BoldOblique"
+        } else if self.font.is_bold {
+            "Helvetica-Bold"
+        } else if self.font.is_italic {
+            "Helvetica-Oblique"
+        } else {
+            "Helvetica"
+        };
+
+        let mut fallback = TextEditFont::new(font_name.to_string());
+        fallback.check_is_standard();
+        fallback
     }
 
     /// Update the edited text
@@ -373,6 +522,35 @@ mod tests {
         assert_eq!(edit.original_text, "Original");
         assert_eq!(edit.edited_text, "Edited");
         assert!(edit.has_changes());
+        assert_eq!(edit.font.name, "Helvetica");
+        assert!(edit.font.is_standard);
+    }
+
+    #[test]
+    fn test_text_edit_with_custom_font() {
+        let bbox = TextBoundingBox {
+            x: 100.0,
+            y: 200.0,
+            width: 150.0,
+            height: 20.0,
+        };
+
+        let mut font = TextEditFont::new("Arial-BoldMT".to_string());
+        font.is_embedded = true;
+
+        let edit = TextEdit::new_with_font(
+            0,
+            bbox,
+            "Original".to_string(),
+            "Edited".to_string(),
+            12.0,
+            font,
+        );
+
+        assert_eq!(edit.font.name, "Arial-BoldMT");
+        assert!(edit.font.is_bold);
+        assert!(edit.font.is_embedded);
+        assert!(edit.is_font_available());
     }
 
     #[test]
@@ -393,6 +571,148 @@ mod tests {
         );
 
         assert!(!edit.has_changes());
+    }
+
+    #[test]
+    fn test_font_availability() {
+        let bbox = TextBoundingBox {
+            x: 100.0,
+            y: 200.0,
+            width: 150.0,
+            height: 20.0,
+        };
+
+        // Standard font is available
+        let mut standard_font = TextEditFont::new("Helvetica".to_string());
+        standard_font.check_is_standard();
+        let edit1 = TextEdit::new_with_font(
+            0,
+            bbox,
+            "Test".to_string(),
+            "Test".to_string(),
+            12.0,
+            standard_font,
+        );
+        assert!(edit1.is_font_available());
+
+        // Embedded font is available
+        let mut embedded_font = TextEditFont::new("CustomFont".to_string());
+        embedded_font.is_embedded = true;
+        let edit2 = TextEdit::new_with_font(
+            0,
+            bbox,
+            "Test".to_string(),
+            "Test".to_string(),
+            12.0,
+            embedded_font,
+        );
+        assert!(edit2.is_font_available());
+
+        // Non-embedded, non-standard font is not available
+        let custom_font = TextEditFont::new("UnknownFont".to_string());
+        let edit3 = TextEdit::new_with_font(
+            0,
+            bbox,
+            "Test".to_string(),
+            "Test".to_string(),
+            12.0,
+            custom_font,
+        );
+        assert!(!edit3.is_font_available());
+    }
+
+    #[test]
+    fn test_fallback_font() {
+        let bbox = TextBoundingBox {
+            x: 100.0,
+            y: 200.0,
+            width: 150.0,
+            height: 20.0,
+        };
+
+        // Bold italic custom font should fallback to Helvetica-BoldOblique
+        let mut font1 = TextEditFont::new("CustomFont-BoldItalic".to_string());
+        font1.is_bold = true;
+        font1.is_italic = true;
+        let edit1 = TextEdit::new_with_font(
+            0,
+            bbox,
+            "Test".to_string(),
+            "Test".to_string(),
+            12.0,
+            font1,
+        );
+        let fallback1 = edit1.get_fallback_font();
+        assert_eq!(fallback1.name, "Helvetica-BoldOblique");
+        assert!(fallback1.is_standard);
+
+        // Bold custom font should fallback to Helvetica-Bold
+        let mut font2 = TextEditFont::new("CustomFont-Bold".to_string());
+        font2.is_italic = false;
+        let edit2 = TextEdit::new_with_font(
+            0,
+            bbox,
+            "Test".to_string(),
+            "Test".to_string(),
+            12.0,
+            font2,
+        );
+        let fallback2 = edit2.get_fallback_font();
+        assert_eq!(fallback2.name, "Helvetica-Bold");
+
+        // Italic custom font should fallback to Helvetica-Oblique
+        let mut font3 = TextEditFont::new("CustomFont-Italic".to_string());
+        font3.is_bold = false;
+        let edit3 = TextEdit::new_with_font(
+            0,
+            bbox,
+            "Test".to_string(),
+            "Test".to_string(),
+            12.0,
+            font3,
+        );
+        let fallback3 = edit3.get_fallback_font();
+        assert_eq!(fallback3.name, "Helvetica-Oblique");
+
+        // Regular custom font should fallback to Helvetica
+        let font4 = TextEditFont::new("CustomFont".to_string());
+        let edit4 = TextEdit::new_with_font(
+            0,
+            bbox,
+            "Test".to_string(),
+            "Test".to_string(),
+            12.0,
+            font4,
+        );
+        let fallback4 = edit4.get_fallback_font();
+        assert_eq!(fallback4.name, "Helvetica");
+    }
+
+    #[test]
+    fn test_font_update() {
+        let bbox = TextBoundingBox {
+            x: 100.0,
+            y: 200.0,
+            width: 150.0,
+            height: 20.0,
+        };
+
+        let mut edit = TextEdit::new(
+            0,
+            bbox,
+            "Test".to_string(),
+            "Test".to_string(),
+            12.0,
+        );
+
+        assert_eq!(edit.font.name, "Helvetica");
+
+        let mut new_font = TextEditFont::new("Times-Roman".to_string());
+        new_font.check_is_standard();
+        edit.update_font(new_font);
+
+        assert_eq!(edit.font.name, "Times-Roman");
+        assert!(edit.font.is_standard);
     }
 
     #[test]

@@ -5,6 +5,7 @@
 pub mod annotation;
 pub mod deferred;
 pub mod document;
+pub mod font_bridge;
 pub mod loader;
 pub mod manipulation;
 pub mod measurement;
@@ -45,8 +46,9 @@ pub use persistence::{
 pub use preview::{AsyncPreviewRenderer, PreviewRenderer, PreviewHandle, PreviewResult};
 pub use scale_detection::{detect_scales, get_best_scale, DetectedScale};
 pub use snapping::{SnapConfig, SnapEngine, SnapTarget, SnapType};
+pub use font_bridge::{extract_font_for_region, font_info_to_text_edit_font};
 pub use text_edit::{
-    PageTextEdits, TextEdit, TextEditId, TextEditManager,
+    PageTextEdits, TextEdit, TextEditFont, TextEditId, TextEditManager,
 };
 pub use text_layer::{
     PageTextLayer, SearchMatch, TextBoundingBox, TextLayerManager, TextLayerStats, TextSpan,

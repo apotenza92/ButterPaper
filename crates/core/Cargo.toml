@@ -12,6 +12,7 @@ pdf-editor-scheduler = { path = "../scheduler" }
 uuid = { version = "1.11", features = ["v4", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+pdfium-render = "0.8"
 
 # OCR dependencies
 # TODO: Add Tesseract binding when needed (e.g., tesseract-rs)

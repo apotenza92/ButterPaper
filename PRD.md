@@ -113,7 +113,7 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 
 ### Phase 10: Text Editing
 - [x] Implement text editing on PDF content streams
-- [ ] Preserve embedded fonts where possible
+- [x] Preserve embedded fonts where possible
 - [ ] Apply minimal layout adjustments only
 - [ ] Ensure edits remain selectable (no rasterization fallback)
 - [ ] Make text edits non-blocking (no sync re-render)
