@@ -9381,3 +9381,69 @@ The document reopening experience is mature, well-tested, and exceeds all perfor
 
 **Impact:** Professional-grade document reopening that matches or exceeds commercial CAD viewers. No perceptible delay when returning to previously viewed documents.
 
+
+## Test on macOS with Metal rendering (Phase 12)
+
+**Date:** 2026-01-21
+**Status:** Complete
+
+### Implementation Summary
+
+Added comprehensive Metal rendering tests to `crates/ui/src/gpu/metal.rs`:
+
+1. **Metal Context Tests**
+   - `test_metal_context_creation` - Verify Metal context can be created on macOS
+   - `test_metal_device_availability` - Verify Metal device has a valid name
+   - `test_device_handle` - Verify device handle is not null
+
+2. **Command Queue Tests**
+   - `test_metal_command_queue` - Test command buffer creation and commit
+   - `test_command_buffer_sequential` - Test multiple sequential command buffers
+
+3. **Texture Tests**
+   - `test_texture_creation_bgra8_srgb` - Test BGRA8 sRGB texture creation
+   - `test_texture_creation_rgba8_unorm` - Test RGBA8 unorm render target
+   - `test_texture_creation_all_formats` - Test all 4 texture formats
+   - `test_texture_upload` - Test uploading pixel data to texture
+   - `test_texture_upload_size_mismatch` - Test error handling for wrong data size
+   - `test_small_texture` - Test 1x1 pixel texture
+   - `test_large_texture` - Test 4096x4096 texture
+   - `test_render_target_texture` - Test render target texture creation
+   - `test_multiple_textures` - Test creating 10 textures with varying dimensions
+
+4. **Buffer Tests**
+   - `test_buffer_creation_vertex` - Test vertex buffer creation
+   - `test_buffer_creation_index` - Test index buffer creation
+   - `test_buffer_creation_uniform` - Test uniform buffer creation
+   - `test_buffer_write` - Test writing data to buffer
+   - `test_buffer_write_overflow` - Test error handling for buffer overflow
+   - `test_multiple_buffers` - Test creating 10 buffers with different usages
+
+5. **Frame Lifecycle Test**
+   - `test_frame_lifecycle` - Test begin/end frame cycle
+
+### Test Results
+
+All 21 Metal tests pass successfully:
+- Context creation and device availability verified
+- All texture formats (RGBA8, BGRA8, sRGB, unorm) work correctly
+- Texture upload with correct and incorrect data sizes handled properly
+- All buffer types (vertex, index, uniform) create and write correctly
+- Command queue produces valid command buffers
+- Frame lifecycle works as expected
+
+### Files Modified
+
+- `crates/ui/src/gpu/metal.rs` - Added comprehensive test module with 21 tests
+- `PRD.md` - Marked task as complete
+
+### Phase 12 Complete
+
+All tasks in Phase 12 (Polish and Performance) are now complete:
+- [x] Profile and optimize startup time
+- [x] Ensure large PDFs open without UI stalls
+- [x] Verify page flipping feels instantaneous
+- [x] Test reopening cached documents (must feel instant)
+- [x] Test on macOS with Metal rendering
+
+**ALL PRD TASKS COMPLETE**

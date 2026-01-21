@@ -130,4 +130,4 @@ Desktop-only, cross-platform, high-performance CAD-style PDF editor for construc
 - [x] Ensure large PDFs open without UI stalls
 - [x] Verify page flipping feels instantaneous
 - [x] Test reopening cached documents (must feel instant)
-- [ ] Test on macOS with Metal rendering
+- [x] Test on macOS with Metal rendering

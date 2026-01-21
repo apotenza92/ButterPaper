@@ -55,8 +55,9 @@ impl GpuContext for MetalContext {
         texture_descriptor.set_storage_mode(MTLStorageMode::Managed);
 
         if descriptor.render_target {
-            texture_descriptor
-                .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
+            texture_descriptor.set_usage(
+                metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+            );
         } else {
             texture_descriptor.set_usage(metal::MTLTextureUsage::ShaderRead);
         }
@@ -140,12 +141,8 @@ impl Texture for MetalTexture {
             },
         };
 
-        self.texture.replace_region(
-            region,
-            0,
-            data.as_ptr() as *const _,
-            bytes_per_row as u64,
-        );
+        self.texture
+            .replace_region(region, 0, data.as_ptr() as *const _, bytes_per_row as u64);
 
         Ok(())
     }
@@ -188,5 +185,356 @@ impl Buffer for MetalBuffer {
         self.buffer.did_modify_range(range);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metal_context_creation() {
+        // Test that Metal context can be created on macOS
+        let context = MetalContext::new();
+        assert!(
+            context.is_ok(),
+            "Metal context creation should succeed on macOS"
+        );
+    }
+
+    #[test]
+    fn test_metal_device_availability() {
+        // Test that Metal device is available
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let device = context.device();
+
+        // Verify device has a name (all Metal devices should have one)
+        let name = device.name();
+        assert!(!name.is_empty(), "Metal device should have a name");
+    }
+
+    #[test]
+    fn test_metal_command_queue() {
+        // Test command queue creation and command buffer generation
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let queue = context.command_queue();
+
+        // Create a command buffer from the queue and verify it can be committed
+        let command_buffer = queue.new_command_buffer();
+
+        // Commit the empty command buffer - this verifies the queue and buffer work
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        // If we got here without panicking, the command queue works
+    }
+
+    #[test]
+    fn test_texture_creation_bgra8_srgb() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let descriptor = TextureDescriptor {
+            width: 256,
+            height: 256,
+            format: TextureFormat::Bgra8Srgb,
+            render_target: false,
+        };
+
+        let texture = context.create_texture(&descriptor);
+        assert!(texture.is_ok(), "Texture creation should succeed");
+
+        let tex = texture.unwrap();
+        assert_eq!(tex.width(), 256);
+        assert_eq!(tex.height(), 256);
+        assert_eq!(tex.format(), TextureFormat::Bgra8Srgb);
+    }
+
+    #[test]
+    fn test_texture_creation_rgba8_unorm() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let descriptor = TextureDescriptor {
+            width: 512,
+            height: 512,
+            format: TextureFormat::Rgba8Unorm,
+            render_target: true,
+        };
+
+        let texture = context.create_texture(&descriptor);
+        assert!(texture.is_ok(), "Render target texture should be created");
+
+        let tex = texture.unwrap();
+        assert_eq!(tex.width(), 512);
+        assert_eq!(tex.height(), 512);
+        assert_eq!(tex.format(), TextureFormat::Rgba8Unorm);
+    }
+
+    #[test]
+    fn test_texture_creation_all_formats() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+
+        let formats = [
+            TextureFormat::Rgba8Srgb,
+            TextureFormat::Rgba8Unorm,
+            TextureFormat::Bgra8Srgb,
+            TextureFormat::Bgra8Unorm,
+        ];
+
+        for format in formats {
+            let descriptor = TextureDescriptor {
+                width: 128,
+                height: 128,
+                format,
+                render_target: false,
+            };
+
+            let texture = context.create_texture(&descriptor);
+            assert!(
+                texture.is_ok(),
+                "Texture creation should succeed for format {:?}",
+                format
+            );
+        }
+    }
+
+    #[test]
+    fn test_texture_upload() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let descriptor = TextureDescriptor {
+            width: 64,
+            height: 64,
+            format: TextureFormat::Rgba8Unorm,
+            render_target: false,
+        };
+
+        let mut texture = context.create_texture(&descriptor).unwrap();
+
+        // Create test pixel data (64x64 RGBA = 16384 bytes)
+        let data: Vec<u8> = (0..64 * 64 * 4).map(|i| (i % 256) as u8).collect();
+
+        let result = texture.upload(&data);
+        assert!(result.is_ok(), "Texture upload should succeed");
+    }
+
+    #[test]
+    fn test_texture_upload_size_mismatch() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let descriptor = TextureDescriptor {
+            width: 64,
+            height: 64,
+            format: TextureFormat::Rgba8Unorm,
+            render_target: false,
+        };
+
+        let mut texture = context.create_texture(&descriptor).unwrap();
+
+        // Wrong size data (too small)
+        let data: Vec<u8> = vec![0; 100];
+
+        let result = texture.upload(&data);
+        assert!(result.is_err(), "Upload should fail with wrong data size");
+    }
+
+    #[test]
+    fn test_buffer_creation_vertex() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+
+        let buffer = context.create_buffer(1024, BufferUsage::Vertex);
+        assert!(buffer.is_ok(), "Vertex buffer creation should succeed");
+
+        let buf = buffer.unwrap();
+        assert_eq!(buf.size(), 1024);
+        assert_eq!(buf.usage(), BufferUsage::Vertex);
+    }
+
+    #[test]
+    fn test_buffer_creation_index() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+
+        let buffer = context.create_buffer(512, BufferUsage::Index);
+        assert!(buffer.is_ok(), "Index buffer creation should succeed");
+
+        let buf = buffer.unwrap();
+        assert_eq!(buf.size(), 512);
+        assert_eq!(buf.usage(), BufferUsage::Index);
+    }
+
+    #[test]
+    fn test_buffer_creation_uniform() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+
+        let buffer = context.create_buffer(256, BufferUsage::Uniform);
+        assert!(buffer.is_ok(), "Uniform buffer creation should succeed");
+
+        let buf = buffer.unwrap();
+        assert_eq!(buf.size(), 256);
+        assert_eq!(buf.usage(), BufferUsage::Uniform);
+    }
+
+    #[test]
+    fn test_buffer_write() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+
+        let mut buffer = context.create_buffer(1024, BufferUsage::Vertex).unwrap();
+
+        // Write some vertex data
+        let data: Vec<u8> = (0..512).map(|i| (i % 256) as u8).collect();
+
+        let result = buffer.write(&data);
+        assert!(result.is_ok(), "Buffer write should succeed");
+    }
+
+    #[test]
+    fn test_buffer_write_overflow() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+
+        let mut buffer = context.create_buffer(100, BufferUsage::Vertex).unwrap();
+
+        // Try to write more data than buffer size
+        let data: Vec<u8> = vec![0; 200];
+
+        let result = buffer.write(&data);
+        assert!(
+            result.is_err(),
+            "Buffer write should fail when data exceeds size"
+        );
+    }
+
+    #[test]
+    fn test_frame_lifecycle() {
+        let mut context = MetalContext::new().expect("Failed to create Metal context");
+
+        // Test begin/end frame cycle
+        let begin_result = context.begin_frame();
+        assert!(begin_result.is_ok(), "begin_frame should succeed");
+
+        let end_result = context.end_frame();
+        assert!(end_result.is_ok(), "end_frame should succeed");
+    }
+
+    #[test]
+    fn test_device_handle() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+
+        let handle = context.device_handle();
+        assert!(!handle.is_null(), "Device handle should not be null");
+    }
+
+    #[test]
+    fn test_multiple_textures() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+
+        // Create multiple textures to ensure GPU resources are managed properly
+        let mut textures = Vec::new();
+        for i in 0..10 {
+            let descriptor = TextureDescriptor {
+                width: 128 + i * 16,
+                height: 128 + i * 16,
+                format: TextureFormat::Bgra8Srgb,
+                render_target: i % 2 == 0,
+            };
+
+            let texture = context.create_texture(&descriptor);
+            assert!(texture.is_ok(), "Texture {} creation should succeed", i);
+            textures.push(texture.unwrap());
+        }
+
+        // Verify all textures have correct dimensions
+        for (i, tex) in textures.iter().enumerate() {
+            assert_eq!(tex.width(), 128 + i as u32 * 16);
+            assert_eq!(tex.height(), 128 + i as u32 * 16);
+        }
+    }
+
+    #[test]
+    fn test_multiple_buffers() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+
+        // Create multiple buffers
+        let usages = [
+            BufferUsage::Vertex,
+            BufferUsage::Index,
+            BufferUsage::Uniform,
+        ];
+        let mut buffers = Vec::new();
+
+        for (i, usage) in usages.iter().cycle().take(10).enumerate() {
+            let buffer = context.create_buffer(256 * (i + 1), *usage);
+            assert!(buffer.is_ok(), "Buffer {} creation should succeed", i);
+            buffers.push(buffer.unwrap());
+        }
+
+        // Verify all buffers have correct sizes
+        for (i, buf) in buffers.iter().enumerate() {
+            assert_eq!(buf.size(), 256 * (i + 1));
+        }
+    }
+
+    #[test]
+    fn test_render_target_texture() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let descriptor = TextureDescriptor {
+            width: 1024,
+            height: 768,
+            format: TextureFormat::Bgra8Srgb,
+            render_target: true,
+        };
+
+        let texture = context.create_texture(&descriptor);
+        assert!(
+            texture.is_ok(),
+            "Large render target texture should be created"
+        );
+
+        let tex = texture.unwrap();
+        assert_eq!(tex.width(), 1024);
+        assert_eq!(tex.height(), 768);
+    }
+
+    #[test]
+    fn test_command_buffer_sequential() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let queue = context.command_queue();
+
+        // Create and commit multiple sequential command buffers
+        for _ in 0..5 {
+            let command_buffer = queue.new_command_buffer();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        }
+    }
+
+    #[test]
+    fn test_small_texture() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let descriptor = TextureDescriptor {
+            width: 1,
+            height: 1,
+            format: TextureFormat::Rgba8Unorm,
+            render_target: false,
+        };
+
+        let mut texture = context.create_texture(&descriptor).unwrap();
+
+        // Upload single pixel
+        let data: Vec<u8> = vec![255, 0, 0, 255]; // Red pixel
+        let result = texture.upload(&data);
+        assert!(result.is_ok(), "Single pixel texture upload should succeed");
+    }
+
+    #[test]
+    fn test_large_texture() {
+        let context = MetalContext::new().expect("Failed to create Metal context");
+        let descriptor = TextureDescriptor {
+            width: 4096,
+            height: 4096,
+            format: TextureFormat::Bgra8Unorm,
+            render_target: false,
+        };
+
+        let texture = context.create_texture(&descriptor);
+        assert!(texture.is_ok(), "Large texture creation should succeed");
+
+        let tex = texture.unwrap();
+        assert_eq!(tex.width(), 4096);
+        assert_eq!(tex.height(), 4096);
     }
 }
