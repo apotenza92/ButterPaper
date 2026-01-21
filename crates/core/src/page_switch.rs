@@ -836,4 +836,99 @@ mod tests {
         let jobs = switcher.prefetch_adjacent_pages(&document, 5, 100, 0);
         assert_eq!(jobs, 0);
     }
+
+    #[test]
+    fn test_document_reopening_with_disk_cache() {
+        // This test validates that reopening a cached document feels instant
+        // by verifying disk cache restoration works correctly.
+        //
+        // Test scenario:
+        // 1. Create a disk cache and simulate cached tiles
+        // 2. Close and reopen the cache (simulating app restart)
+        // 3. Verify tiles are still accessible via load_from_disk()
+        // 4. Measure retrieval time to ensure instantaneous feel
+        //
+        // Target: <100ms for cached tile retrieval after app restart
+
+        let temp_dir = std::env::temp_dir().join("test_doc_reopening");
+        let _ = std::fs::remove_dir_all(&temp_dir); // Clean slate
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Step 1: Create cache and populate with tiles
+        let cache1 = Arc::new(DiskTileCache::with_mb_limit(&temp_dir, 128).unwrap());
+
+        // Simulate a few cached tiles from a previous session
+        // Using realistic tile sizes (256x256 RGBA = 256KB each)
+        let tile_pixels = vec![255u8; 256 * 256 * 4];
+
+        // Cache tiles for multiple pages at different zoom levels
+        // This simulates a realistic document with cached content
+        for page in 0..3 {
+            for zoom in &[100, 150, 200] {
+                // Generate a unique cache key (simplified version of TileId hash)
+                let cache_key = (page as u64) * 1000 + (*zoom as u64);
+                cache1.put(cache_key, tile_pixels.clone(), 256, 256).unwrap();
+            }
+        }
+
+        // Verify tiles are in cache
+        assert_eq!(cache1.tile_count(), 9); // 3 pages × 3 zoom levels
+        let stats1 = cache1.stats();
+        println!("Initial cache: {} tiles, {} MB used",
+                 stats1.tile_count,
+                 stats1.disk_used / (1024 * 1024));
+
+        // Step 2: Drop the cache (simulate app close)
+        drop(cache1);
+
+        // Step 3: Create new cache instance (simulate app restart)
+        let cache2 = Arc::new(DiskTileCache::with_mb_limit(&temp_dir, 128).unwrap());
+
+        // Critical: Load existing tiles from disk
+        let start = Instant::now();
+        cache2.load_from_disk().unwrap();
+        let load_time_ms = start.elapsed().as_millis() as u64;
+
+        println!("Disk cache restoration time: {}ms", load_time_ms);
+
+        // Step 4: Verify all tiles are restored
+        assert_eq!(cache2.tile_count(), 9);
+        let stats2 = cache2.stats();
+        assert_eq!(stats2.tile_count, 9);
+
+        // Step 5: Verify tile retrieval is fast
+        let page = 0_u64;
+        let zoom = 100_u64;
+        let cache_key = page * 1000 + zoom; // page 0, zoom 100
+        let start = Instant::now();
+        let tile = cache2.get(cache_key).unwrap();
+        let retrieval_time_ms = start.elapsed().as_millis() as u64;
+
+        println!("Tile retrieval time: {}ms", retrieval_time_ms);
+
+        assert!(tile.is_some());
+        let tile = tile.unwrap();
+        assert_eq!(tile.width, 256);
+        assert_eq!(tile.height, 256);
+        assert_eq!(tile.pixels.len(), 256 * 256 * 4);
+
+        // Step 6: Validate performance targets
+        // Target: Cache restoration should feel instant (<100ms)
+        assert!(load_time_ms < 100,
+                "Disk cache restoration took {}ms, exceeds 100ms target",
+                load_time_ms);
+
+        // Target: Individual tile retrieval should be fast (<50ms)
+        assert!(retrieval_time_ms < 50,
+                "Tile retrieval took {}ms, exceeds 50ms target",
+                retrieval_time_ms);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(temp_dir);
+
+        println!("✓ Document reopening test passed:");
+        println!("  - Cache restoration: {}ms (target: <100ms)", load_time_ms);
+        println!("  - Tile retrieval: {}ms (target: <50ms)", retrieval_time_ms);
+        println!("  - All {} tiles restored successfully", cache2.tile_count());
+    }
 }
