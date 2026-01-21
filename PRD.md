@@ -312,7 +312,7 @@ Wire up existing TextSelection component.
 - [x] Render selection highlight rectangles
 - [x] Copy to clipboard (Cmd+C)
 - [x] Double-click for word, triple for line
-- [ ] Show cursor change on hover over text
+- [x] Show cursor change on hover over text
 - [x] ~~Manual test: Verify text selection~~ (SKIP - requires human)
 
 ### Phase 3.2: Search (Cmd+F)

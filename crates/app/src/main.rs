@@ -20,7 +20,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
-use winit::window::{Window, WindowId};
+use winit::window::{CursorIcon, Window, WindowId};
 
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
@@ -1242,6 +1242,8 @@ struct App {
     click_count: u8,
     /// Position of last click (for detecting if click is in same location)
     last_click_pos: (f32, f32),
+    /// Current cursor icon
+    current_cursor: CursorIcon,
 }
 
 impl App {
@@ -1305,6 +1307,7 @@ impl App {
             last_click_time: now,
             click_count: 0,
             last_click_pos: (0.0, 0.0),
+            current_cursor: CursorIcon::Default,
         }
     }
 
@@ -1578,6 +1581,77 @@ impl App {
 
     #[cfg(not(target_os = "macos"))]
     fn render_current_page(&mut self) {}
+
+    /// Update cursor icon based on whether the mouse is over text
+    ///
+    /// When text selection mode is active, shows an I-beam cursor when hovering
+    /// over text regions, and a default cursor otherwise.
+    fn update_cursor_for_text_hover(&mut self, screen_x: f32, screen_y: f32) {
+        // Only change cursor when text selection mode is active
+        if !self.text_selection_active {
+            // Reset to default cursor if not in text selection mode
+            if self.current_cursor != CursorIcon::Default {
+                self.current_cursor = CursorIcon::Default;
+                if let Some(window) = &self.window {
+                    window.set_cursor(CursorIcon::Default);
+                }
+            }
+            return;
+        }
+
+        // Check if we're over toolbar or thumbnail strip (not over PDF content)
+        if screen_y < TOOLBAR_HEIGHT {
+            // Over toolbar - use default cursor
+            if self.current_cursor != CursorIcon::Default {
+                self.current_cursor = CursorIcon::Default;
+                if let Some(window) = &self.window {
+                    window.set_cursor(CursorIcon::Default);
+                }
+            }
+            return;
+        }
+
+        if self.show_thumbnails && screen_x < THUMBNAIL_STRIP_WIDTH {
+            // Over thumbnail strip - use default cursor
+            if self.current_cursor != CursorIcon::Default {
+                self.current_cursor = CursorIcon::Default;
+                if let Some(window) = &self.window {
+                    window.set_cursor(CursorIcon::Default);
+                }
+            }
+            return;
+        }
+
+        // Convert screen coordinates to page coordinates
+        let page_coord = self.input_handler.screen_to_page(screen_x, screen_y);
+
+        // Check if cursor is over text
+        let is_over_text = if let Some(ref text_layer_manager) = self.text_layer_manager {
+            let page_index = self.input_handler.viewport().page_index;
+            if let Some(layer) = text_layer_manager.get_layer(page_index) {
+                layer.find_span_at_point(&page_coord).is_some()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // Update cursor based on text hover
+        let new_cursor = if is_over_text {
+            CursorIcon::Text
+        } else {
+            CursorIcon::Default
+        };
+
+        // Only update if cursor changed
+        if self.current_cursor != new_cursor {
+            self.current_cursor = new_cursor;
+            if let Some(window) = &self.window {
+                window.set_cursor(new_cursor);
+            }
+        }
+    }
 
     /// Update the page info overlay text (e.g., "Page 1 of 10 | 100%")
     #[cfg(target_os = "macos")]
@@ -3188,6 +3262,9 @@ impl ApplicationHandler for App {
                     let hovered_item = self.toolbar.hit_test_zoom_dropdown_item(x, y);
                     self.toolbar.set_zoom_dropdown_hover(hovered_item);
                 }
+
+                // Update cursor for text hover detection
+                self.update_cursor_for_text_hover(x, y);
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if button == MouseButton::Left {

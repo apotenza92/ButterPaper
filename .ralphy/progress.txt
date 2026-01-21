@@ -10960,3 +10960,50 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
   - Line selection success case
   - Line selection when clicking outside text
   - Multi-line document with distinct line selection
+
+
+### Task: Implement cursor change on hover over text (Phase 3.1)
+
+**Status:** Complete
+
+**Changes:**
+- Added I-beam cursor display when hovering over text in text selection mode
+- Cursor changes to text cursor (CursorIcon::Text) when mouse is over text spans
+- Cursor returns to default arrow (CursorIcon::Default) when:
+  - Not in text selection mode
+  - Hovering over toolbar area
+  - Hovering over thumbnail strip
+  - Not over any text span
+
+**Files Modified:**
+- crates/app/src/main.rs:
+  - Added `CursorIcon` import from winit::window
+  - Added `current_cursor: CursorIcon` field to App struct
+  - Initialized `current_cursor: CursorIcon::Default` in App::new()
+  - Added `update_cursor_for_text_hover(&mut self, screen_x: f32, screen_y: f32)` method:
+    - Checks if text selection mode is active
+    - Excludes toolbar and thumbnail strip areas
+    - Converts screen coordinates to page coordinates
+    - Uses text layer manager to find if cursor is over a text span
+    - Updates window cursor icon only when cursor type changes (optimization)
+  - Called `update_cursor_for_text_hover(x, y)` in WindowEvent::CursorMoved handler
+
+**Technical Details:**
+- Leverages existing `TextLayerManager.get_layer(page_index)` and `PageTextLayer.find_span_at_point()` methods
+- Coordinate conversion uses `input_handler.screen_to_page()` which accounts for zoom and pan
+- Cursor is only changed when entering/leaving text regions (avoids unnecessary window updates)
+- Respects existing UI regions - toolbar and thumbnail strip always show default cursor
+
+**Testing:**
+- All 160 existing tests pass
+- Core hit detection functionality already well-tested:
+  - `test_page_text_layer_find_span_at_point` verifies span detection
+  - `test_text_bounding_box_contains_point` verifies point containment
+  - Existing tests cover text layer manager operations
+
+**Usage:**
+1. Open a PDF document with text
+2. Click the "Text Select" tool in the toolbar (or press Shift+T)
+3. Move mouse over text areas - cursor changes to I-beam
+4. Move mouse away from text - cursor returns to default arrow
+5. Deselect text tool - cursor returns to default regardless of position
