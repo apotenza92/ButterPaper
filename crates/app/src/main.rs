@@ -7,6 +7,7 @@ use pdf_editor_core::annotation::{
     Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle, PageCoordinate,
     SerializableAnnotation,
 };
+use pdf_editor_core::{load_annotations_from_pdf, ImportStats};
 use pdf_editor_core::document::DocumentMetadata;
 use pdf_editor_core::pdf_export::export_flattened_pdf;
 use pdf_editor_core::text_layer::{PageTextLayer, TextBoundingBox, TextLayerManager, TextSpan};
@@ -21,7 +22,7 @@ use pdf_editor_ui::note_popup::{NotePopup, NoteData};
 use pdf_editor_ui::search_bar::{SearchBar, SearchBarButton, SEARCH_BAR_HEIGHT};
 use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT, ZOOM_LEVELS};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -5530,6 +5531,42 @@ fn run_search(path: &PathBuf, query: &str) -> i32 {
     }
 }
 
+/// Run --list-annotations mode: output annotations from PDF as JSON
+fn run_list_annotations(path: &Path) -> i32 {
+    let start = Instant::now();
+
+    match load_annotations_from_pdf(path) {
+        Ok((annotations, stats)) => {
+            // Serialize annotations to pretty-printed JSON
+            let json = match serde_json::to_string_pretty(&annotations) {
+                Ok(json) => json,
+                Err(e) => {
+                    eprintln!("ANNOTATIONS: FAILED error=JSON serialization failed: {}", e);
+                    return 1;
+                }
+            };
+
+            // Output the JSON array
+            println!("{}", json);
+
+            // Output summary stats to stderr so they don't interfere with JSON parsing
+            let elapsed = start.elapsed();
+            eprintln!(
+                "ANNOTATIONS: OK count={} imported={} skipped={} time={}ms",
+                stats.total_found,
+                stats.imported,
+                stats.skipped,
+                elapsed.as_millis()
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("ANNOTATIONS: FAILED error={}", e);
+            1
+        }
+    }
+}
+
 fn main() {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -5537,6 +5574,7 @@ fn main() {
     let mut debug_viewport = false;
     let mut debug_texture = false;
     let mut test_load = false;
+    let mut list_annotations = false;
     let mut search_query: Option<String> = None;
 
     let mut i = 1;
@@ -5548,6 +5586,8 @@ fn main() {
             debug_texture = true;
         } else if arg == "--test-load" {
             test_load = true;
+        } else if arg == "--list-annotations" {
+            list_annotations = true;
         } else if arg == "--search" {
             // Next argument should be the search query
             if i + 1 < args.len() {
@@ -5584,6 +5624,17 @@ fn main() {
             std::process::exit(exit_code);
         } else {
             println!("LOAD: FAILED error=no PDF file specified");
+            std::process::exit(1);
+        }
+    }
+
+    // Handle --list-annotations mode: output annotations as JSON and exit without GUI
+    if list_annotations {
+        if let Some(path) = initial_file {
+            let exit_code = run_list_annotations(&path);
+            std::process::exit(exit_code);
+        } else {
+            eprintln!("ANNOTATIONS: FAILED error=no PDF file specified");
             std::process::exit(1);
         }
     }

@@ -11501,3 +11501,47 @@ Created a GPU-rendered note popup component that displays annotation content whe
 - `crates/core/src/annotation_import.rs` (new)
 - `crates/core/src/lib.rs` (added module export)
 - `PRD.md` (marked task complete)
+
+
+## 2026-01-21: Add --list-annotations CLI terminal test (Phase 3.3)
+
+### What was done:
+- Implemented `--list-annotations file.pdf` CLI flag to output annotations as JSON
+- Added `run_list_annotations()` function in `crates/app/src/main.rs`
+- Function loads annotations using `load_annotations_from_pdf()` from core
+- Outputs pretty-printed JSON array of `SerializableAnnotation` objects to stdout
+- Outputs status summary to stderr to not interfere with JSON parsing
+- Added `serde_json` dependency to app crate for JSON serialization
+- Created `scripts/test-list-annotations.sh` test script
+- Test script creates test PDFs and validates JSON output structure
+- All 6 test cases pass, all 216 unit tests pass, no new clippy warnings
+
+### Files changed:
+- `crates/app/src/main.rs` (added import, flag parsing, handler function)
+- `crates/app/Cargo.toml` (added serde_json dependency)
+- `scripts/test-list-annotations.sh` (new test script)
+- `PRD.md` (marked task complete)
+
+### Output format:
+```bash
+# Usage
+cargo run --release -- --list-annotations file.pdf
+
+# JSON output to stdout (array of annotations):
+[
+  {
+    "id": "uuid",
+    "page_index": 0,
+    "geometry": { ... },
+    "style": { ... },
+    "metadata": { ... },
+    "visible": true,
+    "layer": 0
+  }
+]
+
+# Status to stderr:
+ANNOTATIONS: OK count=5 imported=5 skipped=0 time=50ms
+```
+
+This completes Phase 3.3 (Annotations) of the PRD!
