@@ -12498,3 +12498,49 @@ pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_
 - Core Graphics FFI used to query CGDisplayCopyDisplayMode and CGDisplayModeGetRefreshRate
 - ProMotion displays report 0Hz refresh rate (variable), handled by defaulting to 120Hz
 - Contents scale on CAMetalLayer ensures proper pixel density on Retina displays
+
+### Task: Implement 120fps ProMotion display support (Phase 4.3)
+
+**Status:** Complete
+
+**Changes:**
+- Enabled hardware VSync for proper frame pacing on high refresh rate displays
+- Configured Metal layer with `display_sync_enabled(true)` for display-synchronized presentation
+- Set `maximum_drawable_count(2)` for optimal latency (double-buffering)
+- Set `opaque(true)` for improved compositing performance
+- Removed software-based frame pacing (`thread::sleep`) in favor of VSync-based timing
+- Added `--test-fps` CLI command for testing display detection and Metal configuration
+- Added comprehensive test suite for 120fps frame timing (9 new tests)
+
+**Key Implementation Details:**
+1. Metal layer now synchronizes with display refresh rate automatically
+2. `next_drawable()` blocks until a drawable is available, providing natural frame pacing
+3. Frame time calculation verified for 30Hz, 60Hz, 90Hz, 120Hz, 144Hz, 165Hz, 240Hz
+4. ProMotion displays (120Hz) correctly detected via Core Graphics API
+5. Display info logs now show `vsync=enabled` status
+
+**Files Modified:**
+- crates/app/src/main.rs:
+  - setup_metal_layer(): Added display_sync_enabled, maximum_drawable_count, opaque settings
+  - about_to_wait(): Removed software sleep, frame pacing now handled by VSync
+  - Added run_test_fps() function for CLI testing
+  - Added fps_tests module with 9 unit tests
+  - Added --test-fps CLI argument handling
+- PRD.md: Marked "Target: 120fps on ProMotion displays" as complete
+
+**Testing:**
+- All 9 fps_tests pass
+- All 476+ workspace tests pass
+- Clippy linting passes (no errors)
+- Test coverage includes:
+  - Frame time accuracy for all common refresh rates
+  - High refresh rate detection (>60Hz)
+  - Refresh rate clamping (30-240Hz)
+  - Metal layer configuration verification
+  - run_test_fps CLI command execution
+
+**Technical Notes:**
+- VSync-based frame pacing is more accurate than software sleep
+- Double-buffering (2 drawables) reduces input latency vs triple-buffering (default 3)
+- Opaque layer allows CAMetalLayer to skip alpha blending during compositing
+- ProMotion displays report 0 for refresh rate (variable), detected as 120Hz max

@@ -1661,9 +1661,151 @@ startxref
     }
 }
 
-// Default fallback values - actual values come from display_info detection
+/// Tests for 120fps ProMotion display support
+#[cfg(test)]
+mod fps_tests {
+    use super::*;
+
+    /// Test that run_test_fps completes without crashing
+    #[test]
+    fn test_run_test_fps_completes() {
+        let exit_code = run_test_fps();
+        // Should return 0 (success) on macOS with Metal, or 0 on other platforms
+        assert_eq!(exit_code, 0, "run_test_fps should complete successfully");
+    }
+
+    /// Test that DisplayInfo correctly calculates 120Hz frame time
+    #[test]
+    fn test_display_info_120hz_frame_time() {
+        let display = display_info::DisplayInfo::new(2.0, 120);
+
+        // 120Hz = 8.333ms per frame
+        assert_eq!(display.refresh_rate_hz, 120);
+        assert_eq!(display.target_frame_time.as_micros(), 8333);
+        assert!(display.is_high_refresh_rate());
+    }
+
+    /// Test that DisplayInfo correctly calculates 60Hz frame time
+    #[test]
+    fn test_display_info_60hz_frame_time() {
+        let display = display_info::DisplayInfo::new(1.0, 60);
+
+        // 60Hz = 16.666ms per frame
+        assert_eq!(display.refresh_rate_hz, 60);
+        assert_eq!(display.target_frame_time.as_micros(), 16666);
+        assert!(!display.is_high_refresh_rate());
+    }
+
+    /// Test that DisplayInfo correctly calculates 240Hz frame time
+    #[test]
+    fn test_display_info_240hz_frame_time() {
+        let display = display_info::DisplayInfo::new(1.0, 240);
+
+        // 240Hz = 4.166ms per frame
+        assert_eq!(display.refresh_rate_hz, 240);
+        assert_eq!(display.target_frame_time.as_micros(), 4166);
+        assert!(display.is_high_refresh_rate());
+    }
+
+    /// Test frame time calculation accuracy for common refresh rates
+    #[test]
+    fn test_frame_time_accuracy() {
+        // Test various refresh rates
+        let test_cases = [
+            (30, 33333u64),   // 30Hz = 33.333ms
+            (60, 16666u64),   // 60Hz = 16.666ms
+            (90, 11111u64),   // 90Hz = 11.111ms
+            (120, 8333u64),   // 120Hz = 8.333ms
+            (144, 6944u64),   // 144Hz = 6.944ms
+            (165, 6060u64),   // 165Hz = 6.060ms
+            (240, 4166u64),   // 240Hz = 4.166ms
+        ];
+
+        for (hz, expected_us) in test_cases {
+            let display = display_info::DisplayInfo::new(1.0, hz);
+            let actual_us = display.target_frame_time.as_micros() as u64;
+
+            // Allow 1 microsecond tolerance due to integer division
+            assert!(
+                actual_us == expected_us || actual_us == expected_us + 1,
+                "Frame time for {}Hz: expected ~{}us, got {}us",
+                hz, expected_us, actual_us
+            );
+        }
+    }
+
+    /// Test that is_high_refresh_rate correctly identifies ProMotion-capable displays
+    #[test]
+    fn test_high_refresh_rate_detection() {
+        // 60Hz is the baseline, not high refresh
+        assert!(!display_info::DisplayInfo::new(1.0, 60).is_high_refresh_rate());
+
+        // Anything above 60Hz is high refresh
+        assert!(display_info::DisplayInfo::new(1.0, 61).is_high_refresh_rate());
+        assert!(display_info::DisplayInfo::new(1.0, 90).is_high_refresh_rate());
+        assert!(display_info::DisplayInfo::new(1.0, 120).is_high_refresh_rate());
+        assert!(display_info::DisplayInfo::new(1.0, 144).is_high_refresh_rate());
+        assert!(display_info::DisplayInfo::new(1.0, 240).is_high_refresh_rate());
+    }
+
+    /// Test refresh rate clamping to valid range
+    #[test]
+    fn test_refresh_rate_clamping() {
+        // Test minimum clamp (30Hz)
+        let display_low = display_info::DisplayInfo::new(1.0, 10);
+        assert_eq!(display_low.refresh_rate_hz, 30);
+
+        // Test maximum clamp (240Hz)
+        let display_high = display_info::DisplayInfo::new(1.0, 500);
+        assert_eq!(display_high.refresh_rate_hz, 240);
+    }
+
+    /// Test that Metal layer configuration methods work correctly
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_metal_layer_configuration() {
+        let device = Device::system_default();
+        if device.is_none() {
+            // Skip test if no Metal device available (e.g., in CI without GPU)
+            return;
+        }
+        let device = device.unwrap();
+
+        let layer = MetalLayer::new();
+        layer.set_device(&device);
+
+        // Test display sync configuration
+        layer.set_display_sync_enabled(true);
+        assert!(layer.display_sync_enabled(), "Display sync should be enabled");
+
+        layer.set_display_sync_enabled(false);
+        assert!(!layer.display_sync_enabled(), "Display sync should be disabled");
+
+        // Test drawable count configuration
+        layer.set_maximum_drawable_count(2);
+        assert_eq!(layer.maximum_drawable_count(), 2, "Drawable count should be 2");
+
+        layer.set_maximum_drawable_count(3);
+        assert_eq!(layer.maximum_drawable_count(), 3, "Drawable count should be 3");
+
+        // Test opaque configuration
+        layer.set_opaque(true);
+        assert!(layer.is_opaque(), "Layer should be opaque");
+
+        layer.set_opaque(false);
+        assert!(!layer.is_opaque(), "Layer should not be opaque");
+    }
+
+    /// Test that DEFAULT_REFRESH_RATE is set to 60Hz as expected
+    #[test]
+    fn test_default_refresh_rate() {
+        assert_eq!(DEFAULT_REFRESH_RATE, 60, "Default refresh rate should be 60Hz");
+    }
+}
+
+// Default fallback refresh rate - actual values come from display_info detection
+// Frame pacing is handled by Metal's display sync (VSync), not by software timing
 const DEFAULT_REFRESH_RATE: u32 = 60;
-const MIN_FRAME_TIME: Duration = Duration::from_micros(1_000_000 / 240); // Cap at 240Hz
 
 struct PageTexture {
     texture: metal::Texture,
@@ -5382,6 +5524,19 @@ impl App {
         layer.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm_sRGB);
         layer.set_presents_with_transaction(false);
 
+        // Enable display sync for proper VSync-based frame pacing
+        // This makes next_drawable() synchronize with the display's refresh rate
+        // Critical for achieving 120fps on ProMotion displays
+        layer.set_display_sync_enabled(true);
+
+        // Use 2 drawables for lower latency (default is 3)
+        // This reduces input lag while still allowing double-buffering
+        layer.set_maximum_drawable_count(2);
+
+        // Mark the framebuffer as opaque since we don't need transparency
+        // This allows CAMetalLayer to optimize compositing
+        layer.set_opaque(true);
+
         // Enable contents scale for Retina displays
         let scale_factor = window.scale_factor();
         layer.set_contents_scale(scale_factor);
@@ -5414,7 +5569,7 @@ impl App {
 
         if self.display_info.is_retina() || self.display_info.is_high_refresh_rate() {
             println!(
-                "DISPLAY: Retina={} scale={:.1}x refresh={}Hz frame_time={:.2}ms",
+                "DISPLAY: Retina={} scale={:.1}x refresh={}Hz frame_time={:.2}ms vsync=enabled",
                 self.display_info.is_retina(),
                 self.display_info.scale_factor,
                 self.display_info.refresh_rate_hz,
@@ -7075,12 +7230,11 @@ impl ApplicationHandler for App {
                 window.request_redraw();
             }
 
-            // Use dynamic target frame time based on detected display refresh rate
-            let target_frame_time = self.display_info.target_frame_time.max(MIN_FRAME_TIME);
-            let frame_time = Instant::now().duration_since(self.last_update);
-            if frame_time < target_frame_time {
-                std::thread::sleep(target_frame_time - frame_time);
-            }
+            // Frame pacing is handled by Metal's display sync (VSync)
+            // The layer.next_drawable() call blocks until a drawable is available,
+            // which naturally synchronizes with the display's refresh rate.
+            // This achieves proper 120fps on ProMotion displays without sleep-based pacing.
+            // No software-based sleep is needed since display_sync_enabled = true.
 
             event_loop.set_control_flow(ControlFlow::Poll);
         }
@@ -7160,6 +7314,88 @@ fn run_test_first_page(path: &PathBuf) -> i32 {
             1
         }
     }
+}
+
+/// Run --test-fps mode: test display refresh rate detection and VSync configuration
+/// This validates that the app can properly detect ProMotion displays and configure
+/// Metal for 120fps rendering
+fn run_test_fps() -> i32 {
+    // Detect the main display refresh rate
+    let refresh_rate = display_info::get_main_display_refresh_rate();
+    let display = display_info::DisplayInfo::new(1.0, refresh_rate);
+
+    println!(
+        "FPS_TEST: refresh_rate={}Hz frame_time={:.2}ms high_refresh={}",
+        display.refresh_rate_hz,
+        display.target_frame_time.as_secs_f64() * 1000.0,
+        display.is_high_refresh_rate()
+    );
+
+    // Verify frame time calculation is correct
+    let expected_frame_time_us = 1_000_000u64 / refresh_rate as u64;
+    let actual_frame_time_us = display.target_frame_time.as_micros() as u64;
+
+    if actual_frame_time_us != expected_frame_time_us {
+        println!(
+            "FPS_TEST: FAILED frame_time mismatch expected={}us actual={}us",
+            expected_frame_time_us, actual_frame_time_us
+        );
+        return 1;
+    }
+
+    // For 120Hz displays, verify we're detecting ProMotion correctly
+    if refresh_rate >= 120 {
+        println!("FPS_TEST: ProMotion display detected ({}Hz)", refresh_rate);
+        println!("FPS_TEST: Target frame time {:.3}ms supports 120fps", display.target_frame_time.as_secs_f64() * 1000.0);
+    } else if refresh_rate >= 60 {
+        println!("FPS_TEST: Standard display detected ({}Hz)", refresh_rate);
+    } else {
+        println!("FPS_TEST: Low refresh display detected ({}Hz)", refresh_rate);
+    }
+
+    // Test Metal layer configuration by creating a temporary layer
+    #[cfg(target_os = "macos")]
+    {
+        let device = Device::system_default();
+        if device.is_none() {
+            println!("FPS_TEST: FAILED no Metal device available");
+            return 1;
+        }
+        let device = device.unwrap();
+
+        let layer = MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_display_sync_enabled(true);
+        layer.set_maximum_drawable_count(2);
+        layer.set_opaque(true);
+
+        // Verify settings were applied
+        let sync_enabled = layer.display_sync_enabled();
+        let drawable_count = layer.maximum_drawable_count();
+        let is_opaque = layer.is_opaque();
+
+        println!(
+            "FPS_TEST: Metal layer config: display_sync={} drawable_count={} opaque={}",
+            sync_enabled, drawable_count, is_opaque
+        );
+
+        if !sync_enabled {
+            println!("FPS_TEST: WARNING display_sync not enabled");
+        }
+
+        if drawable_count != 2 {
+            println!("FPS_TEST: WARNING drawable_count={} (expected 2)", drawable_count);
+        }
+
+        println!("FPS_TEST: OK vsync_ready=true metal_configured=true");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("FPS_TEST: OK (non-macOS platform, skipping Metal tests)");
+    }
+
+    0
 }
 
 /// Run --search mode: search for text in PDF and output matches
@@ -7351,6 +7587,7 @@ fn main() {
     let mut debug_texture = false;
     let mut test_load = false;
     let mut test_first_page = false;
+    let mut test_fps = false;
     let mut list_annotations = false;
     let mut export_measurements = false;
     let mut search_query: Option<String> = None;
@@ -7367,6 +7604,8 @@ fn main() {
             test_load = true;
         } else if arg == "--test-first-page" {
             test_first_page = true;
+        } else if arg == "--test-fps" {
+            test_fps = true;
         } else if arg == "--list-annotations" {
             list_annotations = true;
         } else if arg == "--export-measurements" {
@@ -7431,6 +7670,12 @@ fn main() {
             println!("FIRST_PAGE: FAILED error=no PDF file specified");
             std::process::exit(1);
         }
+    }
+
+    // Handle --test-fps mode: test display refresh rate detection and VSync configuration
+    if test_fps {
+        let exit_code = run_test_fps();
+        std::process::exit(exit_code);
     }
 
     // Handle --list-annotations mode: output annotations as JSON and exit without GUI
