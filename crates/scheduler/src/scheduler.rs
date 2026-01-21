@@ -5,6 +5,7 @@
 
 use crate::cancel::{CancellationRegistry, CancellationToken};
 use crate::priority::{Job, JobId, JobPriority, JobType, PriorityQueue};
+use crate::viewport::{PriorityCalculator, TilePosition, Viewport};
 use std::sync::{Arc, Mutex};
 
 /// Job scheduler statistics
@@ -261,6 +262,127 @@ impl JobScheduler {
     /// Useful for workers that need to access the token after retrieving a job.
     pub fn get_cancellation_token(&self, job_id: JobId) -> Option<CancellationToken> {
         self.cancellation.get(job_id)
+    }
+
+    /// Aggressively cancel off-screen content based on viewport
+    ///
+    /// Cancels all jobs that are not visible or in the margin area around the viewport.
+    /// This is useful when the viewport changes (pan, zoom, or page switch) to free up
+    /// resources for rendering visible content.
+    ///
+    /// # Arguments
+    ///
+    /// * `viewport` - Current viewport state
+    /// * `tile_size` - Tile size in pixels (typically 256)
+    ///
+    /// Returns the number of jobs cancelled.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pdf_editor_scheduler::{JobScheduler, JobPriority, JobType, Viewport};
+    ///
+    /// let scheduler = JobScheduler::new();
+    /// let viewport = Viewport::new(0, 0.0, 0.0, 800.0, 600.0, 100);
+    ///
+    /// // Submit some tile render jobs
+    /// scheduler.submit(JobPriority::Visible, JobType::RenderTile {
+    ///     page_index: 0,
+    ///     tile_x: 0,
+    ///     tile_y: 0,
+    ///     zoom_level: 100,
+    ///     rotation: 0,
+    ///     is_preview: true,
+    /// });
+    ///
+    /// // Cancel off-screen jobs when viewport changes
+    /// let cancelled = scheduler.cancel_offscreen_jobs(&viewport, 256);
+    /// ```
+    pub fn cancel_offscreen_jobs(&self, viewport: &Viewport, tile_size: u32) -> usize {
+        let calculator = PriorityCalculator::new(viewport.clone(), tile_size);
+
+        self.cancel_jobs_if(|job| {
+            match &job.job_type {
+                JobType::RenderTile {
+                    page_index,
+                    tile_x,
+                    tile_y,
+                    zoom_level,
+                    ..
+                } => {
+                    // Create tile position
+                    let tile_pos = TilePosition::new(*page_index, *tile_x, *tile_y, *zoom_level);
+
+                    // Calculate priority for this tile
+                    let priority = calculator.calculate_tile_priority(&tile_pos);
+
+                    // Cancel if not visible or in margin (keep only Visible and Margin priority jobs)
+                    priority != JobPriority::Visible && priority != JobPriority::Margin
+                }
+                JobType::GenerateThumbnail { page_index, .. } => {
+                    // Keep thumbnails for current and adjacent pages
+                    let priority = calculator.calculate_thumbnail_priority(*page_index);
+                    priority != JobPriority::Margin && priority != JobPriority::Adjacent
+                }
+                JobType::RunOcr { .. } => {
+                    // Always cancel OCR jobs during aggressive cancellation
+                    true
+                }
+                JobType::LoadFile { .. } => {
+                    // Never cancel file loading jobs
+                    false
+                }
+            }
+        })
+    }
+
+    /// Cancel jobs that are not related to the current viewport
+    ///
+    /// This is a more aggressive version of `cancel_offscreen_jobs` that only keeps
+    /// jobs that are currently visible in the viewport. Useful for rapid viewport changes
+    /// like fast scrolling or zooming.
+    ///
+    /// # Arguments
+    ///
+    /// * `viewport` - Current viewport state
+    /// * `tile_size` - Tile size in pixels (typically 256)
+    ///
+    /// Returns the number of jobs cancelled.
+    pub fn cancel_all_except_visible(&self, viewport: &Viewport, tile_size: u32) -> usize {
+        let calculator = PriorityCalculator::new(viewport.clone(), tile_size);
+
+        self.cancel_jobs_if(|job| {
+            match &job.job_type {
+                JobType::RenderTile {
+                    page_index,
+                    tile_x,
+                    tile_y,
+                    zoom_level,
+                    ..
+                } => {
+                    // Create tile position
+                    let tile_pos = TilePosition::new(*page_index, *tile_x, *tile_y, *zoom_level);
+
+                    // Calculate priority for this tile
+                    let priority = calculator.calculate_tile_priority(&tile_pos);
+
+                    // Cancel if not visible (keep only Visible priority jobs)
+                    priority != JobPriority::Visible
+                }
+                JobType::GenerateThumbnail { .. } => {
+                    // Cancel all thumbnail jobs during aggressive cancellation
+                    true
+                }
+                JobType::RunOcr { .. } => {
+                    // Cancel all OCR jobs during aggressive cancellation
+                    true
+                }
+                JobType::LoadFile { .. } => {
+                    // Never cancel file loading jobs
+                    false
+                }
+            }
+        })
     }
 }
 
@@ -672,5 +794,345 @@ mod tests {
         // Both tokens should be cancelled
         assert!(token1.is_cancelled());
         assert!(token2.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancel_offscreen_jobs() {
+        use crate::viewport::Viewport;
+
+        let scheduler = JobScheduler::new();
+
+        // Viewport at origin, 800x600, zoom 100%
+        // At 100% zoom with 256px tiles:
+        // - Viewport covers tiles 0-3 horizontally (800/256 = 3.125 tiles)
+        // - Viewport covers tiles 0-2 vertically (600/256 = 2.34 tiles)
+        // - Margin of 1 tile extends to tile 4 horizontally, tile 3 vertically
+        let viewport = Viewport::new(0, 0.0, 0.0, 800.0, 600.0, 100);
+
+        // Submit visible tile (within viewport)
+        let (_id1, token1) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        // Submit margin tile (just outside viewport, at tile_x=4, within 1-tile margin)
+        let (_id2, token2) = scheduler.submit(
+            JobPriority::Margin,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 4,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        // Submit off-screen tile (far from viewport, at tile_x=50)
+        let (_id3, token3) = scheduler.submit(
+            JobPriority::Thumbnails,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 50,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        // Submit OCR job (should be cancelled)
+        let (_id4, token4) = scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
+
+        // Submit file load job (should not be cancelled)
+        let (_id5, token5) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: PathBuf::from("test.pdf"),
+            },
+        );
+
+        assert_eq!(scheduler.pending_jobs(), 5);
+
+        // Cancel off-screen jobs
+        let cancelled = scheduler.cancel_offscreen_jobs(&viewport, 256);
+
+        // Should cancel off-screen tile and OCR job (2 jobs)
+        assert_eq!(cancelled, 2);
+        assert_eq!(scheduler.pending_jobs(), 3);
+
+        // Visible and margin tiles should not be cancelled
+        assert!(!token1.is_cancelled());
+        assert!(!token2.is_cancelled());
+
+        // Off-screen tile should be cancelled
+        assert!(token3.is_cancelled());
+
+        // OCR job should be cancelled
+        assert!(token4.is_cancelled());
+
+        // File load job should not be cancelled
+        assert!(!token5.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancel_all_except_visible() {
+        use crate::viewport::Viewport;
+
+        let scheduler = JobScheduler::new();
+
+        // Viewport at origin, 800x600, zoom 100%
+        let viewport = Viewport::new(0, 0.0, 0.0, 800.0, 600.0, 100);
+
+        // Submit visible tile (within viewport)
+        let (_id1, token1) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        // Submit margin tile (just outside viewport)
+        let (_id2, token2) = scheduler.submit(
+            JobPriority::Margin,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 10,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        // Submit off-screen tile
+        let (_id3, token3) = scheduler.submit(
+            JobPriority::Thumbnails,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 50,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        // Submit thumbnail job
+        let (_id4, token4) = scheduler.submit(
+            JobPriority::Thumbnails,
+            JobType::GenerateThumbnail {
+                page_index: 0,
+                width: 100,
+                height: 100,
+            },
+        );
+
+        // Submit OCR job
+        let (_id5, token5) = scheduler.submit(JobPriority::Ocr, JobType::RunOcr { page_index: 0 });
+
+        // Submit file load job (should not be cancelled)
+        let (_id6, token6) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::LoadFile {
+                path: PathBuf::from("test.pdf"),
+            },
+        );
+
+        assert_eq!(scheduler.pending_jobs(), 6);
+
+        // Aggressively cancel all except visible
+        let cancelled = scheduler.cancel_all_except_visible(&viewport, 256);
+
+        // Should cancel margin tile, off-screen tile, thumbnail, and OCR (4 jobs)
+        assert_eq!(cancelled, 4);
+        assert_eq!(scheduler.pending_jobs(), 2);
+
+        // Only visible tile should not be cancelled
+        assert!(!token1.is_cancelled());
+
+        // Margin tile should be cancelled (aggressive mode)
+        assert!(token2.is_cancelled());
+
+        // Off-screen tile should be cancelled
+        assert!(token3.is_cancelled());
+
+        // Thumbnail should be cancelled
+        assert!(token4.is_cancelled());
+
+        // OCR should be cancelled
+        assert!(token5.is_cancelled());
+
+        // File load job should not be cancelled
+        assert!(!token6.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancel_offscreen_jobs_with_page_change() {
+        use crate::viewport::Viewport;
+
+        let scheduler = JobScheduler::new();
+
+        // Submit tiles for page 0
+        let (_id1, token1) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        // Submit tiles for page 2 (distant page)
+        let (_id2, token2) = scheduler.submit(
+            JobPriority::Adjacent,
+            JobType::RenderTile {
+                page_index: 2,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        assert_eq!(scheduler.pending_jobs(), 2);
+
+        // Change viewport to page 5
+        let viewport = Viewport::new(5, 0.0, 0.0, 800.0, 600.0, 100);
+
+        // Cancel off-screen jobs for new viewport
+        let cancelled = scheduler.cancel_offscreen_jobs(&viewport, 256);
+
+        // Both jobs should be cancelled (not visible or adjacent to page 5)
+        assert_eq!(cancelled, 2);
+        assert_eq!(scheduler.pending_jobs(), 0);
+
+        assert!(token1.is_cancelled());
+        assert!(token2.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancel_offscreen_jobs_with_zoom_change() {
+        use crate::viewport::Viewport;
+
+        let scheduler = JobScheduler::new();
+
+        // Submit tile at 100% zoom
+        let (_id1, token1) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 100,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        // Submit tile at 200% zoom
+        let (_id2, token2) = scheduler.submit(
+            JobPriority::Visible,
+            JobType::RenderTile {
+                page_index: 0,
+                tile_x: 0,
+                tile_y: 0,
+                zoom_level: 200,
+                rotation: 0,
+                is_preview: true,
+            },
+        );
+
+        assert_eq!(scheduler.pending_jobs(), 2);
+
+        // Change viewport to 200% zoom
+        let viewport = Viewport::new(0, 0.0, 0.0, 800.0, 600.0, 200);
+
+        // Cancel off-screen jobs for new viewport (different zoom)
+        let cancelled = scheduler.cancel_offscreen_jobs(&viewport, 256);
+
+        // Should cancel the 100% zoom tile (1 job)
+        assert_eq!(cancelled, 1);
+        assert_eq!(scheduler.pending_jobs(), 1);
+
+        // 100% zoom tile should be cancelled
+        assert!(token1.is_cancelled());
+
+        // 200% zoom tile should not be cancelled
+        assert!(!token2.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancel_offscreen_jobs_keeps_adjacent_thumbnails() {
+        use crate::viewport::Viewport;
+
+        let scheduler = JobScheduler::new();
+
+        // Viewport on page 5
+        let viewport = Viewport::new(5, 0.0, 0.0, 800.0, 600.0, 100);
+
+        // Submit thumbnail for current page
+        let (_id1, token1) = scheduler.submit(
+            JobPriority::Margin,
+            JobType::GenerateThumbnail {
+                page_index: 5,
+                width: 100,
+                height: 100,
+            },
+        );
+
+        // Submit thumbnail for adjacent page
+        let (_id2, token2) = scheduler.submit(
+            JobPriority::Adjacent,
+            JobType::GenerateThumbnail {
+                page_index: 6,
+                width: 100,
+                height: 100,
+            },
+        );
+
+        // Submit thumbnail for distant page
+        let (_id3, token3) = scheduler.submit(
+            JobPriority::Thumbnails,
+            JobType::GenerateThumbnail {
+                page_index: 10,
+                width: 100,
+                height: 100,
+            },
+        );
+
+        assert_eq!(scheduler.pending_jobs(), 3);
+
+        // Cancel off-screen jobs
+        let cancelled = scheduler.cancel_offscreen_jobs(&viewport, 256);
+
+        // Should cancel only the distant page thumbnail (1 job)
+        assert_eq!(cancelled, 1);
+        assert_eq!(scheduler.pending_jobs(), 2);
+
+        // Current page thumbnail should not be cancelled
+        assert!(!token1.is_cancelled());
+
+        // Adjacent page thumbnail should not be cancelled
+        assert!(!token2.is_cancelled());
+
+        // Distant page thumbnail should be cancelled
+        assert!(token3.is_cancelled());
     }
 }

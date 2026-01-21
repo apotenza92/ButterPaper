@@ -1425,3 +1425,97 @@ Scheduler integration tests:
 - Could implement multi-viewport support (split screen, thumbnails)
 - Could add priority decay (reduce priority of long-running jobs)
 
+
+### Task: Add aggressive cancellation for off-screen content
+
+**Status:** Complete
+
+**Changes:**
+- Added cancel_offscreen_jobs() method to JobScheduler for viewport-aware job cancellation
+- Added cancel_all_except_visible() method for more aggressive cancellation during rapid viewport changes
+- Integrated PriorityCalculator with JobScheduler to determine which jobs should be cancelled based on viewport visibility
+- Implemented intelligent cancellation logic:
+  - cancel_offscreen_jobs(): Keeps visible and margin tiles, current and adjacent page thumbnails, cancels OCR jobs, never cancels file loading
+  - cancel_all_except_visible(): Only keeps visible tiles and file loading jobs, cancels everything else
+- Both methods use viewport state (page, position, zoom) to calculate tile priorities dynamically
+- Added 6 comprehensive unit tests covering all cancellation scenarios
+- All 77 unit tests pass successfully
+- All 8 doctests pass successfully
+- Linting passes with cargo clippy -- -D warnings (no warnings)
+
+**Files Modified:**
+- crates/scheduler/src/scheduler.rs (added cancel_offscreen_jobs() and cancel_all_except_visible() methods with tests)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- cancel_offscreen_jobs() is designed for smooth scrolling and panning scenarios
+- cancel_all_except_visible() is designed for rapid viewport changes (fast scrolling, zooming)
+- Both methods use PriorityCalculator to determine tile priorities based on viewport intersection
+- Cancellation logic respects viewport state: page index, position, zoom level, and margin size
+- File loading jobs are never cancelled (critical for document integrity)
+- OCR jobs are always cancelled during aggressive cancellation (lowest priority)
+- Thumbnail jobs are cancelled intelligently based on page distance from viewport
+- Tile jobs are cancelled based on geometric intersection with viewport and margin area
+
+**Technical Details:**
+- cancel_offscreen_jobs() API: takes viewport reference and tile_size (typically 256)
+- cancel_all_except_visible() API: takes viewport reference and tile_size
+- Both methods return number of jobs cancelled
+- Uses cancel_jobs_if() internally for efficient batch cancellation
+- PriorityCalculator created on-demand for each cancellation operation
+- TilePosition constructed from job parameters for priority calculation
+- Cancellation decision logic implemented as job type matching:
+  - RenderTile: calculate priority based on tile position and viewport
+  - GenerateThumbnail: calculate priority based on page index
+  - RunOcr: always cancel during aggressive cancellation
+  - LoadFile: never cancel
+
+**Test Coverage:**
+1. test_cancel_offscreen_jobs - Basic cancellation keeps visible and margin tiles
+2. test_cancel_all_except_visible - Aggressive cancellation keeps only visible tiles
+3. test_cancel_offscreen_jobs_with_page_change - Page navigation cancels old page jobs
+4. test_cancel_offscreen_jobs_with_zoom_change - Zoom changes cancel jobs at different zoom levels
+5. test_cancel_offscreen_jobs_keeps_adjacent_thumbnails - Thumbnail cancellation logic
+6. All tests verify correct token cancellation state and job queue state
+
+**Integration Points:**
+- Ready for Phase 5: Document loading (cancel old page jobs on navigation)
+- Ready for Phase 6: Viewport compositor (cancel off-screen tiles during pan/zoom)
+- Integrates seamlessly with existing cancellation token system
+- Works with existing priority queue and worker pool
+- Enables responsive UI during heavy rendering workloads
+- Supports intelligent resource allocation based on viewport visibility
+
+**User Experience Benefits:**
+- Smooth scrolling: margin tiles prefetch without wasting resources on distant content
+- Fast navigation: old page jobs cancelled immediately when switching pages
+- Responsive zooming: old zoom level jobs cancelled when zoom changes
+- No wasted work: off-screen rendering stops immediately when viewport changes
+- Predictable behavior: visible content always prioritized over background tasks
+- Resource efficiency: CPU/GPU cycles focus on what user can see
+
+**Design Decisions:**
+- Two methods instead of one for flexibility (normal vs aggressive cancellation)
+- Viewport-based cancellation instead of time-based (more predictable)
+- Never cancel file loading jobs (data integrity critical)
+- Always cancel OCR during aggressive cancellation (lowest priority work)
+- Keep adjacent page thumbnails for fast page navigation (UX optimization)
+- Use PriorityCalculator for consistent priority logic across system
+- Return cancellation count for monitoring and debugging
+
+**Performance Characteristics:**
+- cancel_offscreen_jobs(): O(n) where n = number of jobs in queue
+- cancel_all_except_visible(): O(n) where n = number of jobs in queue
+- PriorityCalculator construction: O(1)
+- Priority calculation per job: O(1) geometric tests
+- Cancellation token marking: O(1) atomic operation
+- No allocations during priority calculation (hot path optimization)
+- Suitable for real-time viewport updates (pan, zoom, page switch)
+
+**Future Enhancements:**
+- Could add distance-based cancellation thresholds (cancel jobs beyond N tiles)
+- Could implement adaptive margin size based on scroll velocity
+- Could add cancellation statistics for monitoring (jobs cancelled per viewport change)
+- Could implement predictive cancellation (based on scroll direction)
+- Could add per-page cancellation policies (e.g., keep cover page jobs)
+
