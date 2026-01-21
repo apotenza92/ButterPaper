@@ -1114,3 +1114,89 @@ Scheduler integration tests:
 - Cooperative cancellation prevents wasted work on obsolete jobs
 - Graceful cancellation (no forced thread termination)
 
+### Task: Build render worker pool (separate from UI thread)
+
+**Status:** Complete
+
+**Changes:**
+- Worker pool already implemented in crates/scheduler/src/worker.rs (created previously)
+- Fixed clippy linting issues: removed unused JobType import, removed unused Worker.id field
+- Fixed clippy warning: changed unwrap_or_else to unwrap_or_default for CancellationToken
+- Fixed doctest: added explicit type annotations (Job, CancellationToken) in WorkerPool example
+- All 49 unit tests pass successfully
+- All 5 doctests pass successfully
+- Linting passes with cargo clippy -- -D warnings (no warnings)
+
+**Files Modified:**
+- crates/scheduler/src/worker.rs (fixed linting issues and doctest)
+- PRD.md (marked task as complete)
+
+**Architecture Notes:**
+- WorkerPool spawns configurable number of worker threads (default: CPU core count)
+- Each worker runs independently on its own thread
+- Workers pull jobs from JobScheduler using next_job() in continuous loop
+- Workers execute jobs via JobExecutor callback (Arc<dyn Fn(&Job, &CancellationToken) + Send + Sync>)
+- Workers check cancellation tokens before and during job execution
+- Workers mark jobs as complete after execution using complete_job()
+- Graceful shutdown mechanism via atomic boolean flag (shutdown.store/load)
+- Workers poll for jobs with configurable interval (default: 100ms) when queue is empty
+- Thread naming: "pdf-render-worker-{id}" for debugging visibility
+
+**Technical Details:**
+- WorkerPool struct: workers (Vec<Worker>), shutdown (Arc<AtomicBool>)
+- WorkerPoolConfig: num_workers, poll_interval
+- Worker struct: thread (Option<JoinHandle<()>>)
+- JobExecutor type: Arc<dyn Fn(&Job, &CancellationToken) + Send + Sync>
+- Default worker count: thread::available_parallelism() or 4 if detection fails
+- Cooperative cancellation: workers check token.is_cancelled() periodically
+- Shutdown methods: shutdown() (blocking wait), shutdown_nowait() (fire and forget)
+- Worker loop: check shutdown → get next job → get token → check cancelled → execute → complete → repeat
+
+**Test Coverage:**
+1. test_worker_pool_config_default - Default configuration values
+2. test_worker_pool_config_new - Custom worker count
+3. test_worker_pool_config_builder - Builder pattern with poll_interval
+4. test_worker_pool_creation - Pool creation and shutdown
+5. test_worker_pool_executes_jobs - Workers execute submitted jobs
+6. test_worker_pool_respects_cancellation - Workers honor cancellation tokens
+7. test_worker_pool_priority_ordering - Jobs execute in priority order
+8. test_worker_pool_shutdown - Graceful shutdown mechanism
+9. test_num_cpus - CPU core count detection
+
+**Integration Points:**
+- Ready for Phase 4: IO thread (can use separate executor for file operations)
+- Ready for Phase 4: Job priority ordering (workers already respect scheduler priority)
+- Ready for Phase 5: Document loading (workers can render tiles in background)
+- Ready for Phase 6: Viewport compositor (workers render visible tiles first)
+- JobScheduler provides jobs in priority order (Visible > Margin > Adjacent > Thumbnails > Ocr)
+- Cancellation tokens enable responsive UI (cancel off-screen work immediately)
+- Thread pool separates rendering from UI thread (no blocking)
+
+**Design Decisions:**
+- Used thread pool instead of async/await for CPU-bound rendering work
+- Worker count defaults to CPU core count for optimal parallelism
+- Cooperative cancellation safer than forced thread termination
+- Workers poll with configurable interval to avoid busy-waiting when idle
+- JobExecutor callback pattern provides maximum flexibility for different job types
+- Graceful shutdown ensures workers complete current jobs before exiting
+- Thread naming enables debugging visibility in profilers and crash reports
+- Atomic shutdown flag allows lock-free shutdown signaling
+
+**Performance Characteristics:**
+- Worker threads run continuously with minimal overhead
+- Poll interval (100ms default) balances responsiveness vs CPU usage when idle
+- Lock-free cancellation checks (AtomicBool) during job execution
+- Job execution fully parallelized across worker threads
+- No contention between workers (scheduler handles synchronization)
+- Scales linearly with CPU core count for CPU-bound rendering
+
+**User Experience Benefits:**
+- UI thread never blocks on rendering (workers handle all rendering)
+- Visible tiles render first due to priority scheduling
+- Page navigation cancels old page renders immediately
+- Smooth scrolling (off-screen tiles cancelled, on-screen prioritized)
+- Responsive UI even during heavy rendering workloads
+- Optimal CPU utilization (worker count matches core count)
+- Fast document loading (parallel tile rendering)
+
+
