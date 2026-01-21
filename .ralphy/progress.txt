@@ -10070,3 +10070,59 @@ Future work for the menu bar (separate tasks):
 - Implement Go menu navigation
 - Wire menu actions to app handlers via custom responders
 
+
+---
+
+## Task: Wire up File menu Open action to work from menu click
+
+**Date:** 2026-01-21
+
+### Summary
+
+Implemented the "Open..." menu item in the File menu to actually trigger the file open dialog when clicked. Previously, the menu item existed but used the standard `openDocument:` selector which doesn't work in winit-based apps because they don't use the NSDocument architecture.
+
+### Technical Approach
+
+1. Created a custom Objective-C class `MenuHandler` using the objc crate's class declaration API
+2. The class has an `openFile:` method that sets an atomic flag when invoked
+3. Added a `validateMenuItem:` method to enable our custom menu items
+4. Created `poll_open_action()` function that atomically checks and resets the flag
+5. The main event loop polls this function in `about_to_wait()` and triggers the file dialog when true
+
+### Files Modified
+
+1. `crates/app/src/menu.rs`:
+   - Added `MENU_OPEN_CLICKED` atomic flag
+   - Added `poll_open_action()` public function
+   - Added `register_menu_handler_class()` to create the ObjC class
+   - Added `get_menu_handler()` to get/create the singleton instance
+   - Added `menu_item_with_target()` helper for menu items with custom targets
+   - Updated `add_file_menu()` to use the custom handler for Open item
+   - Added 3 unit tests for `poll_open_action()` behavior
+
+2. `crates/app/src/main.rs`:
+   - Added call to `menu::poll_open_action()` in `about_to_wait()`
+
+3. `PRD.md`:
+   - Marked "Open... (Cmd+O) - working" as complete
+
+### Test Results
+
+- 36 tests pass (3 new tests added for menu action handling)
+- Clippy passes with only pre-existing deprecation warnings from cocoa/objc crates
+
+### How It Works
+
+When user clicks File > Open... in the menu bar:
+1. macOS sends `openFile:` message to our MenuHandler instance
+2. The `open_file` extern "C" function sets `MENU_OPEN_CLICKED` to true
+3. On next event loop iteration, `about_to_wait()` polls `poll_open_action()`
+4. The poll function atomically swaps the flag to false and returns true
+5. `open_file_dialog()` is called which opens the native file picker via rfd
+
+### Architecture Notes
+
+This pattern of using atomic flags for menu-to-event-loop communication is a common approach when bridging Objective-C callbacks to Rust application logic. The atomic swap ensures that:
+- Multiple rapid clicks don't queue up multiple dialogs
+- The flag is properly reset after being handled
+- Thread safety is maintained between the main thread (ObjC callbacks) and any other threads

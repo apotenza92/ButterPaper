@@ -229,7 +229,7 @@ The app needs a proper macOS menu bar. Use `cocoa` crate for native menus.
 
 - [x] Create NSMenu with standard structure
 - [ ] **File menu:**
-  - [ ] Open... (Cmd+O) - working
+  - [x] Open... (Cmd+O) - working
   - [ ] Open Recent → submenu
   - [ ] Close (Cmd+W)
   - [ ] Save (Cmd+S)

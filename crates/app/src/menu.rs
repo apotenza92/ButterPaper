@@ -3,6 +3,12 @@
 //! This module creates and manages the native macOS menu bar using the cocoa crate.
 //! The menu bar follows standard macOS conventions and integrates with the app's
 //! keyboard shortcuts.
+//!
+//! ## Menu Action Handling
+//!
+//! Menu actions are handled through a custom Objective-C class `MenuHandler` that
+//! receives menu item clicks and sets atomic flags. The main event loop polls these
+//! flags to trigger the appropriate Rust code.
 
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
@@ -11,12 +17,24 @@ use cocoa::appkit::{
 };
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
-use cocoa::base::{id, nil, selector};
+use cocoa::base::{id, nil, selector, BOOL, YES};
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
 use cocoa::foundation::{NSAutoreleasePool, NSString};
 #[cfg(target_os = "macos")]
-use objc::runtime::Sel;
+use objc::runtime::{Class, Object, Sel};
+#[cfg(target_os = "macos")]
+use objc::{class, msg_send, sel, sel_impl};
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Global flag indicating "Open..." menu item was clicked
+static MENU_OPEN_CLICKED: AtomicBool = AtomicBool::new(false);
+
+/// Check if the "Open..." menu action was triggered and reset the flag
+pub fn poll_open_action() -> bool {
+    MENU_OPEN_CLICKED.swap(false, Ordering::SeqCst)
+}
 
 /// Menu action identifiers for routing menu selections to app handlers.
 /// This enum will be used in the future to handle custom menu actions
@@ -65,6 +83,60 @@ pub enum MenuAction {
     About,
 }
 
+/// Global storage for the MenuHandler instance
+#[cfg(target_os = "macos")]
+static mut MENU_HANDLER: Option<id> = None;
+
+/// Register the MenuHandler Objective-C class that receives menu actions.
+/// This must be called once before creating menu items that use custom selectors.
+#[cfg(target_os = "macos")]
+unsafe fn register_menu_handler_class() -> *const Class {
+    use objc::declare::ClassDecl;
+    use std::ffi::CStr;
+
+    // Check if class already exists
+    let class_name = c"MenuHandler";
+    if let Some(cls) = Class::get(CStr::from_ptr(class_name.as_ptr()).to_str().unwrap()) {
+        return cls;
+    }
+
+    let superclass = class!(NSObject);
+    let mut decl = ClassDecl::new("MenuHandler", superclass).unwrap();
+
+    // Add the openFile: method
+    extern "C" fn open_file(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_OPEN_CLICKED.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(openFile:),
+        open_file as extern "C" fn(&Object, Sel, id),
+    );
+
+    // Add validateMenuItem: to enable our custom menu items
+    extern "C" fn validate_menu_item(_this: &Object, _cmd: Sel, _item: id) -> BOOL {
+        YES // Always enable our menu items
+    }
+    decl.add_method(
+        sel!(validateMenuItem:),
+        validate_menu_item as extern "C" fn(&Object, Sel, id) -> BOOL,
+    );
+
+    decl.register()
+}
+
+/// Create an instance of the MenuHandler class
+#[cfg(target_os = "macos")]
+unsafe fn get_menu_handler() -> id {
+    if let Some(handler) = MENU_HANDLER {
+        return handler;
+    }
+
+    let cls = register_menu_handler_class();
+    let handler: id = msg_send![cls, new];
+    MENU_HANDLER = Some(handler);
+    handler
+}
+
 /// Sets up the native macOS menu bar for the application.
 ///
 /// This function should be called once at application startup, after
@@ -77,6 +149,9 @@ pub enum MenuAction {
 pub fn setup_menu_bar() {
     unsafe {
         let _pool = NSAutoreleasePool::new(nil);
+
+        // Register our custom menu handler class first
+        let _handler = get_menu_handler();
 
         // Create the main menu bar
         let main_menu = NSMenu::new(nil).autorelease();
@@ -119,6 +194,26 @@ unsafe fn menu_item(title: &str, action: Sel, key: &str, modifiers: NSEventModif
         ns_string(key),
     );
     item.setKeyEquivalentModifierMask_(modifiers);
+    item.autorelease()
+}
+
+// Helper function to create a menu item with a custom target
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+unsafe fn menu_item_with_target(
+    title: &str,
+    action: Sel,
+    key: &str,
+    modifiers: NSEventModifierFlags,
+    target: id,
+) -> id {
+    let item = NSMenuItem::alloc(nil).initWithTitle_action_keyEquivalent_(
+        ns_string(title),
+        action,
+        ns_string(key),
+    );
+    item.setKeyEquivalentModifierMask_(modifiers);
+    let () = msg_send![item, setTarget: target];
     item.autorelease()
 }
 
@@ -207,13 +302,14 @@ unsafe fn add_file_menu(main_menu: id) {
     let file_menu = NSMenu::alloc(nil).initWithTitle_(ns_string("File")).autorelease();
 
     // Open... (Cmd+O)
-    // Note: We use openDocument: which is the standard action for File > Open
-    // The winit event loop will handle the actual file opening through keyboard events
-    file_menu.addItem_(menu_item(
+    // Uses our custom MenuHandler to set a flag that the event loop polls
+    let handler = get_menu_handler();
+    file_menu.addItem_(menu_item_with_target(
         "Open...",
-        selector("openDocument:"),
+        sel!(openFile:),
         "o",
         NSEventModifierFlags::NSCommandKeyMask,
+        handler,
     ));
 
     // Open Recent submenu (placeholder - will be populated dynamically)
@@ -527,5 +623,35 @@ mod tests {
         // Actual execution requires a running NSApplication
         // setup_menu_bar() would panic without proper app initialization
         assert!(true);
+    }
+
+    #[test]
+    fn test_poll_open_action_initially_false() {
+        // Ensure the flag starts as false (it may have been set by a previous test)
+        // Poll it to reset, then check again
+        let _ = poll_open_action();
+        assert!(!poll_open_action(), "poll_open_action should return false when no action triggered");
+    }
+
+    #[test]
+    fn test_poll_open_action_resets_after_poll() {
+        // Manually set the flag and verify polling resets it
+        MENU_OPEN_CLICKED.store(true, Ordering::SeqCst);
+        assert!(poll_open_action(), "First poll should return true");
+        assert!(!poll_open_action(), "Second poll should return false (flag was reset)");
+    }
+
+    #[test]
+    fn test_poll_open_action_atomic_swap() {
+        // Verify the atomic swap behavior
+        MENU_OPEN_CLICKED.store(false, Ordering::SeqCst);
+        assert!(!poll_open_action());
+
+        MENU_OPEN_CLICKED.store(true, Ordering::SeqCst);
+        // Multiple concurrent reads would all see true until first swap
+        let result = poll_open_action();
+        assert!(result);
+        // After swap, subsequent reads see false
+        assert!(!poll_open_action());
     }
 }

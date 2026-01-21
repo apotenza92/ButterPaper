@@ -1793,6 +1793,11 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Check for menu-triggered file open
+        if menu::poll_open_action() {
+            self.open_file_dialog();
+        }
+
         self.process_file_open();
 
         if self.window.is_some() {
