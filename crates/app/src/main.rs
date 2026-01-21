@@ -1430,6 +1430,80 @@ impl App {
         }
     }
 
+    /// Export all pages of the current document as PNG images.
+    ///
+    /// Opens a folder selection dialog and exports each page as a separate PNG file.
+    /// Files are named page_001.png, page_002.png, etc.
+    fn export_images(&mut self) {
+        let Some(doc) = &self.document else {
+            println!("No document to export");
+            return;
+        };
+
+        // Show folder selection dialog
+        let folder = rfd::FileDialog::new()
+            .set_title("Export as Images - Select Folder")
+            .pick_folder();
+
+        let Some(folder_path) = folder else {
+            return;
+        };
+
+        println!("Exporting PDF pages as images to: {}", folder_path.display());
+
+        // Get base name from the PDF filename
+        let base_name = doc.path.file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("page");
+
+        let page_count = doc.page_count;
+        let mut success_count = 0;
+        let mut error_count = 0;
+
+        // Export each page as a PNG image
+        for page_idx in 0..page_count {
+            // Format page number with leading zeros
+            let filename = format!("{}_{:03}.png", base_name, page_idx + 1);
+            let output_path = folder_path.join(&filename);
+
+            // Render the page at a high-quality resolution
+            // Use 150 DPI equivalent (typical PDF is 72 DPI, so ~2x scale)
+            const MAX_DIMENSION: u32 = 2000;
+            match doc.pdf.render_page_scaled(page_idx, MAX_DIMENSION, MAX_DIMENSION) {
+                Ok((rgba_data, width, height)) => {
+                    // Create an image from the RGBA data
+                    match image::RgbaImage::from_raw(width, height, rgba_data) {
+                        Some(img) => {
+                            match img.save(&output_path) {
+                                Ok(()) => {
+                                    success_count += 1;
+                                    println!("  Exported: {}", filename);
+                                }
+                                Err(e) => {
+                                    error_count += 1;
+                                    eprintln!("  Failed to save {}: {}", filename, e);
+                                }
+                            }
+                        }
+                        None => {
+                            error_count += 1;
+                            eprintln!("  Failed to create image from page {} data", page_idx + 1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error_count += 1;
+                    eprintln!("  Failed to render page {}: {}", page_idx + 1, e);
+                }
+            }
+        }
+
+        println!(
+            "Export complete: {} pages exported, {} errors",
+            success_count, error_count
+        );
+    }
+
     fn update(&mut self) {
         let now = Instant::now();
         self.delta_time = now.duration_since(self.last_update);
@@ -1941,6 +2015,11 @@ impl ApplicationHandler for App {
         // Check for menu-triggered export as PDF
         if menu::poll_export_pdf_action() {
             self.export_pdf();
+        }
+
+        // Check for menu-triggered export as images
+        if menu::poll_export_images_action() {
+            self.export_images();
         }
 
         // Check for recent file selection

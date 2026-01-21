@@ -45,6 +45,9 @@ static MENU_SAVE_AS_CLICKED: AtomicBool = AtomicBool::new(false);
 /// Global flag indicating "Export as PDF..." menu item was clicked
 static MENU_EXPORT_PDF_CLICKED: AtomicBool = AtomicBool::new(false);
 
+/// Global flag indicating "Export as Images..." menu item was clicked
+static MENU_EXPORT_IMAGES_CLICKED: AtomicBool = AtomicBool::new(false);
+
 /// Global flag indicating "Clear Menu" in Open Recent was clicked
 static MENU_CLEAR_RECENT_CLICKED: AtomicBool = AtomicBool::new(false);
 
@@ -77,6 +80,11 @@ pub fn poll_save_as_action() -> bool {
 /// Check if the "Export as PDF..." menu action was triggered and reset the flag
 pub fn poll_export_pdf_action() -> bool {
     MENU_EXPORT_PDF_CLICKED.swap(false, Ordering::SeqCst)
+}
+
+/// Check if the "Export as Images..." menu action was triggered and reset the flag
+pub fn poll_export_images_action() -> bool {
+    MENU_EXPORT_IMAGES_CLICKED.swap(false, Ordering::SeqCst)
 }
 
 /// Check if "Clear Menu" was clicked and reset the flag
@@ -205,6 +213,15 @@ unsafe fn register_menu_handler_class() -> *const Class {
     decl.add_method(
         sel!(exportPdf:),
         export_pdf as extern "C" fn(&Object, Sel, id),
+    );
+
+    // Add the exportImages: method
+    extern "C" fn export_images(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_EXPORT_IMAGES_CLICKED.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(exportImages:),
+        export_images as extern "C" fn(&Object, Sel, id),
     );
 
     // Add the clearRecentFiles: method
@@ -613,8 +630,15 @@ unsafe fn add_file_menu(main_menu: id) {
         handler,
     ));
 
-    // Export as Images... (placeholder, disabled)
-    file_menu.addItem_(menu_item_disabled("Export as Images..."));
+    // Export as Images... (Cmd+Shift+I)
+    // Uses our custom MenuHandler to set a flag that the event loop polls
+    file_menu.addItem_(menu_item_with_target(
+        "Export as Images...",
+        sel!(exportImages:),
+        "i",
+        NSEventModifierFlags::NSCommandKeyMask | NSEventModifierFlags::NSShiftKeyMask,
+        handler,
+    ));
 
     // Create menu bar item
     let file_menu_item = NSMenuItem::new(nil).autorelease();
@@ -1060,5 +1084,35 @@ mod tests {
         assert!(result);
         // After swap, subsequent reads see false
         assert!(!poll_save_as_action());
+    }
+
+    #[test]
+    fn test_poll_export_images_action_initially_false() {
+        // Ensure the flag starts as false (it may have been set by a previous test)
+        // Poll it to reset, then check again
+        let _ = poll_export_images_action();
+        assert!(!poll_export_images_action(), "poll_export_images_action should return false when no action triggered");
+    }
+
+    #[test]
+    fn test_poll_export_images_action_resets_after_poll() {
+        // Manually set the flag and verify polling resets it
+        MENU_EXPORT_IMAGES_CLICKED.store(true, Ordering::SeqCst);
+        assert!(poll_export_images_action(), "First poll should return true");
+        assert!(!poll_export_images_action(), "Second poll should return false (flag was reset)");
+    }
+
+    #[test]
+    fn test_poll_export_images_action_atomic_swap() {
+        // Verify the atomic swap behavior
+        MENU_EXPORT_IMAGES_CLICKED.store(false, Ordering::SeqCst);
+        assert!(!poll_export_images_action());
+
+        MENU_EXPORT_IMAGES_CLICKED.store(true, Ordering::SeqCst);
+        // Multiple concurrent reads would all see true until first swap
+        let result = poll_export_images_action();
+        assert!(result);
+        // After swap, subsequent reads see false
+        assert!(!poll_export_images_action());
     }
 }

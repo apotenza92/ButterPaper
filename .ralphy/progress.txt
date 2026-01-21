@@ -10379,3 +10379,36 @@ The Save (Cmd+S) feature was already fully implemented and just needed to be mar
 - All unit tests pass (476 tests across all crates)
 - Code compiles successfully
 - Pre-existing clippy warnings from cocoa crate deprecations remain (not introduced by this change)
+
+---
+
+### Task: Implement Export as Images... (Cmd+Shift+I) menu item
+
+**Status:** Complete
+
+**Changes:**
+- Added global atomic flag `MENU_EXPORT_IMAGES_CLICKED` for menu action tracking
+- Added Objective-C handler method `exportImages:` in MenuHandler class
+- Added `poll_export_images_action()` function for event loop polling
+- Replaced disabled "Export as Images..." menu item with active version using Cmd+Shift+I shortcut
+- Added event loop polling for export images action in main.rs
+- Implemented `export_images()` function that:
+  - Opens a folder selection dialog
+  - Renders each PDF page at high quality (2000px max dimension)
+  - Saves pages as PNG files with format: `{basename}_{page:03}.png`
+  - Reports progress and errors to console
+- Added `image` crate dependency (v0.25) for PNG encoding
+- Added unit tests for `poll_export_images_action()` functionality
+
+**Files Modified:**
+- crates/app/Cargo.toml (added image = "0.25" dependency)
+- crates/app/src/menu.rs (added flag, handler, polling function, menu item, tests)
+- crates/app/src/main.rs (added event loop polling and export_images function)
+- PRD.md (marked Export as Images... as complete)
+
+**Tests:**
+- All 64 tests pass
+- New tests added: test_poll_export_images_action_initially_false, test_poll_export_images_action_resets_after_poll, test_poll_export_images_action_atomic_swap
+
+**Linting:**
+- Clippy passes with only pre-existing deprecation warnings from cocoa crate

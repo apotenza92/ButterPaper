@@ -235,7 +235,7 @@ The app needs a proper macOS menu bar. Use `cocoa` crate for native menus.
   - [x] Save (Cmd+S)
   - [x] Save As... (Cmd+Shift+S)
   - [x] Export as PDF... (Cmd+Shift+E)
-  - [ ] Export as Images...
+  - [x] Export as Images... (Cmd+Shift+I)
 - [ ] **Edit menu:**
   - [ ] Undo (Cmd+Z)
   - [ ] Redo (Cmd+Shift+Z)
