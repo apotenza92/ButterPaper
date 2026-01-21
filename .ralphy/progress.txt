@@ -3364,3 +3364,49 @@ Stable annotation IDs were already fully implemented in the annotation data mode
 - crates/core/src/annotation.rs (lines 8-921)
 - crates/core/Cargo.toml (uuid dependency with v4 feature)
 
+
+
+### Task: Build page-local coordinate system for annotations
+
+**Status:** Complete
+
+**Summary:**
+The page-local coordinate system for annotations was already fully implemented as part of the annotation data model. The implementation provides a proper PDF-compliant coordinate system with origin at bottom-left and units in points (1/72 inch).
+
+**Implementation Details:**
+- PageCoordinate struct defined with x, y fields (annotation.rs:22-25)
+- Comprehensive documentation of PDF coordinate system:
+  - Origin (0, 0) at bottom-left of page
+  - X increases to the right
+  - Y increases upward
+  - Units are in points (1/72 inch)
+- Constructor method: `new(x: f32, y: f32)` (annotation.rs:29-31)
+- Distance calculation: `distance_to(&self, other: &PageCoordinate) -> f32` (annotation.rs:34-38)
+- Used throughout all 9 annotation geometry types (Line, Polyline, Polygon, Rectangle, Circle, Ellipse, Arc, Bezier, FreehandStroke)
+- Implements Debug, Clone, Copy, PartialEq traits for efficient use
+
+**Key Features:**
+1. PDF-compliant coordinate system (bottom-left origin)
+2. Point-based units (1/72 inch) matching PDF standard
+3. Efficient distance calculations for hit testing
+4. Immutable value type (Copy trait) for performance
+5. Type-safe coordinate representation prevents mixing viewport and page coordinates
+
+**Testing:**
+- All existing annotation tests use PageCoordinate
+- Distance calculations verified in hit testing tests
+- Linting passes with no warnings (`cargo clippy`)
+
+**Files Modified:**
+- PRD.md (marked task as complete)
+
+**Validation:**
+✅ PageCoordinate struct fully implemented
+✅ PDF-compliant coordinate system documented
+✅ Distance calculation method provided
+✅ Used throughout annotation geometry types
+✅ Type-safe and efficient (Copy trait)
+✅ Zero linting warnings
+✅ Clean integration with existing architecture
+
+**Phase 7, Task 3: COMPLETE ✅**
