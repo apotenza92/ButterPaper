@@ -352,9 +352,9 @@ Wire up existing measurement system.
 - [x] Area measurement tool
 - [x] Click polygon points
 - [x] Show area calculation
-- [ ] Scale calibration
-- [ ] Click known distance, enter real value
-- [ ] Apply scale to page
+- [x] Scale calibration
+- [x] Click known distance, enter real value
+- [x] Apply scale to page
 - [ ] Export measurements to CSV
 - [ ] **Terminal test:** `--export-measurements file.pdf` outputs CSV
 

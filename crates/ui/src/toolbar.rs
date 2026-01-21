@@ -97,6 +97,8 @@ pub enum ToolbarButton {
     MeasureTool,
     /// Area measurement tool (polygon)
     AreaMeasureTool,
+    /// Scale calibration tool (two-point reference)
+    CalibrateTool,
     /// Freehand drawing/pen tool
     FreedrawTool,
 }
@@ -334,6 +336,60 @@ impl ToolbarButton {
                 Primitive::Circle {
                     center: [center_x - half_icon * 0.5, center_y + half_icon * 0.5],
                     radius: 2.0,
+                    color,
+                },
+            ],
+
+            // Calibrate tool: two connected points with distance indication
+            ToolbarButton::CalibrateTool => vec![
+                // First point (circle)
+                Primitive::Circle {
+                    center: [center_x - half_icon * 0.6, center_y + half_icon * 0.3],
+                    radius: 3.0,
+                    color,
+                },
+                // Second point (circle)
+                Primitive::Circle {
+                    center: [center_x + half_icon * 0.6, center_y - half_icon * 0.3],
+                    radius: 3.0,
+                    color,
+                },
+                // Connecting line (dashed effect with two segments)
+                Primitive::Rectangle {
+                    rect: Rect::new(
+                        center_x - half_icon * 0.4,
+                        center_y - 1.0,
+                        half_icon * 0.35,
+                        2.0,
+                    ),
+                    color,
+                },
+                Primitive::Rectangle {
+                    rect: Rect::new(
+                        center_x + half_icon * 0.1,
+                        center_y - 1.0,
+                        half_icon * 0.35,
+                        2.0,
+                    ),
+                    color,
+                },
+                // Small "1:N" text indicator - simplified as two bars
+                Primitive::Rectangle {
+                    rect: Rect::new(
+                        center_x - half_icon * 0.15,
+                        center_y - half_icon * 0.7,
+                        2.0,
+                        half_icon * 0.4,
+                    ),
+                    color,
+                },
+                Primitive::Rectangle {
+                    rect: Rect::new(
+                        center_x + half_icon * 0.05,
+                        center_y - half_icon * 0.7,
+                        2.0,
+                        half_icon * 0.4,
+                    ),
                     color,
                 },
             ],
@@ -844,6 +900,7 @@ impl Toolbar {
         x = self.add_button(&mut new_node, ToolbarButton::CommentTool, x, button_y);
         x = self.add_button(&mut new_node, ToolbarButton::MeasureTool, x, button_y);
         x = self.add_button(&mut new_node, ToolbarButton::AreaMeasureTool, x, button_y);
+        x = self.add_button(&mut new_node, ToolbarButton::CalibrateTool, x, button_y);
         let _ = self.add_button(&mut new_node, ToolbarButton::FreedrawTool, x, button_y);
 
         self.scene_node = Arc::new(new_node);
@@ -1349,6 +1406,7 @@ mod tests {
             ToolbarButton::CommentTool,
             ToolbarButton::MeasureTool,
             ToolbarButton::AreaMeasureTool,
+            ToolbarButton::CalibrateTool,
             ToolbarButton::FreedrawTool,
         ];
 
@@ -2033,6 +2091,90 @@ mod tests {
             .button_states
             .iter()
             .find(|(b, _, _)| *b == ToolbarButton::AreaMeasureTool)
+            .map(|(_, s, _)| *s);
+        assert_eq!(state, Some(ButtonState::Hover));
+    }
+
+    // CalibrateTool tests
+
+    #[test]
+    fn test_toolbar_calibrate_tool_icon() {
+        let color = Color::rgb(1.0, 1.0, 1.0);
+        let primitives = ToolbarButton::CalibrateTool.icon_primitives(0.0, 0.0, 32.0, color);
+
+        // CalibrateTool should have primitives for two points and connecting line
+        assert!(
+            !primitives.is_empty(),
+            "CalibrateTool should have icon primitives"
+        );
+
+        // Should contain circle primitives for the two calibration points
+        let circle_count = primitives
+            .iter()
+            .filter(|p| matches!(p, Primitive::Circle { .. }))
+            .count();
+        assert!(
+            circle_count >= 2,
+            "CalibrateTool icon should have at least 2 circle primitives for calibration points"
+        );
+
+        // Should contain rectangle primitives for the dashed line
+        let rect_count = primitives
+            .iter()
+            .filter(|p| matches!(p, Primitive::Rectangle { .. }))
+            .count();
+        assert!(
+            rect_count >= 2,
+            "CalibrateTool icon should have rectangle primitives for connecting line"
+        );
+    }
+
+    #[test]
+    fn test_toolbar_select_calibrate_tool() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Initially not CalibrateTool
+        assert_ne!(
+            toolbar.selected_tool(),
+            Some(ToolbarButton::CalibrateTool)
+        );
+
+        // Select CalibrateTool
+        toolbar.set_selected_tool(ToolbarButton::CalibrateTool);
+        assert_eq!(
+            toolbar.selected_tool(),
+            Some(ToolbarButton::CalibrateTool)
+        );
+    }
+
+    #[test]
+    fn test_toolbar_calibrate_tool_in_button_list() {
+        let toolbar = Toolbar::new(1200.0);
+
+        // CalibrateTool button should exist in the button states
+        let has_calibrate = toolbar
+            .button_states
+            .iter()
+            .any(|(btn, _, _)| *btn == ToolbarButton::CalibrateTool);
+
+        assert!(
+            has_calibrate,
+            "CalibrateTool should be included in toolbar buttons"
+        );
+    }
+
+    #[test]
+    fn test_toolbar_calibrate_tool_hover() {
+        let mut toolbar = Toolbar::new(1200.0);
+
+        // Set hover on CalibrateTool
+        toolbar.set_button_hover(ToolbarButton::CalibrateTool, true);
+
+        // Verify CalibrateTool is hovered
+        let state = toolbar
+            .button_states
+            .iter()
+            .find(|(b, _, _)| *b == ToolbarButton::CalibrateTool)
             .map(|(_, s, _)| *s);
         assert_eq!(state, Some(ButtonState::Hover));
     }

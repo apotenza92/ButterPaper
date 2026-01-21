@@ -21,6 +21,7 @@ use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::SceneGraph;
 use pdf_editor_ui::text_selection::TextSearchManager;
 use pdf_editor_ui::thumbnail::ThumbnailStrip;
+use pdf_editor_ui::calibration_dialog::{CalibrationDialog, CalibrationDialogButton};
 use pdf_editor_ui::note_popup::{NotePopup, NoteData};
 use pdf_editor_ui::search_bar::{SearchBar, SearchBarButton, SEARCH_BAR_HEIGHT};
 use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT, ZOOM_LEVELS};
@@ -1491,6 +1492,13 @@ struct NotePopupTexture {
     height: u32,
 }
 
+#[cfg(target_os = "macos")]
+struct CalibrationDialogTexture {
+    texture: metal::Texture,
+    width: u32,
+    height: u32,
+}
+
 /// Width of the thumbnail strip sidebar
 const THUMBNAIL_STRIP_WIDTH: f32 = 136.0; // 120px thumbnail + 8px spacing * 2
 
@@ -1605,6 +1613,17 @@ struct App {
     area_measurement_points: Vec<PageCoordinate>,
     /// The page index where area measurement started
     area_measurement_page: u16,
+    /// Calibration dialog for scale calibration
+    calibration_dialog: CalibrationDialog,
+    /// Calibration dialog texture for rendering
+    #[cfg(target_os = "macos")]
+    calibration_dialog_texture: Option<CalibrationDialogTexture>,
+    /// Whether the user is currently calibrating scale (placing two reference points)
+    is_calibrating: bool,
+    /// First calibration point in page coordinates
+    calibration_first_point: Option<PageCoordinate>,
+    /// Page index where calibration started
+    calibration_page: u16,
 }
 
 impl App {
@@ -1615,6 +1634,7 @@ impl App {
         let toolbar = Toolbar::new(1200.0);
         let search_bar = SearchBar::new(1200.0);
         let note_popup = NotePopup::new(1200.0, 800.0);
+        let calibration_dialog = CalibrationDialog::new(1200.0, 800.0);
 
         // Create GPU texture cache for thumbnails (64MB VRAM limit)
         let gpu_texture_cache = Arc::new(GpuTextureCache::new(64 * 1024 * 1024));
@@ -1690,6 +1710,12 @@ impl App {
             is_area_measuring: false,
             area_measurement_points: Vec::new(),
             area_measurement_page: 0,
+            calibration_dialog,
+            #[cfg(target_os = "macos")]
+            calibration_dialog_texture: None,
+            is_calibrating: false,
+            calibration_first_point: None,
+            calibration_page: 0,
         }
     }
 
@@ -3660,6 +3686,349 @@ impl App {
         }
     }
 
+    /// Start scale calibration - user clicks first reference point
+    fn start_calibration(&mut self, screen_x: f32, screen_y: f32) {
+        // Get current page from document
+        let page_index = match &self.document {
+            Some(doc) => doc.current_page,
+            None => {
+                println!("No document loaded - cannot start calibration");
+                return;
+            }
+        };
+
+        // Convert screen coordinates to page coordinates
+        let page_coord = self.input_handler.screen_to_page(screen_x, screen_y);
+        let point = PageCoordinate::new(page_coord.x, page_coord.y);
+
+        if self.is_calibrating {
+            // Second click - we have both points, show the dialog
+            if let Some(first_point) = self.calibration_first_point {
+                let page_distance = first_point.distance_to(&point);
+
+                if page_distance < 10.0 {
+                    println!("Calibration points too close - please click further apart");
+                    return;
+                }
+
+                // Store the second point temporarily and show dialog
+                self.calibration_first_point = Some(first_point);
+                // Store second point in a way we can retrieve it
+                // We'll compute page_distance when confirming
+
+                // Show calibration dialog with the page distance
+                self.calibration_dialog.show(page_distance);
+                self.update_calibration_dialog_texture();
+
+                // Keep the first point stored for when dialog is confirmed
+                // Store second point by updating first_point to a combined representation
+                // Actually, let's store the second point separately
+                // We need to restructure - for now, recompute distance on confirm
+
+                // Store second point as a separate field would be cleaner
+                // For now, let's complete the workflow using the stored first point
+                // and the current mouse position when confirming
+
+                // Actually, the cleanest approach: store the page_distance in the dialog
+                // and store both points. Let's use a different approach:
+                // Store second point temporarily
+                self.is_calibrating = false; // Stop the point-picking mode
+
+                // We need to store second point. Let's add a field or use area_measurement_points
+                // Simplest: use area_measurement_points temporarily
+                self.area_measurement_points.clear();
+                self.area_measurement_points.push(first_point);
+                self.area_measurement_points.push(point);
+
+                println!(
+                    "Calibration points set. Page distance: {:.1} points. Enter known distance.",
+                    page_distance
+                );
+
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+        } else {
+            // First click - start calibration
+            self.calibration_first_point = Some(point);
+            self.is_calibrating = true;
+            self.calibration_page = page_index;
+
+            println!(
+                "Started scale calibration on page {} at ({:.1}, {:.1}). Click second reference point.",
+                page_index + 1,
+                point.x,
+                point.y
+            );
+        }
+    }
+
+    /// Confirm calibration with the distance entered in the dialog
+    fn confirm_calibration(&mut self) {
+        // Get the distance and unit from the dialog
+        let distance = match self.calibration_dialog.parse_distance() {
+            Some(d) => d,
+            None => {
+                println!("Invalid distance entered - please enter a positive number");
+                return;
+            }
+        };
+
+        let unit = self.calibration_dialog.selected_unit().to_string();
+
+        // Get the two points from temporary storage
+        if self.area_measurement_points.len() != 2 {
+            println!("Calibration error - points not stored correctly");
+            self.cancel_calibration();
+            return;
+        }
+
+        let p1 = self.area_measurement_points[0];
+        let p2 = self.area_measurement_points[1];
+
+        // Create the two-point scale system
+        let scale = ScaleSystem::two_point(
+            self.calibration_page,
+            p1,
+            p2,
+            distance,
+            &unit,
+        );
+
+        // Add to collection and set as default for the page
+        let scale_id = self.measurements.add_scale(scale);
+        self.measurements.set_default_scale(self.calibration_page, scale_id);
+
+        // Recompute all measurements on this page to use the new scale
+        self.measurements.recompute_page(self.calibration_page);
+
+        // Hide the dialog and clean up
+        self.calibration_dialog.hide();
+        self.update_calibration_dialog_texture();
+        self.area_measurement_points.clear();
+        self.calibration_first_point = None;
+        self.is_calibrating = false;
+
+        println!(
+            "Scale calibration complete! {} {} = {:.1} page points on page {}",
+            distance,
+            unit,
+            p1.distance_to(&p2),
+            self.calibration_page + 1
+        );
+
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+
+    /// Cancel the current calibration in progress
+    fn cancel_calibration(&mut self) {
+        if self.is_calibrating || self.calibration_dialog.is_visible() {
+            self.is_calibrating = false;
+            self.calibration_first_point = None;
+            self.area_measurement_points.clear();
+            self.calibration_dialog.hide();
+            self.update_calibration_dialog_texture();
+            println!("Scale calibration cancelled");
+
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
+    }
+
+    /// Update the calibration dialog texture for rendering
+    #[cfg(target_os = "macos")]
+    fn update_calibration_dialog_texture(&mut self) {
+        let Some(device) = &self.device else { return };
+
+        if !self.calibration_dialog.is_visible() {
+            self.calibration_dialog_texture = None;
+            return;
+        }
+
+        // Dialog dimensions (matches calibration_dialog.rs constants)
+        let width = 320_u32;
+        let height = 200_u32;
+
+        // Create pixel buffer (BGRA format)
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+        // Draw dialog elements
+        self.draw_calibration_dialog_elements(&mut pixels, width, height);
+
+        // Create Metal texture
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(width as u64);
+        texture_desc.set_height(height as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: width as u64,
+                height: height as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            pixels.as_ptr() as *const _,
+            (width * 4) as u64,
+        );
+
+        self.calibration_dialog_texture = Some(CalibrationDialogTexture {
+            texture,
+            width,
+            height,
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn update_calibration_dialog_texture(&mut self) {
+        // No-op on non-macOS platforms
+    }
+
+    /// Draw calibration dialog elements to pixel buffer
+    #[cfg(target_os = "macos")]
+    fn draw_calibration_dialog_elements(&self, pixels: &mut [u8], tex_width: u32, tex_height: u32) {
+        // Background (light gray)
+        let bg_color: [u8; 4] = [240, 240, 240, 255]; // BGRA - light gray
+        for y in 0..tex_height {
+            for x in 0..tex_width {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&bg_color);
+                }
+            }
+        }
+
+        // Border (darker gray)
+        let border_color: [u8; 4] = [100, 100, 100, 255]; // BGRA
+        for y in 0..tex_height {
+            for x in 0..tex_width {
+                if x < 2 || x >= tex_width - 2 || y < 2 || y >= tex_height - 2 {
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx..idx + 4].copy_from_slice(&border_color);
+                    }
+                }
+            }
+        }
+
+        // Title bar (blue)
+        let title_bar_color: [u8; 4] = [180, 120, 60, 255]; // BGRA - blue
+        for y in 2..28 {
+            for x in 2..tex_width - 2 {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&title_bar_color);
+                }
+            }
+        }
+
+        // Title text (white)
+        let title_color: [u8; 4] = [255, 255, 255, 255]; // BGRA - white
+        self.draw_text_to_pixels(pixels, tex_width, "Scale Calibration", 10, 8, &title_color);
+
+        // Instruction text (dark gray)
+        let text_color: [u8; 4] = [50, 50, 50, 255]; // BGRA - dark gray
+        self.draw_text_to_pixels(pixels, tex_width, "Enter known distance:", 10, 40, &text_color);
+
+        // Input field background (white)
+        let input_bg: [u8; 4] = [255, 255, 255, 255]; // BGRA - white
+        for y in 60..90 {
+            for x in 10..200 {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&input_bg);
+                }
+            }
+        }
+
+        // Input field border
+        let input_border: [u8; 4] = [150, 150, 150, 255]; // BGRA
+        for y in 60..90 {
+            for x in 10..200 {
+                if x < 12 || x >= 198 || y < 62 || y >= 88 {
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx..idx + 4].copy_from_slice(&input_border);
+                    }
+                }
+            }
+        }
+
+        // Display current input value
+        let input_text = self.calibration_dialog.distance_input();
+        if !input_text.is_empty() {
+            self.draw_text_to_pixels(pixels, tex_width, input_text, 16, 70, &text_color);
+        }
+
+        // Unit selector background
+        let unit_bg: [u8; 4] = [220, 220, 220, 255]; // BGRA - light gray
+        for y in 60..90 {
+            for x in 210..280 {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&unit_bg);
+                }
+            }
+        }
+
+        // Unit selector border
+        for y in 60..90 {
+            for x in 210..280 {
+                if x < 212 || x >= 278 || y < 62 || y >= 88 {
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx..idx + 4].copy_from_slice(&input_border);
+                    }
+                }
+            }
+        }
+
+        // Display current unit
+        let unit = self.calibration_dialog.selected_unit();
+        self.draw_text_to_pixels(pixels, tex_width, unit, 220, 70, &text_color);
+
+        // OK button
+        let button_bg: [u8; 4] = [200, 140, 80, 255]; // BGRA - blue
+        for y in 140..170 {
+            for x in 60..140 {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&button_bg);
+                }
+            }
+        }
+        self.draw_text_to_pixels(pixels, tex_width, "OK", 90, 150, &title_color);
+
+        // Cancel button
+        let cancel_bg: [u8; 4] = [100, 100, 100, 255]; // BGRA - gray
+        for y in 140..170 {
+            for x in 180..260 {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&cancel_bg);
+                }
+            }
+        }
+        self.draw_text_to_pixels(pixels, tex_width, "Cancel", 195, 150, &title_color);
+
+        // Help text
+        let help_color: [u8; 4] = [100, 100, 100, 255]; // BGRA - gray
+        self.draw_text_to_pixels(pixels, tex_width, "Tab to change unit", 10, 110, &help_color);
+    }
+
     /// Handle a click on a note annotation - shows the popup with note content
     fn handle_note_click(&mut self, screen_x: f32, screen_y: f32) {
         // Get current page
@@ -4463,6 +4832,7 @@ impl App {
             | ToolbarButton::CommentTool
             | ToolbarButton::MeasureTool
             | ToolbarButton::AreaMeasureTool
+            | ToolbarButton::CalibrateTool
             | ToolbarButton::FreedrawTool => {
                 self.toolbar.set_selected_tool(button);
                 self.text_selection_active = false;
@@ -5367,6 +5737,43 @@ impl App {
                         }
                     }
 
+                    // Render calibration dialog (if visible)
+                    if let Some(dialog_tex) = &self.calibration_dialog_texture {
+                        if self.calibration_dialog.is_visible() {
+                            let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                            // Dialog is centered in the viewport
+                            let dialog_x = ((drawable_width as f64 - dialog_tex.width as f64) / 2.0).max(0.0) as u64;
+                            let dialog_y = ((drawable_height as f64 - dialog_tex.height as f64) / 2.0).max(0.0) as u64;
+
+                            let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                            let src_size = metal::MTLSize {
+                                width: dialog_tex.width as u64,
+                                height: dialog_tex.height as u64,
+                                depth: 1,
+                            };
+                            let dest_origin = metal::MTLOrigin {
+                                x: dialog_x,
+                                y: dialog_y,
+                                z: 0,
+                            };
+
+                            blit_encoder.copy_from_texture(
+                                &dialog_tex.texture,
+                                0,
+                                0,
+                                src_origin,
+                                src_size,
+                                drawable.texture(),
+                                0,
+                                0,
+                                dest_origin,
+                            );
+
+                            blit_encoder.end_encoding();
+                        }
+                    }
+
                     command_buffer.present_drawable(drawable);
                     command_buffer.commit();
                 }
@@ -5678,6 +6085,35 @@ impl ApplicationHandler for App {
                                     if let Some(window) = &self.window {
                                         window.request_redraw();
                                     }
+                                } else if self.toolbar.selected_tool() == Some(ToolbarButton::CalibrateTool) {
+                                    // CalibrateTool: handle calibration clicks or dialog interaction
+                                    if self.calibration_dialog.is_visible() {
+                                        // Dialog is open - check for button clicks
+                                        if let Some(button) = self.calibration_dialog.hit_test_button(x, y) {
+                                            match button {
+                                                CalibrationDialogButton::Ok => {
+                                                    self.confirm_calibration();
+                                                }
+                                                CalibrationDialogButton::Cancel => {
+                                                    self.cancel_calibration();
+                                                }
+                                                CalibrationDialogButton::UnitCycle => {
+                                                    self.calibration_dialog.cycle_unit();
+                                                    self.update_calibration_dialog_texture();
+                                                    if let Some(window) = &self.window {
+                                                        window.request_redraw();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Dialog is not open - handle calibration point clicks
+                                        self.start_calibration(x, y);
+                                    }
+                                    // Request redraw
+                                    if let Some(window) = &self.window {
+                                        window.request_redraw();
+                                    }
                                 } else {
                                     // Check if note popup is visible and click is on close button
                                     if self.note_popup.is_visible() {
@@ -5793,6 +6229,49 @@ impl ApplicationHandler for App {
                         return;
                     }
 
+                    // If calibration dialog is visible, handle text input
+                    if self.calibration_dialog.is_visible() {
+                        match event.physical_key {
+                            PhysicalKey::Code(KeyCode::Escape) => {
+                                self.cancel_calibration();
+                            }
+                            PhysicalKey::Code(KeyCode::Backspace) => {
+                                self.calibration_dialog.backspace();
+                                self.update_calibration_dialog_texture();
+                                if let Some(window) = &self.window {
+                                    window.request_redraw();
+                                }
+                            }
+                            PhysicalKey::Code(KeyCode::Enter) => {
+                                // Confirm calibration on Enter
+                                self.confirm_calibration();
+                            }
+                            PhysicalKey::Code(KeyCode::Tab) => {
+                                // Cycle unit on Tab
+                                self.calibration_dialog.cycle_unit();
+                                self.update_calibration_dialog_texture();
+                                if let Some(window) = &self.window {
+                                    window.request_redraw();
+                                }
+                            }
+                            _ => {
+                                // Handle character input for distance
+                                if let Some(text) = &event.text {
+                                    for c in text.chars() {
+                                        if c.is_ascii_digit() || c == '.' {
+                                            self.calibration_dialog.append_char(c);
+                                        }
+                                    }
+                                    self.update_calibration_dialog_texture();
+                                    if let Some(window) = &self.window {
+                                        window.request_redraw();
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    }
+
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::KeyO) if is_cmd => {
                             self.open_file_dialog();
@@ -5825,6 +6304,12 @@ impl ApplicationHandler for App {
                             } else if self.is_area_measuring {
                                 // Cancel in-progress area measurement
                                 self.cancel_area_measurement();
+                                if let Some(window) = &self.window {
+                                    window.request_redraw();
+                                }
+                            } else if self.is_calibrating || self.calibration_dialog.is_visible() {
+                                // Cancel in-progress calibration
+                                self.cancel_calibration();
                                 if let Some(window) = &self.window {
                                     window.request_redraw();
                                 }

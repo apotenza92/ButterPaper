@@ -11654,3 +11654,45 @@ This completes Phase 3.4 area measurement tasks:
 - [x] Area measurement tool
 - [x] Click polygon points
 - [x] Show area calculation
+
+## 2026-01-21: Scale Calibration (Phase 3.4)
+
+### Summary:
+Implemented scale calibration feature allowing users to define a real-world scale for measurements by clicking two reference points and entering the known distance between them.
+
+### Files Changed:
+- `crates/ui/src/calibration_dialog.rs` (NEW) - Created calibration dialog UI component
+- `crates/ui/src/lib.rs` - Added calibration_dialog module export
+- `crates/ui/src/toolbar.rs` - Added CalibrateTool button with icon
+- `crates/app/src/main.rs` - Integrated calibration workflow with toolbar, mouse events, and keyboard input
+
+### Key Implementation Details:
+- **CalibrationDialog**: New UI component for entering distance after two-point selection
+  - Input field for distance value (digits and decimal point)
+  - Unit selector cycling through: m, ft, cm, mm, in, yd
+  - OK/Cancel buttons with hit testing
+  - 10 unit tests included
+- **CalibrateTool**: New toolbar button with two-circles-and-line icon
+- **Two-point calibration workflow**:
+  1. User selects CalibrateTool from toolbar
+  2. User clicks first reference point on PDF
+  3. User clicks second reference point
+  4. Calibration dialog appears asking for known distance
+  5. User enters distance and selects unit, presses OK
+  6. Scale is computed and applied to the page
+- **Keyboard handling**: Tab cycles units, Enter confirms, Escape cancels, digits/backspace for input
+- **Metal texture rendering**: Dialog rendered using same pattern as note popup
+
+### How to use:
+1. Click the calibration icon (two circles connected by dashed line) in the toolbar
+2. Click the first reference point on the PDF (e.g., one end of a known dimension)
+3. Click the second reference point (e.g., other end of the known dimension)
+4. Dialog appears - enter the known distance (e.g., "10")
+5. Press Tab to cycle through units (m, ft, cm, mm, in, yd)
+6. Press Enter or click OK to apply the scale
+7. All subsequent measurements will use this scale for real-world values
+
+This completes Phase 3.4 scale calibration tasks:
+- [x] Scale calibration
+- [x] Click known distance, enter real value
+- [x] Apply scale to page

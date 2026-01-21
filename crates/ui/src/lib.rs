@@ -2,6 +2,7 @@
 //!
 //! UI/viewport compositor with GPU-rendered retained scene graph.
 
+pub mod calibration_dialog;
 pub mod compositor;
 pub mod gpu;
 pub mod input;
