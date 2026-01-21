@@ -42,6 +42,9 @@ static MENU_SAVE_CLICKED: AtomicBool = AtomicBool::new(false);
 /// Global flag indicating "Save As..." menu item was clicked
 static MENU_SAVE_AS_CLICKED: AtomicBool = AtomicBool::new(false);
 
+/// Global flag indicating "Export as PDF..." menu item was clicked
+static MENU_EXPORT_PDF_CLICKED: AtomicBool = AtomicBool::new(false);
+
 /// Global flag indicating "Clear Menu" in Open Recent was clicked
 static MENU_CLEAR_RECENT_CLICKED: AtomicBool = AtomicBool::new(false);
 
@@ -69,6 +72,11 @@ pub fn poll_save_action() -> bool {
 /// Check if the "Save As..." menu action was triggered and reset the flag
 pub fn poll_save_as_action() -> bool {
     MENU_SAVE_AS_CLICKED.swap(false, Ordering::SeqCst)
+}
+
+/// Check if the "Export as PDF..." menu action was triggered and reset the flag
+pub fn poll_export_pdf_action() -> bool {
+    MENU_EXPORT_PDF_CLICKED.swap(false, Ordering::SeqCst)
 }
 
 /// Check if "Clear Menu" was clicked and reset the flag
@@ -188,6 +196,15 @@ unsafe fn register_menu_handler_class() -> *const Class {
     decl.add_method(
         sel!(saveDocumentAs:),
         save_document_as as extern "C" fn(&Object, Sel, id),
+    );
+
+    // Add the exportPdf: method
+    extern "C" fn export_pdf(_this: &Object, _cmd: Sel, _sender: id) {
+        MENU_EXPORT_PDF_CLICKED.store(true, Ordering::SeqCst);
+    }
+    decl.add_method(
+        sel!(exportPdf:),
+        export_pdf as extern "C" fn(&Object, Sel, id),
     );
 
     // Add the clearRecentFiles: method
@@ -586,8 +603,15 @@ unsafe fn add_file_menu(main_menu: id) {
 
     file_menu.addItem_(separator_item());
 
-    // Export as PDF... (placeholder, disabled)
-    file_menu.addItem_(menu_item_disabled("Export as PDF..."));
+    // Export as PDF... (Cmd+Shift+E)
+    // Uses our custom MenuHandler to set a flag that the event loop polls
+    file_menu.addItem_(menu_item_with_target(
+        "Export as PDF...",
+        sel!(exportPdf:),
+        "e",
+        NSEventModifierFlags::NSCommandKeyMask | NSEventModifierFlags::NSShiftKeyMask,
+        handler,
+    ));
 
     // Export as Images... (placeholder, disabled)
     file_menu.addItem_(menu_item_disabled("Export as Images..."));

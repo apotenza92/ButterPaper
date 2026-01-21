@@ -1391,6 +1391,45 @@ impl App {
         }
     }
 
+    /// Export the current document to a new PDF file
+    ///
+    /// Unlike "Save As...", this does not update the current document path.
+    /// This is useful for creating a copy of the PDF for sharing or archiving.
+    fn export_pdf(&mut self) {
+        let Some(doc) = &self.document else {
+            println!("No document to export");
+            return;
+        };
+
+        // Suggest "exported_" prefix to distinguish from original
+        let suggested_name = doc.path.file_stem()
+            .and_then(|n| n.to_str())
+            .map(|name| format!("{}_exported.pdf", name))
+            .unwrap_or_else(|| "exported.pdf".to_string());
+
+        // Show save dialog
+        let file = rfd::FileDialog::new()
+            .add_filter("PDF Files", &["pdf"])
+            .set_title("Export as PDF")
+            .set_file_name(&suggested_name)
+            .save_file();
+
+        if let Some(export_path) = file {
+            println!("Exporting PDF to: {}", export_path.display());
+
+            match doc.pdf.save(&export_path) {
+                Ok(()) => {
+                    println!("PDF exported successfully: {}", export_path.display());
+                    // Note: We don't update the document path since this is an export,
+                    // not a "Save As" operation. The user continues editing the original.
+                }
+                Err(e) => {
+                    eprintln!("Failed to export PDF: {}", e);
+                }
+            }
+        }
+    }
+
     fn update(&mut self) {
         let now = Instant::now();
         self.delta_time = now.duration_since(self.last_update);
@@ -1897,6 +1936,11 @@ impl ApplicationHandler for App {
         // Check for menu-triggered save as
         if menu::poll_save_as_action() {
             self.save_document_as();
+        }
+
+        // Check for menu-triggered export as PDF
+        if menu::poll_export_pdf_action() {
+            self.export_pdf();
         }
 
         // Check for recent file selection

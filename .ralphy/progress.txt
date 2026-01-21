@@ -10347,3 +10347,35 @@ The Save (Cmd+S) feature was already fully implemented and just needed to be mar
 - All 61 tests pass in pdf-editor package
 - Clippy passes (existing warnings from objc/cocoa crates unchanged)
 
+
+### Task: Implement Export as PDF... (Cmd+Shift+E) menu item
+
+**Status:** Complete
+
+**Changes:**
+- Added `MENU_EXPORT_PDF_CLICKED` atomic flag in menu.rs for tracking menu selection
+- Added `poll_export_pdf_action()` function to check and reset the export flag
+- Registered `exportPdf:` Objective-C selector in MenuHandler class
+- Replaced disabled "Export as PDF..." menu item with working version using Cmd+Shift+E shortcut
+- Added poll handler in main.rs `about_to_wait()` to trigger export on menu selection
+- Implemented `export_pdf()` method in App struct that:
+  - Shows save dialog with "PDF Files" filter
+  - Suggests filename with "_exported" suffix to distinguish from original
+  - Saves PDF to chosen path without updating document path (unlike Save As)
+  - Logs success/failure to console
+
+**Files Modified:**
+- crates/app/src/menu.rs (added atomic flag, poll function, Objective-C selector, menu item)
+- crates/app/src/main.rs (added poll handler and export_pdf implementation)
+- PRD.md (marked task as complete)
+
+**Technical Notes:**
+- Export differs from Save As in that it does not update the current document path
+- User continues editing the original file after export
+- Uses same underlying pdf.save() API as Save/Save As
+- Shortcut Cmd+Shift+E chosen to avoid conflicts with existing shortcuts
+
+**Testing:**
+- All unit tests pass (476 tests across all crates)
+- Code compiles successfully
+- Pre-existing clippy warnings from cocoa crate deprecations remain (not introduced by this change)
