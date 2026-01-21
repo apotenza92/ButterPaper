@@ -273,6 +273,18 @@ impl TextSearchManager {
         self.search_results.len()
     }
 
+    /// Get the selected result index (0-based)
+    pub fn selected_result_index(&self) -> Option<usize> {
+        self.selected_result_index
+    }
+
+    /// Get the current (selected) search result with page index and bounding box
+    pub fn get_current_result(&self) -> Option<(u16, TextBoundingBox)> {
+        self.selected_result_index.and_then(|idx| {
+            self.search_results.get(idx).map(|r| (r.page_index, r.get_highlight_box()))
+        })
+    }
+
     /// Get the current search query
     pub fn query(&self) -> Option<&str> {
         self.search_query.as_deref()
@@ -766,5 +778,56 @@ mod tests {
         // Should NOT contain words from first line
         assert!(!selected2.contains("First"));
         assert!(!selected2.contains("here"));
+    }
+
+    #[test]
+    fn test_selected_result_index() {
+        let mut search_mgr = create_test_manager();
+
+        // Before searching, should be None
+        assert!(search_mgr.selected_result_index().is_none());
+
+        // After searching, first result is selected
+        search_mgr.search("is");
+        assert_eq!(search_mgr.selected_result_index(), Some(0));
+
+        // After navigating to next, index should be 1
+        search_mgr.next_result();
+        assert_eq!(search_mgr.selected_result_index(), Some(1));
+
+        // After navigating back, index should be 0
+        search_mgr.previous_result();
+        assert_eq!(search_mgr.selected_result_index(), Some(0));
+
+        // After clearing search, should be None
+        search_mgr.clear_search();
+        assert!(search_mgr.selected_result_index().is_none());
+    }
+
+    #[test]
+    fn test_get_current_result() {
+        let mut search_mgr = create_test_manager();
+
+        // Before searching, should be None
+        assert!(search_mgr.get_current_result().is_none());
+
+        // After searching, should return current result
+        search_mgr.search("test");
+        let result = search_mgr.get_current_result();
+        assert!(result.is_some());
+
+        let (page_index, bbox) = result.unwrap();
+        assert_eq!(page_index, 0); // Result is on page 0
+        assert!(bbox.width > 0.0);
+        assert!(bbox.height > 0.0);
+    }
+
+    #[test]
+    fn test_get_current_result_no_results() {
+        let mut search_mgr = create_test_manager();
+
+        // Search for something that doesn't exist
+        search_mgr.search("nonexistent");
+        assert!(search_mgr.get_current_result().is_none());
     }
 }

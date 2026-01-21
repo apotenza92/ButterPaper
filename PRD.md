@@ -319,7 +319,7 @@ Wire up existing TextSelection component.
 Wire up existing TextSearchManager.
 
 - [x] Add search bar UI at top of window
-- [ ] Search input field
+- [x] Search input field
 - [ ] Match count display
 - [ ] Previous/Next buttons
 - [ ] Close button (Esc)

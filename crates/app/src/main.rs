@@ -11,6 +11,7 @@ use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::SceneGraph;
 use pdf_editor_ui::text_selection::TextSearchManager;
 use pdf_editor_ui::thumbnail::ThumbnailStrip;
+use pdf_editor_ui::search_bar::{SearchBar, SearchBarButton, SEARCH_BAR_HEIGHT};
 use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT, ZOOM_LEVELS};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -1165,6 +1166,13 @@ struct ThumbnailTexture {
     height: u32,
 }
 
+#[cfg(target_os = "macos")]
+struct SearchBarTexture {
+    texture: metal::Texture,
+    width: u32,
+    height: u32,
+}
+
 /// Width of the thumbnail strip sidebar
 const THUMBNAIL_STRIP_WIDTH: f32 = 136.0; // 120px thumbnail + 8px spacing * 2
 
@@ -1244,6 +1252,11 @@ struct App {
     last_click_pos: (f32, f32),
     /// Current cursor icon
     current_cursor: CursorIcon,
+    /// GPU-rendered search bar
+    search_bar: SearchBar,
+    /// Search bar texture for rendering
+    #[cfg(target_os = "macos")]
+    search_bar_texture: Option<SearchBarTexture>,
 }
 
 impl App {
@@ -1252,6 +1265,7 @@ impl App {
         let now = Instant::now();
         let input_handler = InputHandler::new(1200.0, 800.0);
         let toolbar = Toolbar::new(1200.0);
+        let search_bar = SearchBar::new(1200.0);
 
         // Create GPU texture cache for thumbnails (64MB VRAM limit)
         let gpu_texture_cache = Arc::new(GpuTextureCache::new(64 * 1024 * 1024));
@@ -1308,6 +1322,9 @@ impl App {
             click_count: 0,
             last_click_pos: (0.0, 0.0),
             current_cursor: CursorIcon::Default,
+            search_bar,
+            #[cfg(target_os = "macos")]
+            search_bar_texture: None,
         }
     }
 
@@ -2378,6 +2395,431 @@ impl App {
     #[cfg(not(target_os = "macos"))]
     fn update_thumbnail_texture(&mut self) {}
 
+    /// Update the search bar texture for rendering
+    #[cfg(target_os = "macos")]
+    fn update_search_bar_texture(&mut self) {
+        if !self.search_bar.is_visible() {
+            self.search_bar_texture = None;
+            return;
+        }
+
+        let Some(device) = &self.device else { return };
+        let window_size = self.window.as_ref().map(|w| w.inner_size()).unwrap_or_default();
+        let width = window_size.width;
+        let height = SEARCH_BAR_HEIGHT as u32;
+
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        // Create BGRA pixel buffer for search bar
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+        // Fill with search bar background color (dark gray, semi-transparent)
+        // BGRA format: 0x262626FA (38, 38, 38, 250)
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 4) as usize;
+                pixels[idx] = 38;      // B
+                pixels[idx + 1] = 38;  // G
+                pixels[idx + 2] = 38;  // R
+                pixels[idx + 3] = 250; // A (almost opaque)
+            }
+        }
+
+        // Draw bottom border (lighter line)
+        let border_y = height - 1;
+        for x in 0..width {
+            let idx = ((border_y * width + x) * 4) as usize;
+            pixels[idx] = 64;      // B
+            pixels[idx + 1] = 64;  // G
+            pixels[idx + 2] = 64;  // R
+            pixels[idx + 3] = 255; // A
+        }
+
+        // Draw search bar elements
+        self.draw_search_bar_elements(&mut pixels, width, height);
+
+        // Create Metal texture
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(width as u64);
+        texture_desc.set_height(height as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: width as u64,
+                height: height as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            pixels.as_ptr() as *const _,
+            (width * 4) as u64,
+        );
+
+        self.search_bar_texture = Some(SearchBarTexture {
+            texture,
+            width,
+            height,
+        });
+    }
+
+    /// Draw search bar elements onto the pixel buffer
+    #[cfg(target_os = "macos")]
+    fn draw_search_bar_elements(&self, pixels: &mut [u8], tex_width: u32, tex_height: u32) {
+        let padding: u32 = 8;
+        let input_height: u32 = 24;
+        let input_width: u32 = 250;
+        let button_size: u32 = 24;
+
+        let input_y = (tex_height - input_height) / 2;
+
+        // Draw search icon (magnifying glass circle + handle)
+        let icon_x = padding;
+        let icon_y = (tex_height - 16) / 2;
+        self.draw_search_icon(pixels, tex_width, icon_x, icon_y);
+
+        // Draw input field background
+        let input_x = padding + 20;
+        self.draw_input_field(pixels, tex_width, input_x, input_y, input_width, input_height);
+
+        // Draw search text
+        self.draw_search_text(pixels, tex_width, input_x + 4, input_y);
+
+        // Draw match count
+        let match_x = input_x + input_width + padding;
+        self.draw_match_count(pixels, tex_width, match_x, input_y);
+
+        // Draw navigation buttons (prev/next)
+        let nav_x = match_x + 60;
+        self.draw_search_nav_button(pixels, tex_width, nav_x, (tex_height - button_size) / 2, button_size, true); // prev
+        self.draw_search_nav_button(pixels, tex_width, nav_x + button_size + 4, (tex_height - button_size) / 2, button_size, false); // next
+
+        // Draw close button
+        let close_x = nav_x + (button_size + 4) * 2 + padding;
+        self.draw_close_button(pixels, tex_width, close_x, (tex_height - button_size) / 2, button_size);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn draw_search_icon(&self, pixels: &mut [u8], tex_width: u32, x: u32, y: u32) {
+        // Draw a simple magnifying glass icon
+        let color = [128, 128, 128, 255]; // Gray (BGRA)
+
+        // Circle outline (simplified as filled circle with hole)
+        for dy in 0..10 {
+            for dx in 0..10 {
+                let dist_sq = (dx as i32 - 4) * (dx as i32 - 4) + (dy as i32 - 4) * (dy as i32 - 4);
+                if dist_sq >= 9 && dist_sq <= 25 {
+                    let px = x + dx;
+                    let py = y + dy;
+                    if px < tex_width && py < tex_width {
+                        let idx = ((py * tex_width + px) * 4) as usize;
+                        if idx + 3 < pixels.len() {
+                            pixels[idx] = color[0];
+                            pixels[idx + 1] = color[1];
+                            pixels[idx + 2] = color[2];
+                            pixels[idx + 3] = color[3];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Handle (diagonal line)
+        for i in 0..5 {
+            let px = x + 10 + i;
+            let py = y + 10 + i;
+            if px < tex_width && py < tex_width {
+                let idx = ((py * tex_width + px) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx] = color[0];
+                    pixels[idx + 1] = color[1];
+                    pixels[idx + 2] = color[2];
+                    pixels[idx + 3] = color[3];
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn draw_input_field(&self, pixels: &mut [u8], tex_width: u32, x: u32, y: u32, width: u32, height: u32) {
+        // Input field background (dark)
+        let bg_color = [26, 26, 26, 255]; // BGRA dark gray
+        let border_color = if self.search_bar.is_input_focused() {
+            [204, 128, 77, 255] // Blue highlight when focused (BGRA)
+        } else {
+            [89, 89, 89, 255] // Gray border (BGRA)
+        };
+
+        for dy in 0..height {
+            for dx in 0..width {
+                let px = x + dx;
+                let py = y + dy;
+                if px < tex_width {
+                    let idx = ((py * tex_width + px) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        // Check if on border
+                        let on_border = dx == 0 || dx == width - 1 || dy == 0 || dy == height - 1;
+                        let color = if on_border { border_color } else { bg_color };
+                        pixels[idx] = color[0];
+                        pixels[idx + 1] = color[1];
+                        pixels[idx + 2] = color[2];
+                        pixels[idx + 3] = color[3];
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn draw_search_text(&self, pixels: &mut [u8], tex_width: u32, x: u32, y: u32) {
+        let text = self.search_bar.search_text();
+        let color = if text.is_empty() {
+            [128, 128, 128, 255] // Gray for placeholder (BGRA)
+        } else {
+            [230, 230, 230, 255] // White for text (BGRA)
+        };
+
+        let display_text = if text.is_empty() {
+            "Search..."
+        } else {
+            text
+        };
+
+        // Simple 3x5 bitmap font rendering
+        let mut cursor_x = x;
+        let text_y = y + 5; // Center vertically
+
+        for c in display_text.chars().take(30) { // Limit to 30 chars
+            self.draw_char(pixels, tex_width, cursor_x, text_y, c, color);
+            cursor_x += 6; // 5 pixels + 1 spacing
+        }
+
+        // Draw cursor if focused
+        if self.search_bar.is_input_focused() {
+            let cursor_x = x + (text.len() as u32).min(30) * 6;
+            let cursor_color = [230, 230, 230, 255]; // White cursor
+            for dy in 0..14 {
+                let py = y + 3 + dy;
+                let idx = ((py * tex_width + cursor_x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx] = cursor_color[0];
+                    pixels[idx + 1] = cursor_color[1];
+                    pixels[idx + 2] = cursor_color[2];
+                    pixels[idx + 3] = cursor_color[3];
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn draw_match_count(&self, pixels: &mut [u8], tex_width: u32, x: u32, y: u32) {
+        let current = self.search_bar.current_match();
+        let total = self.search_bar.total_matches();
+
+        let text = if total > 0 {
+            format!("{}/{}", current, total)
+        } else if !self.search_bar.search_text().is_empty() {
+            "0/0".to_string()
+        } else {
+            return; // Don't show anything if no search
+        };
+
+        let color = [180, 180, 180, 255]; // Light gray (BGRA)
+        let text_y = y + 5;
+        let mut cursor_x = x;
+
+        for c in text.chars() {
+            self.draw_char(pixels, tex_width, cursor_x, text_y, c, color);
+            cursor_x += 6;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn draw_search_nav_button(&self, pixels: &mut [u8], tex_width: u32, x: u32, y: u32, size: u32, is_prev: bool) {
+        // Button background
+        let bg_color = [64, 64, 64, 255]; // BGRA
+        let icon_color = [230, 230, 230, 255]; // BGRA
+
+        // Draw background
+        for dy in 0..size {
+            for dx in 0..size {
+                let px = x + dx;
+                let py = y + dy;
+                if px < tex_width {
+                    let idx = ((py * tex_width + px) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx] = bg_color[0];
+                        pixels[idx + 1] = bg_color[1];
+                        pixels[idx + 2] = bg_color[2];
+                        pixels[idx + 3] = bg_color[3];
+                    }
+                }
+            }
+        }
+
+        // Draw triangle icon (up for prev, down for next)
+        let center_x = x + size / 2;
+        let center_y = y + size / 2;
+        let half_size = (size / 4) as i32;
+
+        for i in 0..=half_size {
+            let row_width = i;
+            for w in 0..=row_width {
+                let px1 = center_x as i32 - w / 2;
+                let px2 = center_x as i32 + w / 2;
+                let py = if is_prev {
+                    center_y as i32 - half_size / 2 + i
+                } else {
+                    center_y as i32 + half_size / 2 - i
+                };
+
+                for px in [px1, px2] {
+                    if py >= 0 && px >= 0 && (px as u32) < tex_width {
+                        let idx = ((py as u32 * tex_width + px as u32) * 4) as usize;
+                        if idx + 3 < pixels.len() {
+                            pixels[idx] = icon_color[0];
+                            pixels[idx + 1] = icon_color[1];
+                            pixels[idx + 2] = icon_color[2];
+                            pixels[idx + 3] = icon_color[3];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn draw_close_button(&self, pixels: &mut [u8], tex_width: u32, x: u32, y: u32, size: u32) {
+        // Button background
+        let bg_color = [64, 64, 64, 255]; // BGRA
+        let icon_color = [230, 230, 230, 255]; // BGRA
+
+        // Draw background
+        for dy in 0..size {
+            for dx in 0..size {
+                let px = x + dx;
+                let py = y + dy;
+                if px < tex_width {
+                    let idx = ((py * tex_width + px) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx] = bg_color[0];
+                        pixels[idx + 1] = bg_color[1];
+                        pixels[idx + 2] = bg_color[2];
+                        pixels[idx + 3] = bg_color[3];
+                    }
+                }
+            }
+        }
+
+        // Draw X icon
+        let margin = size / 4;
+        for i in 0..(size - margin * 2) {
+            // First diagonal
+            let px1 = x + margin + i;
+            let py1 = y + margin + i;
+            // Second diagonal
+            let px2 = x + size - margin - 1 - i;
+            let py2 = y + margin + i;
+
+            for (px, py) in [(px1, py1), (px2, py2)] {
+                if px < tex_width {
+                    let idx = ((py * tex_width + px) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx] = icon_color[0];
+                        pixels[idx + 1] = icon_color[1];
+                        pixels[idx + 2] = icon_color[2];
+                        pixels[idx + 3] = icon_color[3];
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn draw_char(&self, pixels: &mut [u8], tex_width: u32, x: u32, y: u32, c: char, color: [u8; 4]) {
+        // Simple 3x5 bitmap font
+        let pattern: [u8; 5] = match c {
+            '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+            '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+            '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+            '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+            '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+            '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+            '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+            '7' => [0b111, 0b001, 0b001, 0b001, 0b001],
+            '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+            '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+            '/' => [0b001, 0b001, 0b010, 0b100, 0b100],
+            ' ' => [0b000, 0b000, 0b000, 0b000, 0b000],
+            '.' => [0b000, 0b000, 0b000, 0b000, 0b010],
+            'a' | 'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
+            'b' | 'B' => [0b110, 0b101, 0b110, 0b101, 0b110],
+            'c' | 'C' => [0b011, 0b100, 0b100, 0b100, 0b011],
+            'd' | 'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
+            'e' | 'E' => [0b111, 0b100, 0b110, 0b100, 0b111],
+            'f' | 'F' => [0b111, 0b100, 0b110, 0b100, 0b100],
+            'g' | 'G' => [0b011, 0b100, 0b101, 0b101, 0b011],
+            'h' | 'H' => [0b101, 0b101, 0b111, 0b101, 0b101],
+            'i' | 'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
+            'j' | 'J' => [0b001, 0b001, 0b001, 0b101, 0b010],
+            'k' | 'K' => [0b101, 0b101, 0b110, 0b101, 0b101],
+            'l' | 'L' => [0b100, 0b100, 0b100, 0b100, 0b111],
+            'm' | 'M' => [0b101, 0b111, 0b101, 0b101, 0b101],
+            'n' | 'N' => [0b101, 0b111, 0b111, 0b101, 0b101],
+            'o' | 'O' => [0b010, 0b101, 0b101, 0b101, 0b010],
+            'p' | 'P' => [0b110, 0b101, 0b110, 0b100, 0b100],
+            'q' | 'Q' => [0b010, 0b101, 0b101, 0b111, 0b011],
+            'r' | 'R' => [0b110, 0b101, 0b110, 0b101, 0b101],
+            's' | 'S' => [0b011, 0b100, 0b010, 0b001, 0b110],
+            't' | 'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
+            'u' | 'U' => [0b101, 0b101, 0b101, 0b101, 0b010],
+            'v' | 'V' => [0b101, 0b101, 0b101, 0b101, 0b010],
+            'w' | 'W' => [0b101, 0b101, 0b101, 0b111, 0b101],
+            'x' | 'X' => [0b101, 0b101, 0b010, 0b101, 0b101],
+            'y' | 'Y' => [0b101, 0b101, 0b010, 0b010, 0b010],
+            'z' | 'Z' => [0b111, 0b001, 0b010, 0b100, 0b111],
+            _ => [0b000, 0b000, 0b000, 0b000, 0b000],
+        };
+
+        for (row_idx, &row) in pattern.iter().enumerate() {
+            for col in 0..3 {
+                let bit = (row >> (2 - col)) & 1;
+                if bit == 1 {
+                    let px = x + col as u32 * 2; // Scale 2x
+                    let py = y + row_idx as u32 * 2; // Scale 2x
+
+                    // Draw 2x2 pixel
+                    for dy in 0..2 {
+                        for dx in 0..2 {
+                            if px + dx < tex_width {
+                                let idx = (((py + dy) * tex_width + px + dx) * 4) as usize;
+                                if idx + 3 < pixels.len() {
+                                    pixels[idx] = color[0];
+                                    pixels[idx + 1] = color[1];
+                                    pixels[idx + 2] = color[2];
+                                    pixels[idx + 3] = color[3];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn update_search_bar_texture(&mut self) {}
+
     fn next_page(&mut self) {
         if let Some(doc) = &mut self.document {
             if doc.current_page + 1 < doc.page_count {
@@ -2448,6 +2890,92 @@ impl App {
             }
         } else {
             println!("Text selection not available (no document loaded)");
+        }
+    }
+
+    /// Perform search based on current search bar text
+    fn perform_search(&mut self) {
+        let query = self.search_bar.search_text().to_string();
+
+        if query.is_empty() {
+            // Clear search results
+            if let Some(ref mut search_manager) = self.text_search_manager {
+                search_manager.clear_search();
+            }
+            self.search_bar.set_match_info(0, 0);
+            return;
+        }
+
+        if let Some(ref mut search_manager) = self.text_search_manager {
+            let total_matches = search_manager.search(&query);
+            let current_match = if total_matches > 0 { 1 } else { 0 };
+            self.search_bar.set_match_info(current_match, total_matches);
+
+            // Scroll to first result if found
+            if total_matches > 0 {
+                if let Some((page_index, _bbox)) = search_manager.get_current_result() {
+                    // Navigate to the page containing the first match
+                    if let Some(doc) = &mut self.document {
+                        if page_index != doc.current_page {
+                            doc.current_page = page_index;
+                            self.thumbnail_strip.set_current_page(page_index);
+                            self.render_current_page();
+                            self.update_page_info_overlay();
+                            self.update_thumbnail_texture();
+                        }
+                    }
+                }
+            }
+
+            println!("Search '{}': {} matches found", query, total_matches);
+        }
+    }
+
+    /// Navigate to the next search result
+    fn search_next_result(&mut self) {
+        if let Some(ref mut search_manager) = self.text_search_manager {
+            if let Some((page_index, _bbox)) = search_manager.next_result() {
+                // Update match info in search bar
+                let current = search_manager.selected_result_index().map(|i| i + 1).unwrap_or(0);
+                let total = search_manager.result_count();
+                self.search_bar.set_match_info(current, total);
+                self.update_search_bar_texture();
+
+                // Navigate to the page containing the result
+                if let Some(doc) = &mut self.document {
+                    if page_index != doc.current_page {
+                        doc.current_page = page_index;
+                        self.thumbnail_strip.set_current_page(page_index);
+                        self.render_current_page();
+                        self.update_page_info_overlay();
+                        self.update_thumbnail_texture();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Navigate to the previous search result
+    fn search_previous_result(&mut self) {
+        if let Some(ref mut search_manager) = self.text_search_manager {
+            if let Some((page_index, _bbox)) = search_manager.previous_result() {
+                // Update match info in search bar
+                let current = search_manager.selected_result_index().map(|i| i + 1).unwrap_or(0);
+                let total = search_manager.result_count();
+                self.search_bar.set_match_info(current, total);
+                self.update_search_bar_texture();
+
+                // Navigate to the page containing the result
+                if let Some(doc) = &mut self.document {
+                    if page_index != doc.current_page {
+                        doc.current_page = page_index;
+                        self.thumbnail_strip.set_current_page(page_index);
+                        self.render_current_page();
+                        self.update_page_info_overlay();
+                        self.update_thumbnail_texture();
+                    }
+                }
+            }
         }
     }
 
@@ -3112,20 +3640,59 @@ impl App {
                         blit_encoder.end_encoding();
                     }
 
-                    // Render thumbnail strip on the left side (below toolbar)
-                    if let Some(thumb_tex) = &self.thumbnail_texture {
+                    // Render search bar below toolbar (if visible)
+                    if let Some(search_bar_tex) = &self.search_bar_texture {
                         let blit_encoder = command_buffer.new_blit_command_encoder();
 
                         let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
                         let src_size = metal::MTLSize {
-                            width: thumb_tex.width as u64,
-                            height: thumb_tex.height.min(drawable_height.saturating_sub(TOOLBAR_HEIGHT as u64) as u32) as u64,
+                            width: search_bar_tex.width.min(drawable_width as u32) as u64,
+                            height: search_bar_tex.height as u64,
                             depth: 1,
                         };
                         // Position below toolbar
                         let dest_origin = metal::MTLOrigin {
                             x: 0,
                             y: TOOLBAR_HEIGHT as u64,
+                            z: 0,
+                        };
+
+                        blit_encoder.copy_from_texture(
+                            &search_bar_tex.texture,
+                            0,
+                            0,
+                            src_origin,
+                            src_size,
+                            drawable.texture(),
+                            0,
+                            0,
+                            dest_origin,
+                        );
+
+                        blit_encoder.end_encoding();
+                    }
+
+                    // Render thumbnail strip on the left side (below toolbar and search bar)
+                    if let Some(thumb_tex) = &self.thumbnail_texture {
+                        let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                        // Calculate vertical offset (toolbar + search bar if visible)
+                        let vertical_offset = if self.search_bar.is_visible() {
+                            TOOLBAR_HEIGHT + SEARCH_BAR_HEIGHT
+                        } else {
+                            TOOLBAR_HEIGHT
+                        };
+
+                        let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                        let src_size = metal::MTLSize {
+                            width: thumb_tex.width as u64,
+                            height: thumb_tex.height.min(drawable_height.saturating_sub(vertical_offset as u64) as u32) as u64,
+                            depth: 1,
+                        };
+                        // Position below toolbar (and search bar if visible)
+                        let dest_origin = metal::MTLOrigin {
+                            x: 0,
+                            y: vertical_offset as u64,
                             z: 0,
                         };
 
@@ -3208,8 +3775,10 @@ impl ApplicationHandler for App {
                 self.input_handler
                     .set_viewport_dimensions(size.width as f32, size.height as f32);
                 self.toolbar.set_viewport_width(size.width as f32);
+                self.search_bar.set_viewport_width(size.width as f32);
                 self.thumbnail_strip.set_viewport_size(size.width as f32, size.height as f32);
                 self.update_toolbar_texture();
+                self.update_search_bar_texture();
                 self.update_thumbnail_texture();
 
                 if self.document.is_some() {
@@ -3289,16 +3858,48 @@ impl ApplicationHandler for App {
                                 self.toolbar.close_zoom_dropdown();
                                 self.handle_toolbar_button(button);
                             }
+                            // Check for search bar button click (if visible)
+                            else if self.search_bar.is_visible() && y > TOOLBAR_HEIGHT && y < TOOLBAR_HEIGHT + SEARCH_BAR_HEIGHT {
+                                // Adjust y for search bar coordinate space
+                                let search_y = y - TOOLBAR_HEIGHT;
+                                if let Some(button) = self.search_bar.hit_test(x, search_y) {
+                                    match button {
+                                        SearchBarButton::PreviousMatch => {
+                                            self.search_previous_result();
+                                        }
+                                        SearchBarButton::NextMatch => {
+                                            self.search_next_result();
+                                        }
+                                        SearchBarButton::Close => {
+                                            self.search_bar.set_visible(false);
+                                            self.update_search_bar_texture();
+                                        }
+                                    }
+                                } else if self.search_bar.hit_test_input(x, search_y) {
+                                    // Clicked in input field - ensure it's focused
+                                    self.search_bar.set_input_focused(true);
+                                    self.update_search_bar_texture();
+                                }
+                            }
                             // Check for thumbnail strip click
-                            else if self.show_thumbnails && x < THUMBNAIL_STRIP_WIDTH && y > TOOLBAR_HEIGHT {
-                                self.toolbar.close_zoom_dropdown();
-                                // Calculate which thumbnail was clicked
-                                let thumbnail_y = y - TOOLBAR_HEIGHT;
-                                let thumb_height = 160.0 + 8.0; // thumbnail height + spacing
-                                let page_index = (thumbnail_y / thumb_height) as u16;
-                                if let Some(doc) = &self.document {
-                                    if page_index < doc.page_count {
-                                        self.goto_page(page_index);
+                            else if self.show_thumbnails && x < THUMBNAIL_STRIP_WIDTH {
+                                // Calculate the top offset for thumbnails (toolbar + search bar if visible)
+                                let top_offset = if self.search_bar.is_visible() {
+                                    TOOLBAR_HEIGHT + SEARCH_BAR_HEIGHT
+                                } else {
+                                    TOOLBAR_HEIGHT
+                                };
+
+                                if y > top_offset {
+                                    self.toolbar.close_zoom_dropdown();
+                                    // Calculate which thumbnail was clicked
+                                    let thumbnail_y = y - top_offset;
+                                    let thumb_height = 160.0 + 8.0; // thumbnail height + spacing
+                                    let page_index = (thumbnail_y / thumb_height) as u16;
+                                    if let Some(doc) = &self.document {
+                                        if page_index < doc.page_count {
+                                            self.goto_page(page_index);
+                                        }
                                     }
                                 }
                             }
@@ -3406,10 +4007,70 @@ impl ApplicationHandler for App {
 
                 if event.state == ElementState::Pressed {
                     let is_cmd = self.modifiers.super_key();
+                    let is_shift = self.modifiers.shift_key();
+
+                    // If search bar is visible and focused, handle text input
+                    if self.search_bar.is_visible() && self.search_bar.is_input_focused() {
+                        match event.physical_key {
+                            PhysicalKey::Code(KeyCode::Escape) => {
+                                self.search_bar.set_visible(false);
+                                self.update_search_bar_texture();
+                            }
+                            PhysicalKey::Code(KeyCode::Backspace) => {
+                                self.search_bar.backspace();
+                                self.perform_search();
+                                self.update_search_bar_texture();
+                            }
+                            PhysicalKey::Code(KeyCode::Enter) => {
+                                // Navigate to next match on Enter
+                                self.search_next_result();
+                            }
+                            PhysicalKey::Code(KeyCode::F3) if is_shift => {
+                                self.search_previous_result();
+                            }
+                            PhysicalKey::Code(KeyCode::F3) => {
+                                self.search_next_result();
+                            }
+                            _ => {
+                                // Handle character input from logical key
+                                if let Some(text) = &event.text {
+                                    for c in text.chars() {
+                                        if !c.is_control() {
+                                            self.search_bar.append_char(c);
+                                        }
+                                    }
+                                    self.perform_search();
+                                    self.update_search_bar_texture();
+                                }
+                            }
+                        }
+                        return;
+                    }
 
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::KeyO) if is_cmd => {
                             self.open_file_dialog();
+                        }
+                        PhysicalKey::Code(KeyCode::KeyF) if is_cmd => {
+                            // Toggle search bar with Cmd+F
+                            self.search_bar.toggle_visible();
+                            if self.search_bar.is_visible() {
+                                self.search_bar.set_input_focused(true);
+                            }
+                            self.update_search_bar_texture();
+                        }
+                        PhysicalKey::Code(KeyCode::Escape) => {
+                            // Close search bar with Escape
+                            if self.search_bar.is_visible() {
+                                self.search_bar.set_visible(false);
+                                self.update_search_bar_texture();
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F3) if is_shift => {
+                            self.search_previous_result();
+                        }
+                        PhysicalKey::Code(KeyCode::F3) => {
+                            self.search_next_result();
                         }
                         PhysicalKey::Code(KeyCode::Equal)
                         | PhysicalKey::Code(KeyCode::NumpadAdd) => {

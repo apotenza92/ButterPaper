@@ -11046,3 +11046,42 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 **Tests:** 25 tests passing
 **Linting:** clippy passes with no warnings
 
+
+### Task: Wire up search input field (Phase 3.2)
+
+**Status:** Complete
+
+**Changes:**
+- Added `SearchBar` component to main application
+- Added `search_bar_texture` for GPU rendering of search bar
+- Implemented keyboard handling for search:
+  - Cmd+F toggles search bar visibility
+  - Escape closes search bar
+  - Character input updates search text
+  - Backspace removes last character
+  - Enter navigates to next result
+  - F3/Shift+F3 for next/previous result navigation
+- Created `update_search_bar_texture()` function for rendering:
+  - Search icon (magnifying glass)
+  - Search input field with text rendering
+  - Match count display
+  - Previous/Next navigation buttons
+  - Close button
+- Implemented `perform_search()` to execute search via TextSearchManager
+- Implemented `search_next_result()` and `search_previous_result()` for navigation
+- Added mouse click handling for search bar buttons
+- Updated thumbnail strip rendering to account for search bar height
+- Added new methods to `TextSearchManager`:
+  - `selected_result_index()` - get current result index
+  - `get_current_result()` - get current result with page and bounding box
+- Added tests for new TextSearchManager methods
+
+**Files Modified:**
+- crates/app/src/main.rs - Added SearchBar integration, rendering, and keyboard handling
+- crates/ui/src/text_selection.rs - Added selected_result_index() and get_current_result() methods with tests
+- PRD.md - Marked "Search input field" task as complete
+
+**Test Results:**
+- All 188 tests pass
+- Clippy linting passes (only pre-existing warnings from objc crate macros)
+
