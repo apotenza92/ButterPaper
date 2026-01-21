@@ -9,6 +9,7 @@ pub mod loader;
 pub mod manipulation;
 pub mod measurement;
 pub mod page_switch;
+pub mod persistence;
 pub mod preview;
 pub mod snapping;
 
@@ -30,5 +31,9 @@ pub use measurement::{
     ScaleSystem, ScaleSystemId, ScaleType,
 };
 pub use page_switch::{PageSwitchResult, PageSwitcher};
+pub use persistence::{
+    delete_metadata, load_metadata, metadata_exists, metadata_path, save_metadata,
+    PersistenceError, PersistenceResult,
+};
 pub use preview::{AsyncPreviewRenderer, PreviewRenderer, PreviewHandle, PreviewResult};
 pub use snapping::{SnapConfig, SnapEngine, SnapTarget, SnapType};

@@ -4996,3 +4996,223 @@ All compilation warnings resolved:
 The next task to implement is:
 - **Store scale in document metadata**: Persist scale systems with document for recall on reload
 
+
+### Task: Store scale in document metadata
+
+**Status:** Complete
+
+**Changes:**
+
+Implemented comprehensive scale system persistence for storing measurement scale systems with document metadata, enabling scales to be saved and recalled on document reload.
+
+#### 1. Added Serialization Support
+
+**Updated Dependencies** (`crates/core/Cargo.toml`):
+- Added `serde` with derive feature for serialization support
+- Added `serde_json` for JSON serialization/deserialization
+- Updated `uuid` to include serde feature for UUID serialization
+
+**Added Serialization Derives**:
+- `PageCoordinate` in `annotation.rs` - now serializable for scale point storage
+- `ScaleType` in `measurement.rs` - serializes all scale types (Manual, TwoPoint, OCRDetected)
+- `ScaleSystem` in `measurement.rs` - full scale system serialization
+- `DocumentMetadata` in `document.rs` - enables metadata persistence
+
+#### 2. Enhanced DocumentMetadata Structure
+
+**New Fields** (`crates/core/src/document.rs`):
+```rust
+pub struct DocumentMetadata {
+    // ... existing fields ...
+    
+    /// Scale systems for measurements (per-page)
+    #[serde(default)]
+    pub scale_systems: Vec<ScaleSystem>,
+    
+    /// Default scale system per page (page_index -> scale_system_id)
+    #[serde(default)]
+    pub default_scales: HashMap<u16, ScaleSystemId>,
+}
+```
+
+**New Methods**:
+- `add_scale_system()` - Add a scale system and set as default if none exists
+- `get_scales_for_page()` - Get all scale systems for a specific page
+- `get_scale_by_id()` - Look up scale system by ID
+- `get_default_scale()` - Get the default scale for a page
+- `set_default_scale()` - Set which scale is default for a page
+- `remove_scale_system()` - Remove a scale and clear references
+- `metadata_mut()` - Get mutable access to metadata from Document
+
+#### 3. Created Persistence Module
+
+**New File** (`crates/core/src/persistence.rs`):
+
+Provides utilities for saving/loading document metadata as JSON sidecar files:
+
+**Core Functions**:
+- `metadata_path()` - Generate sidecar file path (appends `.pdf-editor-metadata.json`)
+- `save_metadata()` - Serialize and atomically write metadata to JSON file
+- `load_metadata()` - Deserialize metadata from JSON sidecar file
+- `metadata_exists()` - Check if metadata file exists
+- `delete_metadata()` - Remove metadata file
+
+**Features**:
+- Atomic writes using temporary file + rename for crash safety
+- Pretty-printed JSON for human readability
+- Returns `None` if no metadata file exists (not an error)
+- Proper error handling with `PersistenceError` type
+
+**Example Usage**:
+```rust
+// Save scale systems with document
+save_metadata(&document_metadata)?;
+
+// Load on document open
+if let Some(metadata) = load_metadata(&pdf_path)? {
+    // Restore scale systems
+    document.metadata_mut().scale_systems = metadata.scale_systems;
+}
+```
+
+#### 4. Integrated with Document Loader
+
+**Updated** (`crates/core/src/loader.rs`):
+- Modified `load_metadata()` to automatically load persisted scale systems
+- After extracting PDF metadata, attempts to load sidecar file
+- Merges persisted scale systems into document metadata
+- Gracefully handles missing sidecar files (new documents)
+
+#### 5. Fixed Area Measurement Bug
+
+**Updated** (`crates/core/src/measurement.rs`):
+- Fixed `compute_value()` to properly handle area measurements
+- Area values now correctly apply scale squared (ratio²)
+- Distance and radius use linear scale conversion
+- Angles remain unitless (degrees)
+
+**Before**: Area incorrectly used linear scale (72² points = 72 inches²)
+**After**: Area correctly uses squared scale (72² points = 1 inch²)
+
+#### 6. Comprehensive Test Coverage
+
+**Document Metadata Tests** (`crates/core/src/document.rs`):
+- `test_document_metadata_add_scale_system()` - Adding scales
+- `test_document_metadata_get_scales_for_page()` - Filtering by page
+- `test_document_metadata_set_default_scale()` - Default scale management
+- `test_document_metadata_remove_scale_system()` - Scale removal
+- `test_document_metadata_serialization()` - Round-trip JSON serialization
+
+**Persistence Tests** (`crates/core/src/persistence.rs`):
+- `test_metadata_path()` - Sidecar file path generation
+- `test_save_and_load_metadata()` - Basic save/load round-trip
+- `test_metadata_exists()` - File existence checking
+- `test_load_nonexistent_metadata()` - Handles missing files gracefully
+- `test_delete_nonexistent_metadata()` - Safe deletion
+- `test_roundtrip_scale_systems()` - Multiple scales persistence
+
+All tests use unique temp file paths to prevent test interference.
+
+#### 7. Updated All Test Fixtures
+
+Fixed all test helper functions to include new required fields:
+- `document.rs::test_metadata()`
+- `loader.rs` (inline metadata creation)
+- `page_switch.rs::test_document()`
+- `preview.rs::test_document()`
+
+### File Structure
+
+**New Files**:
+- `crates/core/src/persistence.rs` (241 lines) - Metadata persistence utilities
+
+**Modified Files**:
+- `crates/core/Cargo.toml` - Added serde dependencies
+- `crates/core/src/lib.rs` - Exported persistence module
+- `crates/core/src/annotation.rs` - Added Serialize/Deserialize to PageCoordinate
+- `crates/core/src/measurement.rs` - Added serialization, fixed area computation
+- `crates/core/src/document.rs` - Added scale fields and management methods
+- `crates/core/src/loader.rs` - Integrated metadata loading
+- `crates/core/src/page_switch.rs` - Updated test fixtures
+- `crates/core/src/preview.rs` - Updated test fixtures
+
+### Implementation Details
+
+#### Sidecar File Format
+
+Metadata is stored as JSON alongside the PDF:
+```
+document.pdf                           # Original PDF
+document.pdf.pdf-editor-metadata.json  # Metadata sidecar
+```
+
+**Example JSON Structure**:
+```json
+{
+  "title": "Floor Plan",
+  "page_count": 5,
+  "scale_systems": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "page_index": 0,
+      "scale_type": {
+        "TwoPoint": {
+          "p1": { "x": 100.0, "y": 100.0 },
+          "p2": { "x": 200.0, "y": 100.0 },
+          "distance": 10.0
+        }
+      },
+      "unit": "ft",
+      "label": "First Floor Scale"
+    }
+  ],
+  "default_scales": {
+    "0": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}
+```
+
+#### Atomic Write Strategy
+
+Uses temporary file + rename for crash safety:
+1. Serialize metadata to JSON string
+2. Write to `.tmp` file
+3. Rename to final `.json` file (atomic operation)
+
+This ensures metadata is never corrupted even if process crashes during save.
+
+#### Integration with Measurement Collection
+
+The `MeasurementCollection` in memory remains the source of truth during editing. Scale systems are:
+1. **Loaded**: Restored from `DocumentMetadata` on document open
+2. **Modified**: Updated in-memory during editing session
+3. **Saved**: Written back to metadata on document save/close
+
+Future work will integrate with actual save operations to persist scales when user saves the document.
+
+### Verification
+
+**Linting**:
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+```
+Result: No warnings
+
+**Tests**:
+```bash
+cargo test --package pdf-editor-core
+```
+Result: 101 tests passed
+
+All scale systems:
+- Serialize/deserialize correctly
+- Maintain UUID identity across save/load
+- Preserve per-page associations
+- Handle multiple scales per page
+- Support manual, two-point, and OCR-detected scale types
+
+### Next Task in Phase 8
+
+The final task in Phase 8 is:
+- **Build scale detection from OCR**: Implement OCR-based automatic scale detection to suggest scales based on text like "1:100" or "1/4\" = 1'-0\"" found on drawings
+

@@ -5,12 +5,13 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use crate::measurement::{ScaleSystem, ScaleSystemId};
 
 /// Unique identifier for a document
 pub type DocumentId = u64;
 
 /// Document metadata loaded during fast file open
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DocumentMetadata {
     /// Document title (from PDF metadata)
     pub title: Option<String>,
@@ -35,6 +36,62 @@ pub struct DocumentMetadata {
 
     /// File size in bytes
     pub file_size: u64,
+
+    /// Scale systems for measurements (per-page)
+    #[serde(default)]
+    pub scale_systems: Vec<ScaleSystem>,
+
+    /// Default scale system per page (page_index -> scale_system_id)
+    #[serde(default)]
+    pub default_scales: std::collections::HashMap<u16, ScaleSystemId>,
+}
+
+impl DocumentMetadata {
+    /// Add a scale system to the document metadata
+    pub fn add_scale_system(&mut self, scale: ScaleSystem) -> ScaleSystemId {
+        let id = scale.id();
+        let page_index = scale.page_index();
+        self.scale_systems.push(scale);
+
+        // Set as default for page if none exists
+        self.default_scales.entry(page_index).or_insert(id);
+
+        id
+    }
+
+    /// Get all scale systems for a specific page
+    pub fn get_scales_for_page(&self, page_index: u16) -> Vec<&ScaleSystem> {
+        self.scale_systems
+            .iter()
+            .filter(|s| s.page_index() == page_index)
+            .collect()
+    }
+
+    /// Get a scale system by ID
+    pub fn get_scale_by_id(&self, id: ScaleSystemId) -> Option<&ScaleSystem> {
+        self.scale_systems.iter().find(|s| s.id() == id)
+    }
+
+    /// Get the default scale system for a page
+    pub fn get_default_scale(&self, page_index: u16) -> Option<&ScaleSystem> {
+        self.default_scales
+            .get(&page_index)
+            .and_then(|id| self.get_scale_by_id(*id))
+    }
+
+    /// Set the default scale system for a page
+    pub fn set_default_scale(&mut self, page_index: u16, scale_id: ScaleSystemId) {
+        if self.scale_systems.iter().any(|s| s.id() == scale_id) {
+            self.default_scales.insert(page_index, scale_id);
+        }
+    }
+
+    /// Remove a scale system by ID
+    pub fn remove_scale_system(&mut self, id: ScaleSystemId) {
+        self.scale_systems.retain(|s| s.id() != id);
+        // Clear any default scale references
+        self.default_scales.retain(|_, scale_id| *scale_id != id);
+    }
 }
 
 impl Default for DocumentMetadata {
@@ -48,6 +105,8 @@ impl Default for DocumentMetadata {
             page_count: 0,
             file_path: PathBuf::new(),
             file_size: 0,
+            scale_systems: Vec::new(),
+            default_scales: std::collections::HashMap::new(),
         }
     }
 }
@@ -174,6 +233,11 @@ impl Document {
     /// Check if this is the last page
     pub fn is_last_page(&self) -> bool {
         self.current_page() + 1 >= self.metadata.page_count
+    }
+
+    /// Get mutable access to metadata (for scale management)
+    pub fn metadata_mut(&mut self) -> &mut DocumentMetadata {
+        &mut self.metadata
     }
 }
 
@@ -353,6 +417,8 @@ mod tests {
             page_count: 10,
             file_path: PathBuf::from("/test/document.pdf"),
             file_size: 1024,
+            scale_systems: Vec::new(),
+            default_scales: std::collections::HashMap::new(),
         }
     }
 
@@ -551,5 +617,96 @@ mod tests {
 
         let err2 = DocumentError::InvalidPageIndex { page: 5, max: 3 };
         assert_eq!(err2.to_string(), "Invalid page index 5 (max: 3)");
+    }
+
+    #[test]
+    fn test_document_metadata_add_scale_system() {
+        use crate::measurement::ScaleSystem;
+
+        let mut metadata = test_metadata();
+        let scale = ScaleSystem::manual(0, 72.0, "inches");
+        let scale_id = scale.id();
+
+        let returned_id = metadata.add_scale_system(scale);
+        assert_eq!(returned_id, scale_id);
+        assert_eq!(metadata.scale_systems.len(), 1);
+        assert_eq!(metadata.get_default_scale(0).unwrap().id(), scale_id);
+    }
+
+    #[test]
+    fn test_document_metadata_get_scales_for_page() {
+        use crate::measurement::ScaleSystem;
+
+        let mut metadata = test_metadata();
+        let scale1 = ScaleSystem::manual(0, 72.0, "inches");
+        let scale2 = ScaleSystem::manual(0, 36.0, "inches");
+        let scale3 = ScaleSystem::manual(1, 100.0, "cm");
+
+        metadata.add_scale_system(scale1);
+        metadata.add_scale_system(scale2);
+        metadata.add_scale_system(scale3);
+
+        let page0_scales = metadata.get_scales_for_page(0);
+        assert_eq!(page0_scales.len(), 2);
+
+        let page1_scales = metadata.get_scales_for_page(1);
+        assert_eq!(page1_scales.len(), 1);
+    }
+
+    #[test]
+    fn test_document_metadata_set_default_scale() {
+        use crate::measurement::ScaleSystem;
+
+        let mut metadata = test_metadata();
+        let scale1 = ScaleSystem::manual(0, 72.0, "inches");
+        let scale2 = ScaleSystem::manual(0, 36.0, "inches");
+
+        let id1 = metadata.add_scale_system(scale1);
+        let id2 = metadata.add_scale_system(scale2);
+
+        // First scale should be default
+        assert_eq!(metadata.get_default_scale(0).unwrap().id(), id1);
+
+        // Change default
+        metadata.set_default_scale(0, id2);
+        assert_eq!(metadata.get_default_scale(0).unwrap().id(), id2);
+    }
+
+    #[test]
+    fn test_document_metadata_remove_scale_system() {
+        use crate::measurement::ScaleSystem;
+
+        let mut metadata = test_metadata();
+        let scale = ScaleSystem::manual(0, 72.0, "inches");
+        let scale_id = metadata.add_scale_system(scale);
+
+        assert_eq!(metadata.scale_systems.len(), 1);
+        assert!(metadata.get_default_scale(0).is_some());
+
+        metadata.remove_scale_system(scale_id);
+
+        assert_eq!(metadata.scale_systems.len(), 0);
+        assert!(metadata.get_default_scale(0).is_none());
+    }
+
+    #[test]
+    fn test_document_metadata_serialization() {
+        use crate::measurement::ScaleSystem;
+
+        let mut metadata = test_metadata();
+        let scale = ScaleSystem::manual(0, 72.0, "inches");
+        metadata.add_scale_system(scale);
+
+        // Serialize
+        let json = serde_json::to_string(&metadata).unwrap();
+
+        // Deserialize
+        let deserialized: DocumentMetadata = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.title, metadata.title);
+        assert_eq!(deserialized.page_count, metadata.page_count);
+        assert_eq!(deserialized.scale_systems.len(), 1);
+        assert_eq!(deserialized.scale_systems[0].unit(), "inches");
+        assert_eq!(deserialized.scale_systems[0].ratio(), 72.0);
     }
 }

@@ -14,7 +14,7 @@ pub type MeasurementId = uuid::Uuid;
 pub type ScaleSystemId = uuid::Uuid;
 
 /// Type of scale calibration used
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ScaleType {
     /// Manual scale ratio (e.g., 1:100)
     Manual {
@@ -63,7 +63,7 @@ impl ScaleType {
 }
 
 /// Scale system for converting page coordinates to real-world measurements
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ScaleSystem {
     /// Unique identifier
     id: ScaleSystemId,
@@ -329,11 +329,19 @@ impl Measurement {
             MeasurementType::Angle => self.compute_angle(),
         };
 
-        // For angles, no scale conversion needed (degrees)
-        let real_world_value = if self.measurement_type == MeasurementType::Angle {
-            page_value
-        } else {
-            scale_system.to_real_world(page_value)
+        // Apply scale conversion
+        let real_world_value = match self.measurement_type {
+            // Angles: no scale conversion needed (degrees)
+            MeasurementType::Angle => page_value,
+            // Area: scale squared (square units)
+            MeasurementType::Area => {
+                let ratio = scale_system.ratio();
+                page_value / (ratio * ratio)
+            }
+            // Distance and Radius: linear scale
+            MeasurementType::Distance | MeasurementType::Radius => {
+                scale_system.to_real_world(page_value)
+            }
         };
 
         self.value = Some(real_world_value);

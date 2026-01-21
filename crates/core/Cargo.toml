@@ -9,4 +9,6 @@ repository.workspace = true
 pdf-editor-render = { path = "../render" }
 pdf-editor-cache = { path = "../cache" }
 pdf-editor-scheduler = { path = "../scheduler" }
-uuid = { version = "1.11", features = ["v4"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

@@ -280,6 +280,8 @@ mod tests {
             page_count: 10,
             file_path: PathBuf::from("/nonexistent/test.pdf"),
             file_size: 1024,
+            scale_systems: Vec::new(),
+            default_scales: std::collections::HashMap::new(),
         };
 
         Document::new(1, metadata)

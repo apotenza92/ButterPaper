@@ -68,7 +68,7 @@ impl DocumentLoader {
         let page_count = pdf_doc.page_count();
 
         // Build DocumentMetadata
-        let metadata = DocumentMetadata {
+        let mut metadata = DocumentMetadata {
             title: pdf_metadata.title,
             author: pdf_metadata.author,
             subject: pdf_metadata.subject,
@@ -77,7 +77,15 @@ impl DocumentLoader {
             page_count,
             file_path: path.to_path_buf(),
             file_size,
+            scale_systems: Vec::new(),
+            default_scales: std::collections::HashMap::new(),
         };
+
+        // Try to load persisted metadata (scale systems, etc.)
+        if let Ok(Some(persisted)) = crate::persistence::load_metadata(path) {
+            metadata.scale_systems = persisted.scale_systems;
+            metadata.default_scales = persisted.default_scales;
+        }
 
         // Note: pdf_doc is dropped here, closing the file
         // This keeps memory usage minimal during the metadata-only phase

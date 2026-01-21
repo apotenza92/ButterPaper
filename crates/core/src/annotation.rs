@@ -18,7 +18,7 @@ pub type AnnotationId = uuid::Uuid;
 /// - X increases to the right
 /// - Y increases upward
 /// - Units are in points (1/72 inch)
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PageCoordinate {
     pub x: f32,
     pub y: f32,
