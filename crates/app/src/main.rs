@@ -7,6 +7,9 @@ use pdf_editor_core::annotation::{
     Annotation, AnnotationCollection, AnnotationGeometry, AnnotationStyle, PageCoordinate,
     SerializableAnnotation,
 };
+use pdf_editor_core::measurement::{
+    Measurement, MeasurementCollection, MeasurementType, ScaleSystem,
+};
 use pdf_editor_core::{load_annotations_from_pdf, ImportStats};
 use pdf_editor_core::document::DocumentMetadata;
 use pdf_editor_core::pdf_export::export_flattened_pdf;
@@ -1588,6 +1591,14 @@ struct App {
     is_drawing: bool,
     /// The page index where freehand drawing started
     freehand_drawing_page: u16,
+    /// Measurement collection for the current document
+    measurements: MeasurementCollection,
+    /// Whether the user is currently measuring (placing second point)
+    is_measuring: bool,
+    /// The start point of the current measurement in page coordinates
+    measurement_start_point: Option<PageCoordinate>,
+    /// The page index where measurement started
+    measurement_page: u16,
 }
 
 impl App {
@@ -1666,6 +1677,10 @@ impl App {
             freehand_drawing_points: Vec::new(),
             is_drawing: false,
             freehand_drawing_page: 0,
+            measurements: MeasurementCollection::new(),
+            is_measuring: false,
+            measurement_start_point: None,
+            measurement_page: 0,
         }
     }
 
@@ -3410,6 +3425,118 @@ impl App {
         self.freehand_drawing_points.clear();
     }
 
+    /// Start a distance measurement at the specified screen position
+    ///
+    /// This is called when the user clicks with the MeasureTool selected.
+    /// The first click sets the start point, the second click sets the end point
+    /// and creates the measurement.
+    fn start_distance_measurement(&mut self, screen_x: f32, screen_y: f32) {
+        // Get current page from document
+        let page_index = match &self.document {
+            Some(doc) => doc.current_page,
+            None => {
+                println!("No document loaded - cannot start measurement");
+                return;
+            }
+        };
+
+        // Convert screen coordinates to page coordinates
+        let page_coord = self.input_handler.screen_to_page(screen_x, screen_y);
+        let start_point = PageCoordinate::new(page_coord.x, page_coord.y);
+
+        if self.is_measuring {
+            // Second click - finish the measurement
+            self.finish_distance_measurement(start_point);
+        } else {
+            // First click - start the measurement
+            self.measurement_start_point = Some(start_point);
+            self.is_measuring = true;
+            self.measurement_page = page_index;
+
+            println!(
+                "Started distance measurement on page {} at ({:.1}, {:.1})",
+                page_index + 1,
+                start_point.x,
+                start_point.y
+            );
+        }
+    }
+
+    /// Finish distance measurement with the end point and create the measurement
+    fn finish_distance_measurement(&mut self, end_point: PageCoordinate) {
+        if !self.is_measuring {
+            return;
+        }
+
+        let start_point = match self.measurement_start_point {
+            Some(p) => p,
+            None => {
+                self.is_measuring = false;
+                return;
+            }
+        };
+
+        self.is_measuring = false;
+        self.measurement_start_point = None;
+
+        // Calculate the distance in page coordinates
+        let distance = start_point.distance_to(&end_point);
+        if distance < 1.0 {
+            println!("Measurement cancelled - points too close together");
+            return;
+        }
+
+        // Ensure we have a default scale for this page
+        // If no scale exists, create a 1:1 points scale (72 points = 1 inch)
+        let scale_id = if let Some(scale) = self.measurements.get_default_scale(self.measurement_page) {
+            scale.id()
+        } else {
+            // Create default scale: 72 points per inch (standard PDF)
+            let scale = ScaleSystem::manual(self.measurement_page, 72.0, "in");
+            self.measurements.add_scale(scale)
+        };
+
+        // Create Line geometry for the measurement
+        let geometry = AnnotationGeometry::Line {
+            start: start_point,
+            end: end_point,
+        };
+
+        // Create the measurement
+        let measurement = Measurement::new(
+            self.measurement_page,
+            geometry,
+            MeasurementType::Distance,
+            scale_id,
+        );
+
+        // Get the formatted label before adding (since add will compute value)
+        let measurement_id = measurement.id();
+        self.measurements.add(measurement);
+
+        // Get the computed value for display
+        let formatted = self.measurements
+            .get(measurement_id)
+            .and_then(|m| m.formatted_label())
+            .unwrap_or("--")
+            .to_string();
+
+        println!(
+            "Created distance measurement on page {}: {}",
+            self.measurement_page + 1,
+            formatted
+        );
+    }
+
+    /// Cancel the current measurement in progress
+    fn cancel_measurement(&mut self) {
+        if self.is_measuring {
+            self.is_measuring = false;
+            self.measurement_start_point = None;
+            println!("Measurement cancelled");
+        }
+    }
+
     /// Handle a click on a note annotation - shows the popup with note content
     fn handle_note_click(&mut self, screen_x: f32, screen_y: f32) {
         // Get current page
@@ -4632,6 +4759,108 @@ impl App {
                                     color: [1.0, 0.0, 0.0, 1.0], // Red, fully opaque
                                 });
                             }
+
+                            // Render completed measurements for this page
+                            for measurement in self.measurements.get_visible_for_page(page_index) {
+                                if let AnnotationGeometry::Line { start, end } = measurement.geometry() {
+                                    let screen_start_x = pan_x + start.x * zoom_scale;
+                                    let screen_start_y = pan_y + (page_height - start.y) * zoom_scale;
+                                    let screen_end_x = pan_x + end.x * zoom_scale;
+                                    let screen_end_y = pan_y + (page_height - end.y) * zoom_scale;
+
+                                    // Render measurement line in blue
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [screen_start_x, screen_start_y],
+                                            [screen_end_x, screen_end_y],
+                                        ],
+                                        width: 2.0 * zoom_scale,
+                                        color: [0.0, 0.5, 1.0, 1.0], // Blue for measurements
+                                    });
+
+                                    // Render endpoint markers (small crosses)
+                                    let marker_size = 4.0 * zoom_scale;
+                                    // Start point horizontal
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [screen_start_x - marker_size, screen_start_y],
+                                            [screen_start_x + marker_size, screen_start_y],
+                                        ],
+                                        width: 1.5 * zoom_scale,
+                                        color: [0.0, 0.5, 1.0, 1.0],
+                                    });
+                                    // Start point vertical
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [screen_start_x, screen_start_y - marker_size],
+                                            [screen_start_x, screen_start_y + marker_size],
+                                        ],
+                                        width: 1.5 * zoom_scale,
+                                        color: [0.0, 0.5, 1.0, 1.0],
+                                    });
+                                    // End point horizontal
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [screen_end_x - marker_size, screen_end_y],
+                                            [screen_end_x + marker_size, screen_end_y],
+                                        ],
+                                        width: 1.5 * zoom_scale,
+                                        color: [0.0, 0.5, 1.0, 1.0],
+                                    });
+                                    // End point vertical
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [screen_end_x, screen_end_y - marker_size],
+                                            [screen_end_x, screen_end_y + marker_size],
+                                        ],
+                                        width: 1.5 * zoom_scale,
+                                        color: [0.0, 0.5, 1.0, 1.0],
+                                    });
+                                }
+                            }
+
+                            // Render in-progress measurement (preview line from start to current mouse position)
+                            if self.is_measuring && self.measurement_page == page_index {
+                                if let Some(start_point) = self.measurement_start_point {
+                                    let screen_start_x = pan_x + start_point.x * zoom_scale;
+                                    let screen_start_y = pan_y + (page_height - start_point.y) * zoom_scale;
+
+                                    // Get current mouse position in page coordinates
+                                    let mouse_pos = self.input_handler.mouse_position();
+                                    let current_page_coord = self.input_handler.screen_to_page(mouse_pos.0, mouse_pos.1);
+                                    let screen_end_x = pan_x + current_page_coord.x * zoom_scale;
+                                    let screen_end_y = pan_y + (page_height - current_page_coord.y) * zoom_scale;
+
+                                    // Render preview line with dashed appearance (using alpha)
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [screen_start_x, screen_start_y],
+                                            [screen_end_x, screen_end_y],
+                                        ],
+                                        width: 2.0 * zoom_scale,
+                                        color: [0.0, 0.5, 1.0, 0.6], // Semi-transparent blue
+                                    });
+
+                                    // Start point marker
+                                    let marker_size = 4.0 * zoom_scale;
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [screen_start_x - marker_size, screen_start_y],
+                                            [screen_start_x + marker_size, screen_start_y],
+                                        ],
+                                        width: 1.5 * zoom_scale,
+                                        color: [0.0, 0.5, 1.0, 1.0],
+                                    });
+                                    strokes_data.push(stroke_renderer::StrokeData {
+                                        points: vec![
+                                            [screen_start_x, screen_start_y - marker_size],
+                                            [screen_start_x, screen_start_y + marker_size],
+                                        ],
+                                        width: 1.5 * zoom_scale,
+                                        color: [0.0, 0.5, 1.0, 1.0],
+                                    });
+                                }
+                            }
                         }
                     }
 
@@ -5181,6 +5410,13 @@ impl ApplicationHandler for App {
                                     if let Some(window) = &self.window {
                                         window.request_redraw();
                                     }
+                                } else if self.toolbar.selected_tool() == Some(ToolbarButton::MeasureTool) {
+                                    // MeasureTool: start/finish distance measurement
+                                    self.start_distance_measurement(x, y);
+                                    // Request redraw to show measurement in progress
+                                    if let Some(window) = &self.window {
+                                        window.request_redraw();
+                                    }
                                 } else {
                                     // Check if note popup is visible and click is on close button
                                     if self.note_popup.is_visible() {
@@ -5309,7 +5545,7 @@ impl ApplicationHandler for App {
                             self.update_search_bar_texture();
                         }
                         PhysicalKey::Code(KeyCode::Escape) => {
-                            // Close note popup first, then search bar with Escape
+                            // Close note popup first, then search bar, then cancel measurement with Escape
                             if self.note_popup.is_visible() {
                                 self.note_popup.hide();
                                 self.update_note_popup_texture();
@@ -5319,6 +5555,12 @@ impl ApplicationHandler for App {
                             } else if self.search_bar.is_visible() {
                                 self.search_bar.set_visible(false);
                                 self.update_search_bar_texture();
+                            } else if self.is_measuring {
+                                // Cancel in-progress measurement
+                                self.cancel_measurement();
+                                if let Some(window) = &self.window {
+                                    window.request_redraw();
+                                }
                             }
                         }
                         PhysicalKey::Code(KeyCode::F3) if is_shift => {
@@ -5374,6 +5616,14 @@ impl ApplicationHandler for App {
                             self.toolbar.set_selected_tool(ToolbarButton::FreedrawTool);
                             self.text_selection_active = false;
                             println!("Pen tool selected - click and drag to draw");
+                        }
+                        PhysicalKey::Code(KeyCode::KeyM) if !is_cmd && !is_shift => {
+                            // M = Measure tool (click two points to measure distance)
+                            self.toolbar.set_selected_tool(ToolbarButton::MeasureTool);
+                            self.text_selection_active = false;
+                            // Cancel any in-progress measurement when switching to measurement tool
+                            self.cancel_measurement();
+                            println!("Measure tool selected - click two points to measure distance");
                         }
                         _ => {}
                     }

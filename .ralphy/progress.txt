@@ -11545,3 +11545,53 @@ ANNOTATIONS: OK count=5 imported=5 skipped=0 time=50ms
 ```
 
 This completes Phase 3.3 (Annotations) of the PRD!
+
+
+## 2026-01-21: Add distance measurement tool (Phase 3.4)
+
+### What was done:
+- Implemented distance measurement tool for measuring distances between two points on PDFs
+- Added `MeasurementCollection` and related imports to `crates/app/src/main.rs`
+- Added measurement state fields to App struct:
+  - `measurements: MeasurementCollection` - stores all measurements
+  - `is_measuring: bool` - tracks if user is placing second point
+  - `measurement_start_point: Option<PageCoordinate>` - first click position
+  - `measurement_page: u16` - page where measurement started
+- Implemented measurement creation methods:
+  - `start_distance_measurement()` - handles first/second click logic
+  - `finish_distance_measurement()` - creates Line geometry and Measurement
+  - `cancel_measurement()` - cancels in-progress measurement (Escape key)
+- Default scale: 72 points per inch (standard PDF unit)
+- Measurement rendering:
+  - Completed measurements shown as blue lines with endpoint markers
+  - In-progress measurements shown as semi-transparent preview line
+  - Endpoint markers are small crosses for precision indication
+- Added M keyboard shortcut (Bluebeam-compatible) to select MeasureTool
+- Escape key integration: cancels in-progress measurement
+- Toolbar button click support for MeasureTool already existed
+- All 476+ tests pass, no new clippy warnings
+
+### Files changed:
+- `crates/app/src/main.rs`:
+  - Added import for `Measurement, MeasurementCollection, MeasurementType, ScaleSystem`
+  - Added measurement state fields to App struct
+  - Initialized measurement fields in App::new()
+  - Added `start_distance_measurement()`, `finish_distance_measurement()`, `cancel_measurement()` methods
+  - Added MeasureTool click handler in mouse event processing
+  - Added measurement rendering (completed + in-progress) in render loop
+  - Added M keyboard shortcut for MeasureTool
+  - Integrated measurement cancellation into Escape key handler
+- `PRD.md` (marked tasks complete)
+
+### How to use:
+1. Press M or click the ruler icon in toolbar to select Measure tool
+2. Click on first point of measurement
+3. Move mouse to see preview line
+4. Click on second point to complete measurement
+5. Distance is shown in inches (e.g., "2.50in")
+6. Press Escape to cancel an in-progress measurement
+
+This completes the first 3 tasks of Phase 3.4 (Measurements):
+- [x] Distance measurement tool
+- [x] Click two points to measure  
+- [x] Show measurement label

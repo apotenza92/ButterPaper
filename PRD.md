@@ -346,9 +346,9 @@ Wire up existing annotation system.
 ### Phase 3.4: Measurements
 Wire up existing measurement system.
 
-- [ ] Distance measurement tool
-- [ ] Click two points to measure
-- [ ] Show measurement label
+- [x] Distance measurement tool
+- [x] Click two points to measure
+- [x] Show measurement label
 - [ ] Area measurement tool
 - [ ] Click polygon points
 - [ ] Show area calculation
