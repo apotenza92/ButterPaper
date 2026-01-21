@@ -10810,3 +10810,37 @@ Verified that all menu items listed in Phase 2.1 (Menu Bar) of the PRD are alrea
 
 **Tests:** All 28 thumbnail tests pass
 **Linting:** No new warnings
+
+---
+
+## 2026-01-21: Phase 3.1 - Click and drag text selection (partial)
+
+**Task:** Implement click-and-drag text selection functionality
+
+**What was done:**
+1. Added `extract_text_spans()` method to PdfDocument to extract text with bounding boxes from PDFium
+2. Added TextLayerManager and TextSearchManager to App state
+3. Wired up mouse events for text selection:
+   - Mouse down starts selection when TextSelectTool is active
+   - Mouse move updates selection during drag
+   - Mouse up finalizes selection and copies text to clipboard (macOS)
+4. Added text_selection_active flag to track when text selection mode is enabled
+5. Updated toolbar button handling to toggle text selection mode
+
+**Files Modified:**
+- crates/render/src/pdf.rs (added extract_text_spans method and TextSpanInfo struct)
+- crates/render/src/lib.rs (exported TextSpanInfo)
+- crates/app/src/main.rs (integrated TextSearchManager, text layer initialization, mouse event handling)
+- PRD.md (marked tasks complete)
+
+**Technical Details:**
+- Text spans are extracted from PDF pages using PDFium's character-level API
+- Characters are grouped into word spans based on whitespace boundaries
+- Coordinates are converted from PDFium's bottom-left origin to top-left origin
+- Selection uses page coordinates via screen_to_page transformation
+- Clipboard copying uses pbcopy on macOS
+
+**Tests:** All 155+ tests pass
+**Linting:** No new warnings in our code (some from external macros)
+
+**Note:** Visual highlight rendering is prepared but not yet visible - the compositor has the highlight rendering code but it's not connected to the current blit-based rendering pipeline. This can be improved in a future iteration.

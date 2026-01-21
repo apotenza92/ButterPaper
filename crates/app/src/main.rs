@@ -3,11 +3,13 @@
 //! Main application entry point with GPU-rendered UI shell.
 
 use pdf_editor_cache::GpuTextureCache;
+use pdf_editor_core::text_layer::{PageTextLayer, TextBoundingBox, TextLayerManager, TextSpan};
 use pdf_editor_render::PdfDocument;
 use pdf_editor_ui::gpu;
 use pdf_editor_ui::input::InputHandler;
 use pdf_editor_ui::renderer::SceneRenderer;
 use pdf_editor_ui::scene::SceneGraph;
+use pdf_editor_ui::text_selection::TextSearchManager;
 use pdf_editor_ui::thumbnail::ThumbnailStrip;
 use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT, ZOOM_LEVELS};
 use std::collections::HashMap;
@@ -992,6 +994,12 @@ struct App {
     thumbnail_texture: Option<ThumbnailTexture>,
     /// Whether the thumbnail strip is visible
     show_thumbnails: bool,
+    /// Text layer manager for text selection
+    text_layer_manager: Option<Arc<TextLayerManager>>,
+    /// Text search manager for text selection and search
+    text_search_manager: Option<TextSearchManager>,
+    /// Whether text selection mode is active (TextSelectTool is selected)
+    text_selection_active: bool,
 }
 
 impl App {
@@ -1047,6 +1055,9 @@ impl App {
             #[cfg(target_os = "macos")]
             thumbnail_texture: None,
             show_thumbnails: true,
+            text_layer_manager: None,
+            text_search_manager: None,
+            text_selection_active: false,
         }
     }
 
@@ -1132,6 +1143,43 @@ impl App {
                     viewport_size,
                 );
                 self.update_thumbnail_texture();
+
+                // Initialize text layer manager for text selection
+                let text_layer_manager = Arc::new(TextLayerManager::new(page_count));
+
+                // Extract text spans from each page for text selection
+                if let Some(ref doc) = self.document {
+                    for page_index in 0..page_count {
+                        match doc.pdf.extract_text_spans(page_index) {
+                            Ok(span_infos) => {
+                                let spans: Vec<TextSpan> = span_infos
+                                    .into_iter()
+                                    .map(|info| {
+                                        TextSpan::new(
+                                            info.text,
+                                            TextBoundingBox::new(info.x, info.y, info.width, info.height),
+                                            1.0, // Native PDF text has 100% confidence
+                                            12.0, // Default font size estimate
+                                        )
+                                    })
+                                    .collect();
+
+                                if !spans.is_empty() {
+                                    let layer = PageTextLayer::from_spans(page_index, spans);
+                                    text_layer_manager.set_layer(layer);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: Could not extract text from page {}: {}", page_index, e);
+                            }
+                        }
+                    }
+                    println!("TEXT_SELECTION: Initialized text layers for {} pages", text_layer_manager.layer_count());
+                }
+
+                // Initialize text search manager
+                self.text_layer_manager = Some(Arc::clone(&text_layer_manager));
+                self.text_search_manager = Some(TextSearchManager::new(text_layer_manager));
 
                 self.render_current_page();
 
@@ -2273,11 +2321,15 @@ impl App {
             }
             ToolbarButton::SelectTool
             | ToolbarButton::HandTool
-            | ToolbarButton::TextSelectTool
             | ToolbarButton::HighlightTool
             | ToolbarButton::CommentTool
             | ToolbarButton::MeasureTool => {
                 self.toolbar.set_selected_tool(button);
+                self.text_selection_active = false;
+            }
+            ToolbarButton::TextSelectTool => {
+                self.toolbar.set_selected_tool(button);
+                self.text_selection_active = true;
             }
         }
     }
@@ -2774,6 +2826,20 @@ impl ApplicationHandler for App {
                 let y = position.y as f32;
                 self.input_handler.on_mouse_move(x, y);
 
+                // Update text selection if in text selection mode and dragging
+                if self.text_selection_active {
+                    if let Some(ref mut search_manager) = self.text_search_manager {
+                        if search_manager.get_selection().map(|s| s.is_active).unwrap_or(false) {
+                            let page_coord = self.input_handler.screen_to_page(x, y);
+                            search_manager.update_selection(page_coord);
+                            // Request redraw to show selection highlight
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
+                            }
+                        }
+                    }
+                }
+
                 // Update toolbar hover state
                 if let Some(button) = self.toolbar.hit_test(x, y) {
                     self.toolbar.set_button_hover(button, true);
@@ -2828,11 +2894,45 @@ impl ApplicationHandler for App {
                             else {
                                 // Close dropdown if clicking outside
                                 self.toolbar.close_zoom_dropdown();
-                                self.input_handler.on_mouse_down(x, y);
+
+                                // Start text selection if text selection mode is active
+                                if self.text_selection_active {
+                                    if let Some(ref mut search_manager) = self.text_search_manager {
+                                        let page_index = self.input_handler.viewport().page_index;
+                                        let page_coord = self.input_handler.screen_to_page(x, y);
+                                        search_manager.start_selection(page_index, page_coord);
+                                    }
+                                } else {
+                                    self.input_handler.on_mouse_down(x, y);
+                                }
                             }
                         }
                         ElementState::Released => {
-                            self.input_handler.on_mouse_up();
+                            // Finalize text selection if in text selection mode
+                            if self.text_selection_active {
+                                if let Some(ref mut search_manager) = self.text_search_manager {
+                                    if let Some(selected_text) = search_manager.end_selection() {
+                                        // Copy selected text to clipboard
+                                        #[cfg(target_os = "macos")]
+                                        {
+                                            use std::process::Command;
+                                            let _ = Command::new("pbcopy")
+                                                .stdin(std::process::Stdio::piped())
+                                                .spawn()
+                                                .and_then(|mut child| {
+                                                    use std::io::Write;
+                                                    if let Some(stdin) = child.stdin.as_mut() {
+                                                        let _ = stdin.write_all(selected_text.as_bytes());
+                                                    }
+                                                    child.wait()
+                                                });
+                                            println!("TEXT_SELECTION: Copied {} characters to clipboard", selected_text.len());
+                                        }
+                                    }
+                                }
+                            } else {
+                                self.input_handler.on_mouse_up();
+                            }
                         }
                     }
                 }

@@ -304,7 +304,151 @@ impl PdfDocument {
         let rgba = self.render_page_rgba(page_index, render_width, render_height)?;
         Ok((rgba, render_width, render_height))
     }
+
+    /// Extract text with bounding boxes from a page
+    ///
+    /// Returns individual text spans with their positions in page coordinates.
+    /// This is used for text selection and search highlighting.
+    ///
+    /// # Arguments
+    /// * `page_index` - Zero-based page index
+    ///
+    /// # Returns
+    /// A vector of (text, x, y, width, height) tuples in page coordinates
+    pub fn extract_text_spans(&self, page_index: u16) -> PdfResult<Vec<TextSpanInfo>> {
+        let page = self.get_page(page_index)?;
+        let page_height = page.height().value;
+
+        let text_page = page
+            .text()
+            .map_err(|e| PdfError::RenderError(format!("Failed to get text page: {}", e)))?;
+
+        let chars = text_page.chars();
+        let mut spans = Vec::new();
+        let mut current_text = String::new();
+        let mut span_start_x: Option<f32> = None;
+        let mut span_min_y: Option<f32> = None;
+        let mut span_max_y: Option<f32> = None;
+        let mut span_max_x = 0.0f32;
+
+        // Group characters into spans (words/lines)
+        for char_result in chars.iter() {
+            // Get character, skip if unavailable
+            let c = match char_result.unicode_char() {
+                Some(ch) => ch,
+                None => continue,
+            };
+
+            // Get bounds, skip if unavailable
+            let loose_bounds = match char_result.loose_bounds() {
+                Ok(bounds) => bounds,
+                Err(_) => continue,
+            };
+
+            // Convert bounds - PDFium returns bounds with Y from bottom-left
+            // Use the function accessors instead of deprecated field access
+            let char_x = loose_bounds.left().value;
+            let char_y = page_height - loose_bounds.top().value; // Convert to top-left origin
+            let char_width = loose_bounds.right().value - loose_bounds.left().value;
+            let char_height = loose_bounds.top().value - loose_bounds.bottom().value;
+
+            // Detect word/span boundaries
+            let is_whitespace = c.is_whitespace();
+            let is_newline = c == '\n' || c == '\r';
+
+            if is_whitespace || is_newline {
+                // End current span if we have content
+                if let (false, Some(start_x), Some(min_y), Some(max_y)) =
+                    (current_text.is_empty(), span_start_x, span_min_y, span_max_y)
+                {
+                    spans.push(TextSpanInfo {
+                        text: current_text.clone(),
+                        x: start_x,
+                        y: min_y,
+                        width: span_max_x - start_x,
+                        height: max_y - min_y,
+                    });
+                }
+                current_text.clear();
+                span_start_x = None;
+                span_min_y = None;
+                span_max_y = None;
+                span_max_x = 0.0;
+            } else {
+                // Add character to current span
+                current_text.push(c);
+
+                match span_start_x {
+                    None => {
+                        span_start_x = Some(char_x);
+                        span_min_y = Some(char_y);
+                        span_max_y = Some(char_y + char_height);
+                    }
+                    Some(_) => {
+                        span_min_y = span_min_y.map(|y| y.min(char_y));
+                        span_max_y = span_max_y.map(|y| y.max(char_y + char_height));
+                    }
+                }
+                span_max_x = span_max_x.max(char_x + char_width);
+            }
+        }
+
+        // Don't forget the last span
+        if let (false, Some(start_x), Some(min_y), Some(max_y)) =
+            (current_text.is_empty(), span_start_x, span_min_y, span_max_y)
+        {
+            spans.push(TextSpanInfo {
+                text: current_text,
+                x: start_x,
+                y: min_y,
+                width: span_max_x - start_x,
+                height: max_y - min_y,
+            });
+        }
+
+        Ok(spans)
+    }
+
+    /// Save the PDF document to a file
+    ///
+    /// # Arguments
+    /// * `path` - Path to save the PDF file to
+    ///
+    /// # Returns
+    /// Ok(()) on success, or a SaveError on failure
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), SaveError> {
+        self.document
+            .save_to_file(path.as_ref())
+            .map_err(|e| SaveError::SaveFailed(e.to_string()))
+    }
+
+    /// Save the PDF document to bytes
+    ///
+    /// # Returns
+    /// The PDF data as a Vec<u8> on success, or a SaveError on failure
+    pub fn save_to_bytes(&self) -> Result<Vec<u8>, SaveError> {
+        self.document
+            .save_to_bytes()
+            .map_err(|e| SaveError::SaveFailed(e.to_string()))
+    }
 }
+
+/// Save error variant
+#[derive(Debug)]
+pub enum SaveError {
+    /// Failed to save to file
+    SaveFailed(String),
+}
+
+impl std::fmt::Display for SaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SaveError::SaveFailed(msg) => write!(f, "Failed to save PDF: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for SaveError {}
 
 /// PDF document metadata
 #[derive(Debug, Clone, Default)]
@@ -314,6 +458,21 @@ pub struct PdfMetadata {
     pub subject: Option<String>,
     pub creator: Option<String>,
     pub producer: Option<String>,
+}
+
+/// Text span information with bounding box
+#[derive(Debug, Clone)]
+pub struct TextSpanInfo {
+    /// The text content
+    pub text: String,
+    /// X coordinate of the span (left edge, page coordinates)
+    pub x: f32,
+    /// Y coordinate of the span (top edge, page coordinates from top-left)
+    pub y: f32,
+    /// Width of the span in page coordinates
+    pub width: f32,
+    /// Height of the span in page coordinates
+    pub height: f32,
 }
 
 /// Page dimensions in points (1/72 inch)
@@ -526,5 +685,21 @@ mod tests {
                 lib_name
             );
         }
+    }
+
+    #[test]
+    fn test_save_error_display() {
+        let err = SaveError::SaveFailed("permission denied".to_string());
+        let display = err.to_string();
+        assert!(display.contains("Failed to save PDF"));
+        assert!(display.contains("permission denied"));
+    }
+
+    #[test]
+    fn test_save_error_debug() {
+        let err = SaveError::SaveFailed("test error".to_string());
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("SaveFailed"));
+        assert!(debug_str.contains("test error"));
     }
 }

@@ -307,8 +307,8 @@ Wire up the existing ThumbnailStrip component.
 ### Phase 3.1: Text Selection
 Wire up existing TextSelection component.
 
-- [ ] Click and drag to select text
-- [ ] Use PDFium text extraction
+- [x] Click and drag to select text
+- [x] Use PDFium text extraction
 - [ ] Render selection highlight rectangles
 - [ ] Copy to clipboard (Cmd+C)
 - [ ] Double-click for word, triple for line
