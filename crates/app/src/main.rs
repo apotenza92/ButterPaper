@@ -24,6 +24,7 @@ use pdf_editor_ui::scene::SceneGraph;
 use pdf_editor_ui::text_selection::TextSearchManager;
 use pdf_editor_ui::thumbnail::ThumbnailStrip;
 use pdf_editor_ui::calibration_dialog::{CalibrationDialog, CalibrationDialogButton};
+use pdf_editor_ui::error_dialog::{ErrorDialog, ErrorDialogButton, ErrorSeverity};
 use pdf_editor_ui::note_popup::{NotePopup, NoteData};
 use pdf_editor_ui::search_bar::{SearchBar, SearchBarButton, SEARCH_BAR_HEIGHT};
 use pdf_editor_ui::toolbar::{Toolbar, ToolbarButton, TOOLBAR_HEIGHT, ZOOM_LEVELS};
@@ -1932,6 +1933,13 @@ struct CalibrationDialogTexture {
     height: u32,
 }
 
+#[cfg(target_os = "macos")]
+struct ErrorDialogTexture {
+    texture: metal::Texture,
+    width: u32,
+    height: u32,
+}
+
 /// Width of the thumbnail strip sidebar
 const THUMBNAIL_STRIP_WIDTH: f32 = 136.0; // 120px thumbnail + 8px spacing * 2
 
@@ -2070,6 +2078,11 @@ struct App {
     theme_changed: bool,
     /// Display information for Retina and ProMotion support
     display_info: display_info::DisplayInfo,
+    /// Error dialog for displaying user-facing error messages
+    error_dialog: ErrorDialog,
+    /// Error dialog texture for rendering
+    #[cfg(target_os = "macos")]
+    error_dialog_texture: Option<ErrorDialogTexture>,
 }
 
 impl App {
@@ -2082,6 +2095,7 @@ impl App {
         let search_bar = SearchBar::new(1200.0);
         let note_popup = NotePopup::new(1200.0, 800.0);
         let calibration_dialog = CalibrationDialog::new(1200.0, 800.0);
+        let error_dialog = ErrorDialog::new(1200.0, 800.0);
 
         // Create GPU texture cache for thumbnails (64MB VRAM limit)
         let gpu_texture_cache = Arc::new(GpuTextureCache::new(64 * 1024 * 1024));
@@ -2172,6 +2186,9 @@ impl App {
             deferred_init_complete: false,
             theme_changed: false,
             display_info: display_info::DisplayInfo::default(),
+            error_dialog,
+            #[cfg(target_os = "macos")]
+            error_dialog_texture: None,
         }
     }
 
@@ -2292,6 +2309,15 @@ impl App {
             }
             Err(e) => {
                 eprintln!("FAILED to load PDF: {}", e);
+                // Show error dialog to user
+                let filename = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("file");
+                self.error_dialog.show_pdf_load_error(filename, &e.to_string());
+                self.update_error_dialog_texture();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
             }
         }
     }
@@ -3775,6 +3801,11 @@ impl App {
                     }
                     Err(e) => {
                         eprintln!("Failed to copy to clipboard: {}", e);
+                        self.error_dialog.show_clipboard_error();
+                        self.update_error_dialog_texture();
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
                     }
                 }
             } else {
@@ -4530,6 +4561,194 @@ impl App {
         self.draw_text_to_pixels(pixels, tex_width, "Tab to change unit", 10, 110, &help_color);
     }
 
+    /// Update the error dialog texture for rendering
+    #[cfg(target_os = "macos")]
+    fn update_error_dialog_texture(&mut self) {
+        let Some(device) = &self.device else { return };
+
+        // Check for auto-dismiss
+        self.error_dialog.update();
+
+        if !self.error_dialog.is_visible() {
+            self.error_dialog_texture = None;
+            return;
+        }
+
+        // Error dialog dimensions
+        let width = 400_u32;
+        let height = 180_u32;
+
+        // Create pixel buffer (BGRA format)
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+        // Draw error dialog elements
+        self.draw_error_dialog_elements(&mut pixels, width, height);
+
+        // Create Metal texture
+        let texture_desc = TextureDescriptor::new();
+        texture_desc.set_width(width as u64);
+        texture_desc.set_height(height as u64);
+        texture_desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
+        texture_desc.set_usage(metal::MTLTextureUsage::ShaderRead);
+        texture_desc.set_storage_mode(metal::MTLStorageMode::Managed);
+
+        let texture = device.new_texture(&texture_desc);
+
+        let region = metal::MTLRegion {
+            origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            size: metal::MTLSize {
+                width: width as u64,
+                height: height as u64,
+                depth: 1,
+            },
+        };
+
+        texture.replace_region(
+            region,
+            0,
+            pixels.as_ptr() as *const _,
+            (width * 4) as u64,
+        );
+
+        self.error_dialog_texture = Some(ErrorDialogTexture {
+            texture,
+            width,
+            height,
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn update_error_dialog_texture(&mut self) {
+        // No-op on non-macOS platforms
+    }
+
+    /// Draw error dialog elements to pixel buffer
+    #[cfg(target_os = "macos")]
+    fn draw_error_dialog_elements(&self, pixels: &mut [u8], tex_width: u32, tex_height: u32) {
+        // Get icon and title bar colors based on severity
+        let (icon_color, title_bar_color) = match self.error_dialog.severity() {
+            ErrorSeverity::Error => (
+                [60, 60, 200, 255],   // BGRA - Red
+                [60, 60, 180, 255],   // BGRA - Darker red
+            ),
+            ErrorSeverity::Warning => (
+                [50, 180, 230, 255],  // BGRA - Amber/Orange
+                [40, 150, 200, 255],  // BGRA - Darker amber
+            ),
+            ErrorSeverity::Info => (
+                [220, 160, 80, 255],  // BGRA - Blue
+                [180, 130, 60, 255],  // BGRA - Darker blue
+            ),
+        };
+
+        // Background (dark gray for dark theme)
+        let bg_color: [u8; 4] = [60, 60, 60, 255]; // BGRA - dark gray
+        for y in 0..tex_height {
+            for x in 0..tex_width {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&bg_color);
+                }
+            }
+        }
+
+        // Border
+        let border_color: [u8; 4] = [100, 100, 100, 255]; // BGRA
+        for y in 0..tex_height {
+            for x in 0..tex_width {
+                if x < 1 || x >= tex_width - 1 || y < 1 || y >= tex_height - 1 {
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx..idx + 4].copy_from_slice(&border_color);
+                    }
+                }
+            }
+        }
+
+        // Title bar
+        for y in 1..30 {
+            for x in 1..tex_width - 1 {
+                let idx = ((y * tex_width + x) * 4) as usize;
+                if idx + 3 < pixels.len() {
+                    pixels[idx..idx + 4].copy_from_slice(&title_bar_color);
+                }
+            }
+        }
+
+        // Draw icon (simple triangle approximation)
+        let icon_x = 12_u32;
+        let icon_y = 8_u32;
+        let icon_size = 14_u32;
+        for row in 0..icon_size {
+            let row_width = (row + 1) * icon_size / icon_size;
+            let start_x = icon_x + (icon_size - row_width) / 2;
+            for x in start_x..(start_x + row_width) {
+                let y = icon_y + row;
+                if x < tex_width && y < tex_height {
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx..idx + 4].copy_from_slice(&icon_color);
+                    }
+                }
+            }
+        }
+
+        // Title text (white)
+        let title_color: [u8; 4] = [255, 255, 255, 255];
+        let title = match self.error_dialog.severity() {
+            ErrorSeverity::Error => "Error",
+            ErrorSeverity::Warning => "Warning",
+            ErrorSeverity::Info => "Notice",
+        };
+        self.draw_text_to_pixels(pixels, tex_width, title, 32, 10, &title_color);
+
+        // Message text (light gray)
+        let text_color: [u8; 4] = [220, 220, 220, 255];
+        let message = self.error_dialog.message();
+
+        // Word wrap the message
+        let max_chars = 50;
+        let mut y_offset = 45_u32;
+        let mut current_line = String::new();
+
+        for word in message.split_whitespace() {
+            if current_line.is_empty() {
+                current_line = word.to_string();
+            } else if current_line.len() + 1 + word.len() <= max_chars {
+                current_line.push(' ');
+                current_line.push_str(word);
+            } else {
+                self.draw_text_to_pixels(pixels, tex_width, &current_line, 16, y_offset, &text_color);
+                y_offset += 16;
+                current_line = word.to_string();
+            }
+        }
+        if !current_line.is_empty() {
+            self.draw_text_to_pixels(pixels, tex_width, &current_line, 16, y_offset, &text_color);
+        }
+
+        // OK button
+        let button_x = (tex_width - 80) / 2;
+        let button_y = tex_height - 40;
+        let button_w = 80_u32;
+        let button_h = 28_u32;
+        let button_bg: [u8; 4] = [100, 100, 100, 255]; // BGRA - gray
+
+        for y in button_y..(button_y + button_h) {
+            for x in button_x..(button_x + button_w) {
+                if x < tex_width && y < tex_height {
+                    let idx = ((y * tex_width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        pixels[idx..idx + 4].copy_from_slice(&button_bg);
+                    }
+                }
+            }
+        }
+
+        // Center "OK" text in button
+        self.draw_text_to_pixels(pixels, tex_width, "OK", button_x + 32, button_y + 8, &title_color);
+    }
+
     /// Handle a click on a note annotation - shows the popup with note content
     fn handle_note_click(&mut self, screen_x: f32, screen_y: f32) {
         // Get current page
@@ -4966,6 +5185,14 @@ impl App {
                 }
                 Err(e) => {
                     eprintln!("Failed to save document: {}", e);
+                    let filename = path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("file");
+                    self.error_dialog.show_save_error(filename, &e.to_string());
+                    self.update_error_dialog_texture();
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
                 }
             }
         } else {
@@ -5042,9 +5269,26 @@ impl App {
                                 "Document saved successfully (without annotations): {}",
                                 path.display()
                             );
+                            // Show warning that annotations weren't saved
+                            self.error_dialog.show(
+                                ErrorSeverity::Warning,
+                                "Document saved but annotations could not be embedded. They will be saved separately.",
+                            );
+                            self.update_error_dialog_texture();
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
+                            }
                         }
                         Err(e2) => {
                             eprintln!("Fallback save also failed: {}", e2);
+                            let filename = path.file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("file");
+                            self.error_dialog.show_save_error(filename, &e2.to_string());
+                            self.update_error_dialog_texture();
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
+                            }
                         }
                     }
                 }
@@ -5152,6 +5396,14 @@ impl App {
                 }
                 Err(e) => {
                     eprintln!("Failed to save document: {}", e);
+                    let filename = new_path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("file");
+                    self.error_dialog.show_save_error(filename, &e.to_string());
+                    self.update_error_dialog_texture();
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
                 }
             }
         }
@@ -6464,6 +6716,43 @@ impl App {
                         }
                     }
 
+                    // Render error dialog (if visible) - rendered last to be on top
+                    if let Some(error_tex) = &self.error_dialog_texture {
+                        if self.error_dialog.is_visible() {
+                            let blit_encoder = command_buffer.new_blit_command_encoder();
+
+                            // Dialog is centered in the viewport
+                            let dialog_x = ((drawable_width as f64 - error_tex.width as f64) / 2.0).max(0.0) as u64;
+                            let dialog_y = ((drawable_height as f64 - error_tex.height as f64) / 2.0).max(0.0) as u64;
+
+                            let src_origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                            let src_size = metal::MTLSize {
+                                width: error_tex.width as u64,
+                                height: error_tex.height as u64,
+                                depth: 1,
+                            };
+                            let dest_origin = metal::MTLOrigin {
+                                x: dialog_x,
+                                y: dialog_y,
+                                z: 0,
+                            };
+
+                            blit_encoder.copy_from_texture(
+                                &error_tex.texture,
+                                0,
+                                0,
+                                src_origin,
+                                src_size,
+                                drawable.texture(),
+                                0,
+                                0,
+                                dest_origin,
+                            );
+
+                            blit_encoder.end_encoding();
+                        }
+                    }
+
                     command_buffer.present_drawable(drawable);
                     command_buffer.commit();
                 }
@@ -6551,10 +6840,12 @@ impl ApplicationHandler for App {
                 self.search_bar.set_viewport_width(size.width as f32);
                 self.note_popup.set_viewport_dimensions(size.width as f32, size.height as f32);
                 self.thumbnail_strip.set_viewport_size(size.width as f32, size.height as f32);
+                self.error_dialog.set_viewport_size(size.width as f32, size.height as f32);
                 self.update_toolbar_texture();
                 self.update_search_bar_texture();
                 self.update_note_popup_texture();
                 self.update_thumbnail_texture();
+                self.update_error_dialog_texture();
 
                 if self.document.is_some() {
                     if let Some(doc) = &mut self.document {
@@ -6670,8 +6961,25 @@ impl ApplicationHandler for App {
                         ElementState::Pressed => {
                             let (x, y) = self.input_handler.mouse_position();
 
+                            // Check for error dialog click first (it's rendered on top)
+                            if self.error_dialog.is_visible() {
+                                if let Some(button) = self.error_dialog.hit_test_button(x, y) {
+                                    match button {
+                                        ErrorDialogButton::Ok => {
+                                            self.error_dialog.hide();
+                                            self.update_error_dialog_texture();
+                                            if let Some(window) = &self.window {
+                                                window.request_redraw();
+                                            }
+                                        }
+                                    }
+                                } else if self.error_dialog.contains_point(x, y) {
+                                    // Click is inside dialog but not on button - consume event
+                                }
+                                // Don't process clicks anywhere else while error dialog is visible
+                            }
                             // Check for zoom dropdown menu item click first (if open)
-                            if let Some(item_idx) = self.toolbar.hit_test_zoom_dropdown_item(x, y) {
+                            else if let Some(item_idx) = self.toolbar.hit_test_zoom_dropdown_item(x, y) {
                                 let zoom_level = ZOOM_LEVELS[item_idx];
                                 self.input_handler.set_zoom_level(zoom_level);
                                 self.toolbar.close_zoom_dropdown();
@@ -6952,8 +7260,21 @@ impl ApplicationHandler for App {
                     let is_cmd = self.modifiers.super_key();
                     let is_shift = self.modifiers.shift_key();
 
+                    // If error dialog is visible, handle dismiss keys
+                    if self.error_dialog.is_visible() {
+                        match event.physical_key {
+                            PhysicalKey::Code(KeyCode::Escape) | PhysicalKey::Code(KeyCode::Enter) => {
+                                self.error_dialog.hide();
+                                self.update_error_dialog_texture();
+                                if let Some(window) = &self.window {
+                                    window.request_redraw();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     // If search bar is visible and focused, handle text input
-                    if self.search_bar.is_visible() && self.search_bar.is_input_focused() {
+                    else if self.search_bar.is_visible() && self.search_bar.is_input_focused() {
                         match event.physical_key {
                             PhysicalKey::Code(KeyCode::Escape) => {
                                 self.search_bar.set_visible(false);

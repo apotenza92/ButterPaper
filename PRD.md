@@ -382,7 +382,7 @@ Wire up existing measurement system.
 - [x] Retina display support (ProMotion 120Hz)
 - [x] Target: 120fps on ProMotion displays, 60fps minimum
 - [x] Smooth scrolling with no frame drops
-- [ ] Proper error messages
+- [x] Proper error messages
 
 ---
 

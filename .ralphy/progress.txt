@@ -12618,3 +12618,72 @@ pub use frame_budget::{ChunkedOperation, FrameBudget, WorkYielder, FRAME_BUDGET_
   2. Smooth interpolation spreads scroll over multiple frames
   3. Adaptive interpolation speed for responsiveness
   4. Proper viewport clamping prevents oscillation at boundaries
+
+### Task: Implement proper error messages (Phase 4.3)
+
+**Status:** Complete
+
+**Changes:**
+Added a comprehensive error dialog system to display user-facing error messages instead of just printing to stderr. This includes:
+
+1. **New ErrorDialog Component** (crates/ui/src/error_dialog.rs):
+   - GPU-rendered modal dialog for displaying errors to users
+   - Three severity levels: Error, Warning, Info with distinct visual styling
+   - Title bar with severity-appropriate icon (red/amber/blue)
+   - Word-wrapped message display
+   - OK button to dismiss
+   - Keyboard support (Enter/Escape to dismiss)
+   - Auto-dismiss timeout option
+   - Helper methods for common errors:
+     - `show_pdf_load_error()` - PDF file open failures
+     - `show_save_error()` - Document save failures
+     - `show_clipboard_error()` - Clipboard copy failures
+     - `show_export_error()` - Export format failures
+     - `show_render_error()` - Page render failures
+   - 14 unit tests for dialog functionality
+
+2. **Integration in main.rs**:
+   - Added ErrorDialog to App struct with texture rendering
+   - Error dialog rendered on top of all other UI elements
+   - Click handling: blocks all other clicks when visible
+   - Keyboard handling: Enter/Escape dismisses dialog
+   - Viewport resize support to recenter dialog
+
+3. **Error Scenarios Now Showing Dialog**:
+   - PDF load failures show error dialog with filename and error message
+   - Document save failures show error dialog
+   - Save with annotations fallback shows warning dialog
+   - Clipboard copy failures show error dialog
+   - All errors still print to eprintln for debugging
+
+**Files Modified:**
+- crates/ui/src/lib.rs: Added error_dialog module
+- crates/ui/src/error_dialog.rs: New file (700+ lines with 14 tests)
+- crates/app/src/main.rs:
+  - Added ErrorDialogTexture struct
+  - Added error_dialog and error_dialog_texture fields to App
+  - Added update_error_dialog_texture() and draw_error_dialog_elements()
+  - Added error dialog rendering in draw loop (after calibration dialog)
+  - Added error dialog click handling (first in priority)
+  - Added error dialog keyboard handling (Enter/Escape)
+  - Modified load_pdf() to show error dialog on failure
+  - Modified save_document() to show error dialog on failure
+  - Modified save_document_as() to show error dialog on failure
+  - Modified copy_selection_to_clipboard() to show error dialog on failure
+- PRD.md: Marked task complete
+
+**Test Results:**
+- 14 new error_dialog tests pass
+- All 700+ workspace tests pass
+- Clippy passes (warnings only, no errors)
+
+**Technical Details:**
+- Error dialog uses same GPU-rendered approach as CalibrationDialog
+- Dialog centers itself on viewport resize
+- Message text wraps at ~50 characters per line
+- Error severity determines icon/title bar color:
+  - Error: Red title bar
+  - Warning: Amber/orange title bar
+  - Info: Blue title bar
+- Dialog blocks all input when visible (modal behavior)
+- Texture rendered to Metal surface using blit encoder

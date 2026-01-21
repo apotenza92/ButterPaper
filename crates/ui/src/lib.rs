@@ -4,6 +4,7 @@
 
 pub mod calibration_dialog;
 pub mod compositor;
+pub mod error_dialog;
 pub mod gpu;
 pub mod input;
 pub mod note_popup;
