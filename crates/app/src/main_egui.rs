@@ -56,6 +56,84 @@ struct PdfEditorApp {
 
     // UI state
     sidebar_scroll_to_current: bool,
+
+    // Dialogs
+    error_dialog: Option<ErrorDialogState>,
+    calibration_dialog: Option<CalibrationDialogState>,
+    search_bar: SearchBarState,
+}
+
+/// Error dialog state
+struct ErrorDialogState {
+    severity: ErrorSeverity,
+    title: String,
+    message: String,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ErrorSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+impl ErrorSeverity {
+    fn icon(&self) -> &'static str {
+        match self {
+            ErrorSeverity::Error => "❌",
+            ErrorSeverity::Warning => "⚠️",
+            ErrorSeverity::Info => "ℹ️",
+        }
+    }
+
+    fn title(&self) -> &'static str {
+        match self {
+            ErrorSeverity::Error => "Error",
+            ErrorSeverity::Warning => "Warning",
+            ErrorSeverity::Info => "Notice",
+        }
+    }
+}
+
+/// Calibration dialog state
+struct CalibrationDialogState {
+    distance_input: String,
+    selected_unit_index: usize,
+    page_distance: f32,
+}
+
+const CALIBRATION_UNITS: [&str; 6] = ["m", "ft", "cm", "mm", "in", "yd"];
+
+impl CalibrationDialogState {
+    fn new(page_distance: f32) -> Self {
+        Self {
+            distance_input: String::new(),
+            selected_unit_index: 0,
+            page_distance,
+        }
+    }
+
+    fn selected_unit(&self) -> &'static str {
+        CALIBRATION_UNITS[self.selected_unit_index]
+    }
+
+    fn cycle_unit(&mut self) {
+        self.selected_unit_index = (self.selected_unit_index + 1) % CALIBRATION_UNITS.len();
+    }
+
+    fn parse_distance(&self) -> Option<f32> {
+        self.distance_input.parse::<f32>().ok().filter(|&v| v > 0.0)
+    }
+}
+
+/// Search bar state
+#[derive(Default)]
+struct SearchBarState {
+    visible: bool,
+    query: String,
+    current_match: usize,
+    total_matches: usize,
+    case_sensitive: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -86,7 +164,18 @@ impl PdfEditorApp {
             current_tool: Tool::default(),
             thumbnails: HashMap::new(),
             sidebar_scroll_to_current: false,
+            error_dialog: None,
+            calibration_dialog: None,
+            search_bar: SearchBarState::default(),
         }
+    }
+
+    fn show_error(&mut self, severity: ErrorSeverity, message: impl Into<String>) {
+        self.error_dialog = Some(ErrorDialogState {
+            severity,
+            title: severity.title().to_string(),
+            message: message.into(),
+        });
     }
 
     /// Open a PDF file using the file picker
@@ -111,7 +200,7 @@ impl PdfEditorApp {
                 self.sidebar_scroll_to_current = true;
             }
             Err(e) => {
-                eprintln!("Failed to open PDF: {}", e);
+                self.show_error(ErrorSeverity::Error, format!("Failed to open PDF: {}", e));
             }
         }
     }
@@ -157,9 +246,53 @@ impl PdfEditorApp {
 
 impl eframe::App for PdfEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_keyboard_shortcuts(ctx);
         self.draw_toolbar(ctx);
+        self.draw_search_bar(ctx);
         self.draw_sidebar(ctx);
         self.draw_viewport(ctx);
+        self.draw_error_dialog(ctx);
+        self.draw_calibration_dialog(ctx);
+    }
+}
+
+impl PdfEditorApp {
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
+        let modifiers = ctx.input(|i| i.modifiers);
+        let cmd_or_ctrl = modifiers.command || modifiers.ctrl;
+
+        ctx.input(|i| {
+            // Cmd/Ctrl+F: Open search
+            if cmd_or_ctrl && i.key_pressed(egui::Key::F) {
+                self.search_bar.visible = true;
+            }
+
+            // Escape: Close dialogs/search
+            if i.key_pressed(egui::Key::Escape) {
+                if self.error_dialog.is_some() {
+                    self.error_dialog = None;
+                } else if self.calibration_dialog.is_some() {
+                    self.calibration_dialog = None;
+                } else if self.search_bar.visible {
+                    self.search_bar.visible = false;
+                    self.search_bar.query.clear();
+                }
+            }
+
+            // Enter in search: go to next match
+            if self.search_bar.visible
+                && i.key_pressed(egui::Key::Enter)
+                && self.search_bar.total_matches > 0
+            {
+                if modifiers.shift {
+                    if self.search_bar.current_match > 1 {
+                        self.search_bar.current_match -= 1;
+                    }
+                } else if self.search_bar.current_match < self.search_bar.total_matches {
+                    self.search_bar.current_match += 1;
+                }
+            }
+        });
     }
 }
 
@@ -334,5 +467,153 @@ impl PdfEditorApp {
                 ));
             });
         });
+    }
+
+    fn draw_search_bar(&mut self, ctx: &egui::Context) {
+        if !self.search_bar.visible {
+            return;
+        }
+
+        egui::TopBottomPanel::top("search_bar")
+            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(8.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // Search input
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.search_bar.query)
+                            .hint_text("Search...")
+                            .desired_width(200.0),
+                    );
+
+                    // Auto-focus on open
+                    if response.gained_focus() || self.search_bar.query.is_empty() {
+                        response.request_focus();
+                    }
+
+                    ui.separator();
+
+                    // Match count
+                    if self.search_bar.total_matches > 0 {
+                        ui.label(format!(
+                            "{} / {}",
+                            self.search_bar.current_match, self.search_bar.total_matches
+                        ));
+                    } else if !self.search_bar.query.is_empty() {
+                        ui.weak("No matches");
+                    }
+
+                    // Navigation buttons
+                    if ui.button("▲").clicked() && self.search_bar.current_match > 1 {
+                        self.search_bar.current_match -= 1;
+                    }
+                    if ui
+                        .button("▼")
+                        .clicked()
+                        && self.search_bar.current_match < self.search_bar.total_matches
+                    {
+                        self.search_bar.current_match += 1;
+                    }
+
+                    ui.separator();
+
+                    // Case sensitive toggle
+                    ui.toggle_value(&mut self.search_bar.case_sensitive, "Aa")
+                        .on_hover_text("Case sensitive");
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("✕").clicked() {
+                            self.search_bar.visible = false;
+                            self.search_bar.query.clear();
+                            self.search_bar.current_match = 0;
+                            self.search_bar.total_matches = 0;
+                        }
+                    });
+                });
+            });
+    }
+
+    fn draw_error_dialog(&mut self, ctx: &egui::Context) {
+        let Some(error) = &self.error_dialog else {
+            return;
+        };
+
+        let title = format!("{} {}", error.severity.icon(), error.title);
+        let message = error.message.clone();
+
+        let mut should_close = false;
+        egui::Window::new(title)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(&message);
+                ui.add_space(12.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    if ui.button("OK").clicked() {
+                        should_close = true;
+                    }
+                });
+            });
+
+        if should_close {
+            self.error_dialog = None;
+        }
+    }
+
+    fn draw_calibration_dialog(&mut self, ctx: &egui::Context) {
+        let Some(cal) = &mut self.calibration_dialog else {
+            return;
+        };
+
+        let mut should_close = false;
+        let mut confirmed = false;
+
+        egui::Window::new("Calibrate Measurement")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!("Page distance: {:.2} pts", cal.page_distance));
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    ui.label("Known distance:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut cal.distance_input)
+                            .desired_width(80.0)
+                            .hint_text("0.0"),
+                    );
+
+                    if ui.button(cal.selected_unit()).clicked() {
+                        cal.cycle_unit();
+                    }
+                });
+
+                ui.add_space(12.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        should_close = true;
+                    }
+                    if ui
+                        .add_enabled(cal.parse_distance().is_some(), egui::Button::new("OK"))
+                        .clicked()
+                    {
+                        confirmed = true;
+                        should_close = true;
+                    }
+                });
+            });
+
+        if should_close {
+            if confirmed {
+                if let Some(cal) = &self.calibration_dialog {
+                    if let Some(_distance) = cal.parse_distance() {
+                        // TODO: Apply calibration to measurement tool
+                    }
+                }
+            }
+            self.calibration_dialog = None;
+        }
     }
 }
