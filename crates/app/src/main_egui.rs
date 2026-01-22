@@ -7,6 +7,64 @@ use pdf_editor_render::PdfDocument;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Apply custom styling for improved visual polish
+fn apply_custom_style(ctx: &egui::Context) {
+    let mut style = (*ctx.style()).clone();
+
+    // Increase font sizes for better readability
+    style.text_styles = [
+        (egui::TextStyle::Small, egui::FontId::proportional(13.0)),
+        (egui::TextStyle::Body, egui::FontId::proportional(15.0)),
+        (egui::TextStyle::Button, egui::FontId::proportional(15.0)),
+        (egui::TextStyle::Heading, egui::FontId::proportional(20.0)),
+        (egui::TextStyle::Monospace, egui::FontId::monospace(14.0)),
+    ]
+    .into();
+
+    // Increase spacing for breathing room
+    style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+    style.spacing.button_padding = egui::vec2(12.0, 6.0);
+    style.spacing.window_margin = egui::Margin::same(16);
+    style.spacing.menu_margin = egui::Margin::same(10);
+    style.spacing.combo_width = 120.0;
+    style.spacing.icon_width = 18.0;
+    style.spacing.icon_spacing = 6.0;
+
+    // Rounded corners for modern look
+    style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.widgets.open.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.window_corner_radius = egui::CornerRadius::same(10);
+    style.visuals.menu_corner_radius = egui::CornerRadius::same(8);
+
+    // Subtle widget expansion on hover for visual feedback
+    style.visuals.widgets.hovered.expansion = 1.0;
+    style.visuals.widgets.active.expansion = 0.5;
+
+    // Better stroke/border visibility for interactive elements
+    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(140));
+    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, egui::Color32::from_gray(180));
+    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, egui::Color32::from_gray(200));
+
+    // Window shadow for depth
+    style.visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [4, 6],
+        blur: 12,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(40),
+    };
+    style.visuals.window_shadow = egui::epaint::Shadow {
+        offset: [6, 8],
+        blur: 16,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(50),
+    };
+
+    ctx.set_style(style);
+}
+
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -20,7 +78,8 @@ fn main() -> eframe::Result {
         "PDF Editor",
         options,
         Box::new(|cc| {
-            // Using default egui visuals without customization
+            // Apply custom styling for better visual polish
+            apply_custom_style(&cc.egui_ctx);
             Ok(Box::new(PdfEditorApp::new(cc)))
         }),
     )
@@ -360,180 +419,250 @@ impl PdfEditorApp {
 
 impl PdfEditorApp {
     fn draw_toolbar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(8.0);
+        let toolbar_frame = egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .fill(ctx.style().visuals.panel_fill);
 
-                // File menu
-                if ui.button("📂 Open").clicked() {
-                    self.open_file();
-                }
-
-                ui.separator();
-
-                // Navigation (only if document loaded)
-                ui.add_enabled_ui(self.document.is_some(), |ui| {
-                    if ui.button("◀").clicked() && self.current_page > 0 {
-                        self.current_page -= 1;
-                        self.sidebar_scroll_to_current = true;
+        egui::TopBottomPanel::top("toolbar")
+            .frame(toolbar_frame)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // File group
+                    if ui.button("📂 Open").clicked() {
+                        self.open_file();
                     }
 
-                    let page_text = if self.total_pages > 0 {
-                        format!("{} / {}", self.current_page + 1, self.total_pages)
-                    } else {
-                        "— / —".to_string()
-                    };
-                    ui.label(page_text);
+                    self.toolbar_separator(ui);
 
-                    if ui.button("▶").clicked() && self.current_page + 1 < self.total_pages {
-                        self.current_page += 1;
-                        self.sidebar_scroll_to_current = true;
-                    }
-
-                    ui.separator();
-
-                    // View mode dropdown
-                    egui::ComboBox::from_id_salt("view_mode")
-                        .selected_text(self.view_mode.label())
-                        .width(90.0)
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_value(&mut self.view_mode, ViewMode::Continuous, ViewMode::Continuous.label()).clicked() {
-                                self.viewport_offset = egui::Vec2::ZERO;
+                    // Navigation group (only if document loaded)
+                    ui.add_enabled_ui(self.document.is_some(), |ui| {
+                        // Navigation controls
+                        ui.horizontal(|ui| {
+                            if ui.button("◀").on_hover_text("Previous page").clicked()
+                                && self.current_page > 0
+                            {
+                                self.current_page -= 1;
+                                self.sidebar_scroll_to_current = true;
                             }
-                            if ui.selectable_value(&mut self.view_mode, ViewMode::SinglePage, ViewMode::SinglePage.label()).clicked() {
-                                self.viewport_offset = egui::Vec2::ZERO;
+
+                            let page_text = if self.total_pages > 0 {
+                                format!("{} / {}", self.current_page + 1, self.total_pages)
+                            } else {
+                                "— / —".to_string()
+                            };
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new(page_text).strong());
+                            ui.add_space(4.0);
+
+                            if ui.button("▶").on_hover_text("Next page").clicked()
+                                && self.current_page + 1 < self.total_pages
+                            {
+                                self.current_page += 1;
+                                self.sidebar_scroll_to_current = true;
                             }
                         });
 
-                    ui.separator();
+                        self.toolbar_separator(ui);
 
-                    // Fit mode dropdown
-                    egui::ComboBox::from_id_salt("fit_mode")
-                        .selected_text(if self.fit_mode == FitMode::Custom {
-                            format!("{}%", self.zoom_level as i32)
-                        } else {
-                            self.fit_mode.label().to_string()
-                        })
-                        .width(80.0)
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_value(&mut self.fit_mode, FitMode::FitPage, FitMode::FitPage.label()).clicked() {
+                        // View mode group
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_salt("view_mode")
+                                .selected_text(self.view_mode.label())
+                                .width(100.0)
+                                .show_ui(ui, |ui| {
+                                    if ui.selectable_value(
+                                        &mut self.view_mode,
+                                        ViewMode::Continuous,
+                                        ViewMode::Continuous.label(),
+                                    ).clicked() {
+                                        self.viewport_offset = egui::Vec2::ZERO;
+                                    }
+                                    if ui.selectable_value(
+                                        &mut self.view_mode,
+                                        ViewMode::SinglePage,
+                                        ViewMode::SinglePage.label(),
+                                    ).clicked() {
+                                        self.viewport_offset = egui::Vec2::ZERO;
+                                    }
+                                });
+                        });
+
+                        self.toolbar_separator(ui);
+
+                        // Zoom group
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_salt("fit_mode")
+                                .selected_text(if self.fit_mode == FitMode::Custom {
+                                    format!("{}%", self.zoom_level as i32)
+                                } else {
+                                    self.fit_mode.label().to_string()
+                                })
+                                .width(90.0)
+                                .show_ui(ui, |ui| {
+                                    if ui.selectable_value(
+                                        &mut self.fit_mode,
+                                        FitMode::FitPage,
+                                        FitMode::FitPage.label(),
+                                    ).clicked() {
+                                        self.viewport_cache.clear();
+                                    }
+                                    if ui.selectable_value(
+                                        &mut self.fit_mode,
+                                        FitMode::FitWidth,
+                                        FitMode::FitWidth.label(),
+                                    ).clicked() {
+                                        self.viewport_cache.clear();
+                                    }
+                                    if ui.selectable_value(
+                                        &mut self.fit_mode,
+                                        FitMode::ActualSize,
+                                        FitMode::ActualSize.label(),
+                                    ).clicked() {
+                                        self.zoom_level = 100.0;
+                                        self.viewport_cache.clear();
+                                    }
+                                });
+
+                            if ui.button("−").on_hover_text("Zoom out").clicked() {
+                                self.zoom_level = (self.zoom_level - 10.0).max(25.0);
+                                self.fit_mode = FitMode::Custom;
                                 self.viewport_cache.clear();
                             }
-                            if ui.selectable_value(&mut self.fit_mode, FitMode::FitWidth, FitMode::FitWidth.label()).clicked() {
-                                self.viewport_cache.clear();
-                            }
-                            if ui.selectable_value(&mut self.fit_mode, FitMode::ActualSize, FitMode::ActualSize.label()).clicked() {
-                                self.zoom_level = 100.0;
+
+                            if ui.button("+").on_hover_text("Zoom in").clicked() {
+                                self.zoom_level = (self.zoom_level + 10.0).min(500.0);
+                                self.fit_mode = FitMode::Custom;
                                 self.viewport_cache.clear();
                             }
                         });
 
-                    // Manual zoom controls (switch to Custom fit mode)
-                    if ui.button("−").clicked() {
-                        self.zoom_level = (self.zoom_level - 10.0).max(25.0);
-                        self.fit_mode = FitMode::Custom;
-                        self.viewport_cache.clear();
-                    }
+                        self.toolbar_separator(ui);
 
-                    if ui.button("+").clicked() {
-                        self.zoom_level = (self.zoom_level + 10.0).min(500.0);
-                        self.fit_mode = FitMode::Custom;
-                        self.viewport_cache.clear();
-                    }
-
-                    ui.separator();
-
-                    // Tools
-                    self.tool_button(ui, Tool::Select, "Select");
-                    self.tool_button(ui, Tool::Hand, "Hand");
-                    self.tool_button(ui, Tool::Text, "Text");
-                    self.tool_button(ui, Tool::Highlight, "Highlight");
-                    self.tool_button(ui, Tool::Comment, "Comment");
-                    self.tool_button(ui, Tool::Measure, "Measure");
-                    self.tool_button(ui, Tool::Freedraw, "Draw");
+                        // Tools group
+                        ui.horizontal(|ui| {
+                            self.tool_button(ui, Tool::Select, "Select");
+                            self.tool_button(ui, Tool::Hand, "Hand");
+                            self.tool_button(ui, Tool::Text, "Text");
+                            self.tool_button(ui, Tool::Highlight, "Highlight");
+                            self.tool_button(ui, Tool::Comment, "Comment");
+                            self.tool_button(ui, Tool::Measure, "Measure");
+                            self.tool_button(ui, Tool::Freedraw, "Draw");
+                        });
+                    });
                 });
             });
-        });
+    }
+
+    /// Draw a visual separator for toolbar groups
+    fn toolbar_separator(&self, ui: &mut egui::Ui) {
+        ui.add_space(6.0);
+        ui.separator();
+        ui.add_space(6.0);
     }
 
     fn tool_button(&mut self, ui: &mut egui::Ui, tool: Tool, label: &str) {
         let is_selected = self.current_tool == tool;
-        if ui.selectable_label(is_selected, label).clicked() {
+        let text = if is_selected {
+            egui::RichText::new(label).strong()
+        } else {
+            egui::RichText::new(label)
+        };
+        let response = ui.selectable_label(is_selected, text);
+        if response.clicked() {
             self.current_tool = tool;
         }
     }
 
     fn draw_sidebar(&mut self, ctx: &egui::Context) {
+        let sidebar_frame = egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(8, 12))
+            .fill(ctx.style().visuals.panel_fill);
+
         egui::SidePanel::left("thumbnails")
-            .default_width(130.0)
+            .default_width(140.0)
             .resizable(true)
+            .frame(sidebar_frame)
             .show(ctx, |ui| {
+                ui.add_space(4.0);
                 ui.heading("Pages");
+                ui.add_space(8.0);
                 ui.separator();
+                ui.add_space(8.0);
 
                 if self.document.is_none() {
-                    ui.weak("No document loaded");
+                    ui.centered_and_justified(|ui| {
+                        ui.weak("No document loaded");
+                    });
                     return;
                 }
 
                 // Render visible thumbnails lazily
-                let scroll = egui::ScrollArea::vertical().show(ui, |ui| {
-                    for page in 0..self.total_pages {
-                        let is_current = page == self.current_page;
+                let scroll = egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for page in 0..self.total_pages {
+                            let is_current = page == self.current_page;
 
-                        // Render thumbnail if not cached
-                        self.render_thumbnail(ctx, page);
+                            // Render thumbnail if not cached
+                            self.render_thumbnail(ctx, page);
 
-                        // Frame for selection highlight
-                        let frame = if is_current {
-                            egui::Frame::NONE
-                                .stroke(egui::Stroke::new(2.0, ui.visuals().selection.bg_fill))
-                                .inner_margin(2.0)
-                                .corner_radius(4.0)
-                        } else {
-                            egui::Frame::NONE
-                                .stroke(egui::Stroke::new(1.0, ui.visuals().widgets.inactive.bg_stroke.color))
-                                .inner_margin(2.0)
-                                .corner_radius(4.0)
-                        };
+                            // Frame for selection highlight with better visual feedback
+                            let frame = if is_current {
+                                egui::Frame::NONE
+                                    .stroke(egui::Stroke::new(3.0, ui.visuals().selection.bg_fill))
+                                    .inner_margin(4.0)
+                                    .corner_radius(6.0)
+                                    .fill(ui.visuals().selection.bg_fill.gamma_multiply(0.15))
+                            } else {
+                                egui::Frame::NONE
+                                    .stroke(egui::Stroke::new(1.0, ui.visuals().widgets.inactive.bg_stroke.color))
+                                    .inner_margin(4.0)
+                                    .corner_radius(6.0)
+                            };
 
-                        let response = frame.show(ui, |ui| {
-                            ui.vertical_centered(|ui| {
-                                // Show thumbnail or placeholder
-                                if let Some(thumb) = self.thumbnails.get(&page) {
-                                    ui.image(&thumb.handle);
-                                } else {
-                                    // Placeholder while loading
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(100.0, 140.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        4.0,
-                                        ui.visuals().widgets.inactive.bg_fill,
-                                    );
-                                }
+                            let response = frame.show(ui, |ui| {
+                                ui.vertical_centered(|ui| {
+                                    // Show thumbnail or placeholder
+                                    if let Some(thumb) = self.thumbnails.get(&page) {
+                                        ui.image(&thumb.handle);
+                                    } else {
+                                        // Placeholder while loading
+                                        let (rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(100.0, 140.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().rect_filled(
+                                            rect,
+                                            6.0,
+                                            ui.visuals().widgets.inactive.bg_fill,
+                                        );
+                                    }
 
-                                // Page number
-                                ui.small(format!("{}", page + 1));
+                                    ui.add_space(4.0);
+                                    // Page number with emphasis for current page
+                                    let page_label = if is_current {
+                                        egui::RichText::new(format!("{}", page + 1)).strong()
+                                    } else {
+                                        egui::RichText::new(format!("{}", page + 1))
+                                    };
+                                    ui.label(page_label);
+                                });
                             });
-                        });
 
-                        // Handle click
-                        if response.response.interact(egui::Sense::click()).clicked() {
-                            self.go_to_page(page);
+                            // Handle click
+                            if response.response.interact(egui::Sense::click()).clicked() {
+                                self.go_to_page(page);
+                            }
+
+                            // Scroll to current page if needed
+                            if is_current && self.sidebar_scroll_to_current {
+                                response.response.scroll_to_me(Some(egui::Align::Center));
+                                self.sidebar_scroll_to_current = false;
+                            }
+
+                            ui.add_space(8.0);
                         }
-
-                        // Scroll to current page if needed
-                        if is_current && self.sidebar_scroll_to_current {
-                            response.response.scroll_to_me(Some(egui::Align::Center));
-                            self.sidebar_scroll_to_current = false;
-                        }
-
-                        ui.add_space(4.0);
-                    }
-                });
+                    });
 
                 let _ = scroll;
             });
