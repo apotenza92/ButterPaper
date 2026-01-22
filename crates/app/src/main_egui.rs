@@ -20,17 +20,10 @@ fn main() -> eframe::Result {
         "PDF Editor",
         options,
         Box::new(|cc| {
-            configure_visuals(&cc.egui_ctx);
+            // Using default egui visuals without customization
             Ok(Box::new(PdfEditorApp::new(cc)))
         }),
     )
-}
-
-fn configure_visuals(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
-    style.spacing.button_padding = egui::vec2(8.0, 4.0);
-    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    ctx.set_style(style);
 }
 
 /// Thumbnail texture for a page
@@ -45,11 +38,9 @@ struct ViewportCacheKey {
     zoom_percent: u32,
 }
 
-/// Viewport texture with dimensions
+/// Viewport texture
 struct ViewportTexture {
     handle: egui::TextureHandle,
-    width: f32,
-    height: f32,
 }
 
 struct PdfEditorApp {
@@ -64,6 +55,8 @@ struct PdfEditorApp {
     // View
     zoom_level: f32,
     current_tool: Tool,
+    view_mode: ViewMode,
+    fit_mode: FitMode,
 
     // Thumbnail cache: page_index -> texture
     thumbnails: HashMap<usize, ThumbnailTexture>,
@@ -73,6 +66,9 @@ struct PdfEditorApp {
 
     // Viewport pan offset (for Hand tool dragging)
     viewport_offset: egui::Vec2,
+
+    // Cached viewport size for fit calculations
+    last_viewport_size: egui::Vec2,
 
     // UI state
     sidebar_scroll_to_current: bool,
@@ -175,6 +171,42 @@ impl Default for Tool {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Default)]
+enum ViewMode {
+    #[default]
+    Continuous,
+    SinglePage,
+}
+
+impl ViewMode {
+    fn label(&self) -> &'static str {
+        match self {
+            ViewMode::Continuous => "Continuous",
+            ViewMode::SinglePage => "Single Page",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Default)]
+enum FitMode {
+    #[default]
+    FitPage,
+    FitWidth,
+    ActualSize,
+    Custom,
+}
+
+impl FitMode {
+    fn label(&self) -> &'static str {
+        match self {
+            FitMode::FitPage => "Fit Page",
+            FitMode::FitWidth => "Fit Width",
+            FitMode::ActualSize => "100%",
+            FitMode::Custom => "Custom",
+        }
+    }
+}
+
 impl PdfEditorApp {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Self {
@@ -184,9 +216,12 @@ impl PdfEditorApp {
             total_pages: 0,
             zoom_level: 100.0,
             current_tool: Tool::default(),
+            view_mode: ViewMode::default(),
+            fit_mode: FitMode::default(),
             thumbnails: HashMap::new(),
             viewport_cache: HashMap::new(),
             viewport_offset: egui::Vec2::ZERO,
+            last_viewport_size: egui::Vec2::ZERO,
             sidebar_scroll_to_current: false,
             error_dialog: None,
             calibration_dialog: None,
@@ -357,26 +392,53 @@ impl PdfEditorApp {
 
                     ui.separator();
 
-                    // Zoom controls
-                    if ui.button("−").clicked() {
-                        self.zoom_level = (self.zoom_level - 10.0).max(25.0);
-                    }
-
-                    egui::ComboBox::from_id_salt("zoom")
-                        .selected_text(format!("{}%", self.zoom_level as i32))
-                        .width(70.0)
+                    // View mode dropdown
+                    egui::ComboBox::from_id_salt("view_mode")
+                        .selected_text(self.view_mode.label())
+                        .width(90.0)
                         .show_ui(ui, |ui| {
-                            for &level in &[25.0, 50.0, 75.0, 100.0, 125.0, 150.0, 200.0, 300.0] {
-                                ui.selectable_value(
-                                    &mut self.zoom_level,
-                                    level,
-                                    format!("{}%", level as i32),
-                                );
+                            if ui.selectable_value(&mut self.view_mode, ViewMode::Continuous, ViewMode::Continuous.label()).clicked() {
+                                self.viewport_offset = egui::Vec2::ZERO;
+                            }
+                            if ui.selectable_value(&mut self.view_mode, ViewMode::SinglePage, ViewMode::SinglePage.label()).clicked() {
+                                self.viewport_offset = egui::Vec2::ZERO;
                             }
                         });
 
+                    ui.separator();
+
+                    // Fit mode dropdown
+                    egui::ComboBox::from_id_salt("fit_mode")
+                        .selected_text(if self.fit_mode == FitMode::Custom {
+                            format!("{}%", self.zoom_level as i32)
+                        } else {
+                            self.fit_mode.label().to_string()
+                        })
+                        .width(80.0)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_value(&mut self.fit_mode, FitMode::FitPage, FitMode::FitPage.label()).clicked() {
+                                self.viewport_cache.clear();
+                            }
+                            if ui.selectable_value(&mut self.fit_mode, FitMode::FitWidth, FitMode::FitWidth.label()).clicked() {
+                                self.viewport_cache.clear();
+                            }
+                            if ui.selectable_value(&mut self.fit_mode, FitMode::ActualSize, FitMode::ActualSize.label()).clicked() {
+                                self.zoom_level = 100.0;
+                                self.viewport_cache.clear();
+                            }
+                        });
+
+                    // Manual zoom controls (switch to Custom fit mode)
+                    if ui.button("−").clicked() {
+                        self.zoom_level = (self.zoom_level - 10.0).max(25.0);
+                        self.fit_mode = FitMode::Custom;
+                        self.viewport_cache.clear();
+                    }
+
                     if ui.button("+").clicked() {
                         self.zoom_level = (self.zoom_level + 10.0).min(500.0);
+                        self.fit_mode = FitMode::Custom;
+                        self.viewport_cache.clear();
                     }
 
                     ui.separator();
@@ -477,24 +539,49 @@ impl PdfEditorApp {
             });
     }
 
-    fn render_viewport_page(&mut self, ctx: &egui::Context) -> Option<ViewportCacheKey> {
-        let pdf = self.document.as_ref()?;
-        let key = ViewportCacheKey {
-            page: self.current_page,
-            zoom_percent: self.zoom_level as u32,
-        };
+    fn calculate_effective_zoom(&self, page_width: f32, page_height: f32, viewport_size: egui::Vec2) -> f32 {
+        const PADDING: f32 = 20.0;
+        let available_width = (viewport_size.x - PADDING * 2.0).max(100.0);
+        let available_height = (viewport_size.y - PADDING * 2.0).max(100.0);
 
-        if self.viewport_cache.contains_key(&key) {
-            return Some(key);
+        match self.fit_mode {
+            FitMode::FitPage => {
+                let scale_x = available_width / page_width;
+                let scale_y = available_height / page_height;
+                (scale_x.min(scale_y) * 100.0).clamp(10.0, 500.0)
+            }
+            FitMode::FitWidth => {
+                (available_width / page_width * 100.0).clamp(10.0, 500.0)
+            }
+            FitMode::ActualSize | FitMode::Custom => self.zoom_level,
         }
+    }
+
+    fn render_viewport_page(&mut self, ctx: &egui::Context, viewport_size: egui::Vec2) -> Option<(ViewportCacheKey, f32, f32)> {
+        let pdf = self.document.as_ref()?;
 
         let page = pdf.get_page(self.current_page as u16).ok()?;
         let page_width = page.width().value;
         let page_height = page.height().value;
 
-        let scale = self.zoom_level / 100.0;
-        let render_width = (page_width * scale) as u32;
-        let render_height = (page_height * scale) as u32;
+        let effective_zoom = self.calculate_effective_zoom(page_width, page_height, viewport_size);
+        
+        let key = ViewportCacheKey {
+            page: self.current_page,
+            zoom_percent: effective_zoom as u32,
+        };
+
+        if self.viewport_cache.contains_key(&key) {
+            let scale = effective_zoom / 100.0;
+            return Some((key, page_width * scale, page_height * scale));
+        }
+
+        let pixels_per_point = ctx.pixels_per_point();
+        let scale = effective_zoom / 100.0;
+        let display_width = page_width * scale;
+        let display_height = page_height * scale;
+        let render_width = (display_width * pixels_per_point) as u32;
+        let render_height = (display_height * pixels_per_point) as u32;
 
         match pdf.render_page_rgba(self.current_page as u16, render_width, render_height) {
             Ok(rgba_data) => {
@@ -503,19 +590,12 @@ impl PdfEditorApp {
                     &rgba_data,
                 );
                 let handle = ctx.load_texture(
-                    format!("viewport_{}_{}", self.current_page, self.zoom_level as u32),
+                    format!("viewport_{}_{}", self.current_page, effective_zoom as u32),
                     image,
                     egui::TextureOptions::LINEAR,
                 );
-                self.viewport_cache.insert(
-                    key,
-                    ViewportTexture {
-                        handle,
-                        width: render_width as f32,
-                        height: render_height as f32,
-                    },
-                );
-                Some(key)
+                self.viewport_cache.insert(key, ViewportTexture { handle });
+                Some((key, display_width, display_height))
             }
             Err(e) => {
                 eprintln!("Failed to render page {}: {}", self.current_page, e);
@@ -533,15 +613,45 @@ impl PdfEditorApp {
                 return;
             }
 
-            let key = self.render_viewport_page(ctx);
+            let viewport_size = ui.available_size();
+            self.last_viewport_size = viewport_size;
 
-            egui::ScrollArea::both()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if let Some(key) = key {
-                        if let Some(texture) = self.viewport_cache.get(&key) {
-                            let size = egui::vec2(texture.width, texture.height);
+            let rendered = self.render_viewport_page(ctx, viewport_size);
 
+            // Handle scroll-to-navigate in single page mode
+            if self.view_mode == ViewMode::SinglePage {
+                let scroll_delta = ctx.input(|i| i.raw_scroll_delta);
+                if scroll_delta.y.abs() > 1.0 {
+                    if scroll_delta.y > 0.0 && self.current_page > 0 {
+                        // Scrolling up - go to previous page
+                        self.go_to_page(self.current_page - 1);
+                    } else if scroll_delta.y < 0.0 && self.current_page + 1 < self.total_pages {
+                        // Scrolling down - go to next page
+                        self.go_to_page(self.current_page + 1);
+                    }
+                }
+            }
+
+            let scroll_area = if self.view_mode == ViewMode::SinglePage {
+                // No scrollbars in single page mode - page should fit
+                egui::ScrollArea::neither()
+            } else {
+                egui::ScrollArea::both().auto_shrink([false, false])
+            };
+
+            scroll_area.show(ui, |ui| {
+                if let Some((key, page_width, page_height)) = rendered {
+                    if let Some(texture) = self.viewport_cache.get(&key) {
+                        let size = egui::vec2(page_width, page_height);
+
+                        // Center the page in the viewport
+                        let available = ui.available_size();
+                        let padding_x = ((available.x - size.x) / 2.0).max(0.0);
+                        let padding_y = ((available.y - size.y) / 2.0).max(0.0);
+
+                        ui.add_space(padding_y);
+                        ui.horizontal(|ui| {
+                            ui.add_space(padding_x);
                             let (rect, response) = ui.allocate_exact_size(size, egui::Sense::drag());
 
                             if response.dragged() && self.current_tool == Tool::Hand {
@@ -557,9 +667,10 @@ impl PdfEditorApp {
                                 ),
                                 egui::Color32::WHITE,
                             );
-                        }
+                        });
                     }
-                });
+                }
+            });
         });
     }
 
