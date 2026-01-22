@@ -91,6 +91,7 @@ struct ErrorDialogState {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 enum ErrorSeverity {
     Error,
     Warning,
@@ -125,6 +126,7 @@ struct CalibrationDialogState {
 const CALIBRATION_UNITS: [&str; 6] = ["m", "ft", "cm", "mm", "in", "yd"];
 
 impl CalibrationDialogState {
+    #[allow(dead_code)]
     fn new(page_distance: f32) -> Self {
         Self {
             distance_input: String::new(),
