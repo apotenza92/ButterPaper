@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useState } from 'react';
 import { usePdfState } from './hooks/usePdfState';
+import { TitleBar } from './components/TitleBar';
 import { Toolbar } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
 import { Viewport } from './components/Viewport';
@@ -116,6 +117,9 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen">
+      {/* Custom Titlebar */}
+      <TitleBar />
+
       {/* SearchBar (fixed overlay at top) */}
       <SearchBar
         isOpen={state.isSearchOpen}
