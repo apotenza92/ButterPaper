@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { renderPage, getPageDimensions } from '../lib/tauri';
-import { FitMode, Tool } from '../hooks/usePdfState';
+import { FitMode, Tool, ViewMode } from '../hooks/usePdfState';
 
 interface ViewportProps {
   filePath: string | null;
   currentPage: number;
+  pageCount: number;
   zoomPercent: number;
   fitMode: FitMode;
+  viewMode: ViewMode;
   activeTool: Tool;
+  onPageChange: (page: number) => void;
 }
 
 interface PageDimensions {
@@ -62,9 +65,12 @@ function calculateRenderSize(
 export function Viewport({
   filePath,
   currentPage,
+  pageCount,
   zoomPercent,
   fitMode,
+  viewMode,
   activeTool,
+  onPageChange,
 }: ViewportProps) {
   const [pageImage, setPageImage] = useState<string | null>(null);
   const [pageDimensions, setPageDimensions] = useState<PageDimensions | null>(null);
@@ -171,6 +177,26 @@ export function Viewport({
     setIsDragging(false);
   }, []);
 
+  // Single page mode: scroll to navigate pages
+  const lastWheelTime = useRef(0);
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (viewMode !== 'single-page') return;
+
+    // Throttle navigation to prevent rapid page changes
+    const now = Date.now();
+    if (now - lastWheelTime.current < 300) return;
+
+    if (e.deltaY > 0 && currentPage < pageCount - 1) {
+      // Scroll down → next page
+      lastWheelTime.current = now;
+      onPageChange(currentPage + 1);
+    } else if (e.deltaY < 0 && currentPage > 0) {
+      // Scroll up → previous page
+      lastWheelTime.current = now;
+      onPageChange(currentPage - 1);
+    }
+  }, [viewMode, currentPage, pageCount, onPageChange]);
+
   // Empty state
   if (!filePath) {
     return (
@@ -196,12 +222,13 @@ export function Viewport({
     >
       <div
         ref={scrollRef}
-        className={`w-full h-full ${needsScroll ? 'overflow-auto' : 'overflow-hidden flex items-center justify-center'}`}
+        className={`w-full h-full ${viewMode === 'single-page' || !needsScroll ? 'overflow-hidden flex items-center justify-center' : 'overflow-auto'}`}
         style={{ cursor: activeTool === 'hand' ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
+        onWheel={handleWheel}
       >
         {isLoading && !pageImage ? (
           <div className="flex items-center justify-center w-full h-full">

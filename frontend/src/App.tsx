@@ -15,6 +15,7 @@ function App() {
     prevPage,
     setZoom,
     setFitMode,
+    setViewMode,
     setTool,
     openSearch,
     closeSearch,
@@ -132,10 +133,12 @@ function App() {
         pageCount={state.pageCount}
         zoomPercent={state.zoomPercent}
         fitMode={state.fitMode}
+        viewMode={state.viewMode}
         activeTool={state.activeTool}
         onPageChange={goToPage}
         onZoomChange={setZoom}
         onFitModeChange={setFitMode}
+        onViewModeChange={setViewMode}
         onToolChange={setTool}
         onOpenFile={openFile}
         onSearchOpen={openSearch}
@@ -155,9 +158,12 @@ function App() {
         <Viewport
           filePath={state.filePath}
           currentPage={state.currentPage}
+          pageCount={state.pageCount}
           zoomPercent={state.zoomPercent}
           fitMode={state.fitMode}
+          viewMode={state.viewMode}
           activeTool={state.activeTool}
+          onPageChange={goToPage}
         />
       </div>
 

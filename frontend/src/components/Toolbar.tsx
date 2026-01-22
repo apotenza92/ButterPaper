@@ -1,15 +1,17 @@
 import { useState, useCallback, KeyboardEvent } from 'react';
-import { FitMode, Tool } from '../hooks/usePdfState';
+import { FitMode, Tool, ViewMode } from '../hooks/usePdfState';
 
 interface ToolbarProps {
   currentPage: number;
   pageCount: number;
   zoomPercent: number;
   fitMode: FitMode;
+  viewMode: ViewMode;
   activeTool: Tool;
   onPageChange: (page: number) => void;
   onZoomChange: (percent: number) => void;
   onFitModeChange: (mode: FitMode) => void;
+  onViewModeChange: (mode: ViewMode) => void;
   onToolChange: (tool: Tool) => void;
   onOpenFile: () => void;
   onSearchOpen: () => void;
@@ -24,10 +26,12 @@ export function Toolbar({
   pageCount,
   zoomPercent,
   fitMode,
+  viewMode,
   activeTool,
   onPageChange,
   onZoomChange,
   onFitModeChange,
+  onViewModeChange,
   onToolChange,
   onOpenFile,
   onSearchOpen,
@@ -125,6 +129,18 @@ export function Toolbar({
       </button>
 
       <div className="border-l border-gray-600 mx-2 h-6" />
+
+      {/* View mode section */}
+      <select
+        className="px-2 py-1 rounded bg-gray-700 text-white text-sm"
+        value={viewMode}
+        onChange={(e) => onViewModeChange(e.target.value as ViewMode)}
+        disabled={!hasPdf}
+        aria-label="View mode"
+      >
+        <option value="continuous">Continuous</option>
+        <option value="single-page">Single Page</option>
+      </select>
 
       {/* Zoom section */}
       <select
