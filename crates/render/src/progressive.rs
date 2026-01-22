@@ -8,8 +8,8 @@
 
 use crate::pdf::{PdfDocument, PdfResult};
 use crate::tile::{RenderedTile, TileCoordinate, TileId, TileProfile, TileRenderer};
-use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 /// Tile loading state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +84,13 @@ impl ProgressiveTileLoader {
         let mut results = Vec::new();
 
         // Stage 1: Render preview tile
-        let preview_id = TileId::new(page_index, coordinate, zoom_level, rotation, TileProfile::Preview);
+        let preview_id = TileId::new(
+            page_index,
+            coordinate,
+            zoom_level,
+            rotation,
+            TileProfile::Preview,
+        );
         let preview_tile = self.renderer.render_tile(document, &preview_id)?;
 
         // Update state
@@ -101,7 +107,13 @@ impl ProgressiveTileLoader {
         results.push(preview_tile);
 
         // Stage 2: Render crisp tile
-        let crisp_id = TileId::new(page_index, coordinate, zoom_level, rotation, TileProfile::Crisp);
+        let crisp_id = TileId::new(
+            page_index,
+            coordinate,
+            zoom_level,
+            rotation,
+            TileProfile::Crisp,
+        );
         let crisp_tile = self.renderer.render_tile(document, &crisp_id)?;
 
         // Update state
@@ -137,7 +149,9 @@ impl ProgressiveTileLoader {
         let page_width = page.width().value;
         let page_height = page.height().value;
 
-        let (columns, rows) = self.renderer.calculate_tile_grid(page_width, page_height, zoom_level);
+        let (columns, rows) =
+            self.renderer
+                .calculate_tile_grid(page_width, page_height, zoom_level);
 
         let mut results = Vec::new();
 
@@ -145,7 +159,13 @@ impl ProgressiveTileLoader {
         for y in 0..rows {
             for x in 0..columns {
                 let coordinate = TileCoordinate::new(x, y);
-                let preview_id = TileId::new(page_index, coordinate, zoom_level, rotation, TileProfile::Preview);
+                let preview_id = TileId::new(
+                    page_index,
+                    coordinate,
+                    zoom_level,
+                    rotation,
+                    TileProfile::Preview,
+                );
 
                 let preview_tile = self.renderer.render_tile(document, &preview_id)?;
 
@@ -168,7 +188,13 @@ impl ProgressiveTileLoader {
         for y in 0..rows {
             for x in 0..columns {
                 let coordinate = TileCoordinate::new(x, y);
-                let crisp_id = TileId::new(page_index, coordinate, zoom_level, rotation, TileProfile::Crisp);
+                let crisp_id = TileId::new(
+                    page_index,
+                    coordinate,
+                    zoom_level,
+                    rotation,
+                    TileProfile::Crisp,
+                );
 
                 let crisp_tile = self.renderer.render_tile(document, &crisp_id)?;
 
@@ -220,13 +246,7 @@ mod tests {
     fn test_tile_state_tracking() {
         let loader = ProgressiveTileLoader::new();
 
-        let tile_id = TileId::new(
-            0,
-            TileCoordinate::new(0, 0),
-            100,
-            0,
-            TileProfile::Preview,
-        );
+        let tile_id = TileId::new(0, TileCoordinate::new(0, 0), 100, 0, TileProfile::Preview);
 
         // Initially not loaded
         assert_eq!(loader.get_tile_state(&tile_id), TileState::NotLoaded);
@@ -283,16 +303,14 @@ mod tests {
         let preview_count_clone = preview_count.clone();
         let crisp_count_clone = crisp_count.clone();
 
-        let callback: ProgressCallback = Arc::new(move |_id, state, _tile| {
-            match state {
-                TileState::PreviewLoaded => {
-                    preview_count_clone.fetch_add(1, Ordering::SeqCst);
-                }
-                TileState::CrispLoaded => {
-                    crisp_count_clone.fetch_add(1, Ordering::SeqCst);
-                }
-                TileState::NotLoaded => {}
+        let callback: ProgressCallback = Arc::new(move |_id, state, _tile| match state {
+            TileState::PreviewLoaded => {
+                preview_count_clone.fetch_add(1, Ordering::SeqCst);
             }
+            TileState::CrispLoaded => {
+                crisp_count_clone.fetch_add(1, Ordering::SeqCst);
+            }
+            TileState::NotLoaded => {}
         });
 
         drop(callback); // Prevent unused variable warning

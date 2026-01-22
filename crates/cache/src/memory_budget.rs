@@ -60,9 +60,9 @@ impl Default for MemoryBudgetConfig {
         Self {
             // Default total budget: 768 MB (256 RAM + 512 GPU)
             total_budget: 768 * 1024 * 1024,
-            warning_threshold: 0.75,
-            critical_threshold: 0.90,
-            target_utilization: 0.70,
+            warning_threshold: 0.85,
+            critical_threshold: 0.95,
+            target_utilization: 0.80,
         }
     }
 }
@@ -508,8 +508,8 @@ mod tests {
     fn test_memory_budget_config() {
         let config = MemoryBudgetConfig::new(500);
         assert_eq!(config.total_budget, 500 * 1024 * 1024);
-        assert_eq!(config.warning_threshold, 0.75);
-        assert_eq!(config.critical_threshold, 0.90);
+        assert_eq!(config.warning_threshold, 0.85);
+        assert_eq!(config.critical_threshold, 0.95);
 
         let config = config
             .with_warning_threshold(0.8)
@@ -773,22 +773,22 @@ mod tests {
     #[test]
     fn test_memory_pressure_triggers_eviction() {
         let config = MemoryBudgetConfig::new(100)
-            .with_warning_threshold(0.75)
-            .with_critical_threshold(0.90);
+            .with_warning_threshold(0.85)
+            .with_critical_threshold(0.95);
         let budget = MemoryBudget::new(config);
         let mb = 1024 * 1024;
 
-        // Fill to 70% - no eviction needed
+        // Fill to 70% - no eviction needed (below High threshold 75%)
         budget.set_usage(70 * mb);
         assert!(!budget.needs_eviction());
 
-        // Fill to 80% - high pressure, needs eviction
+        // Fill to 80% - high pressure (75-90%), needs eviction
         budget.set_usage(80 * mb);
         assert!(budget.needs_eviction());
         assert_eq!(budget.pressure(), MemoryPressure::High);
 
-        // Fill to 95% - critical pressure
-        budget.set_usage(95 * mb);
+        // Fill to 97% - critical pressure
+        budget.set_usage(97 * mb);
         assert!(budget.needs_eviction());
         assert_eq!(budget.pressure(), MemoryPressure::Critical);
     }

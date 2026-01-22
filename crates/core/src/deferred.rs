@@ -148,7 +148,11 @@ impl DeferredJobScheduler {
     ///
     /// Returns a list of deferred jobs that should be submitted to
     /// the main job scheduler.
-    pub fn schedule_for_document(&self, document_id: DocumentId, page_count: u16) -> Vec<DeferredJob> {
+    pub fn schedule_for_document(
+        &self,
+        document_id: DocumentId,
+        page_count: u16,
+    ) -> Vec<DeferredJob> {
         let mut jobs = Vec::new();
 
         // Schedule thumbnail generation for all pages
@@ -293,9 +297,18 @@ mod tests {
         assert_eq!(jobs.len(), 11);
 
         // Count job types
-        let thumbnail_count = jobs.iter().filter(|j| j.job_type == DeferredJobType::Thumbnails).count();
-        let ocr_count = jobs.iter().filter(|j| j.job_type == DeferredJobType::Ocr).count();
-        let indexing_count = jobs.iter().filter(|j| j.job_type == DeferredJobType::Indexing).count();
+        let thumbnail_count = jobs
+            .iter()
+            .filter(|j| j.job_type == DeferredJobType::Thumbnails)
+            .count();
+        let ocr_count = jobs
+            .iter()
+            .filter(|j| j.job_type == DeferredJobType::Ocr)
+            .count();
+        let indexing_count = jobs
+            .iter()
+            .filter(|j| j.job_type == DeferredJobType::Indexing)
+            .count();
 
         assert_eq!(thumbnail_count, 5);
         assert_eq!(ocr_count, 5);
@@ -314,7 +327,9 @@ mod tests {
 
         // Should schedule only 3 thumbnail jobs
         assert_eq!(jobs.len(), 3);
-        assert!(jobs.iter().all(|j| j.job_type == DeferredJobType::Thumbnails));
+        assert!(jobs
+            .iter()
+            .all(|j| j.job_type == DeferredJobType::Thumbnails));
     }
 
     #[test]
@@ -372,8 +387,14 @@ mod tests {
         // Should schedule 2 jobs: thumbnail + OCR for page 3
         assert_eq!(jobs.len(), 2);
 
-        let thumbnail_count = jobs.iter().filter(|j| j.job_type == DeferredJobType::Thumbnails).count();
-        let ocr_count = jobs.iter().filter(|j| j.job_type == DeferredJobType::Ocr).count();
+        let thumbnail_count = jobs
+            .iter()
+            .filter(|j| j.job_type == DeferredJobType::Thumbnails)
+            .count();
+        let ocr_count = jobs
+            .iter()
+            .filter(|j| j.job_type == DeferredJobType::Ocr)
+            .count();
 
         assert_eq!(thumbnail_count, 1);
         assert_eq!(ocr_count, 1);

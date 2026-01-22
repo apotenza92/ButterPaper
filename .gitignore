@@ -1,1 +1,6 @@
 logs/
+
+# Ralph Orchestrator
+.agent/
+specs/
+tasks/

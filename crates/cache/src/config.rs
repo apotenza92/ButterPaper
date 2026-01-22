@@ -4,9 +4,9 @@
 //! (RAM, GPU, Disk). Configuration can be loaded from a file, environment variables,
 //! or created programmatically.
 
-use std::path::{Path, PathBuf};
 use std::fs;
 use std::io;
+use std::path::{Path, PathBuf};
 
 /// Configuration for the cache system.
 ///
@@ -27,8 +27,8 @@ pub struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            ram_cache_size: 256 * 1024 * 1024,  // 256 MB
-            gpu_cache_size: 512 * 1024 * 1024,  // 512 MB
+            ram_cache_size: 256 * 1024 * 1024,   // 256 MB
+            gpu_cache_size: 512 * 1024 * 1024,   // 512 MB
             disk_cache_size: 1024 * 1024 * 1024, // 1 GB
             disk_cache_dir: Self::default_cache_dir(),
         }
@@ -36,7 +36,6 @@ impl Default for CacheConfig {
 }
 
 impl CacheConfig {
-
     /// Creates a new cache configuration with custom values in megabytes.
     ///
     /// # Arguments
@@ -105,21 +104,27 @@ impl CacheConfig {
         let mut config = Self::default();
 
         if let Ok(val) = std::env::var("PDF_EDITOR_RAM_CACHE_MB") {
-            config.ram_cache_size = val.parse::<usize>()
+            config.ram_cache_size = val
+                .parse::<usize>()
                 .map_err(|_| ConfigError::InvalidValue("PDF_EDITOR_RAM_CACHE_MB".to_string()))?
-                * 1024 * 1024;
+                * 1024
+                * 1024;
         }
 
         if let Ok(val) = std::env::var("PDF_EDITOR_GPU_CACHE_MB") {
-            config.gpu_cache_size = val.parse::<usize>()
+            config.gpu_cache_size = val
+                .parse::<usize>()
                 .map_err(|_| ConfigError::InvalidValue("PDF_EDITOR_GPU_CACHE_MB".to_string()))?
-                * 1024 * 1024;
+                * 1024
+                * 1024;
         }
 
         if let Ok(val) = std::env::var("PDF_EDITOR_DISK_CACHE_MB") {
-            config.disk_cache_size = val.parse::<usize>()
+            config.disk_cache_size = val
+                .parse::<usize>()
                 .map_err(|_| ConfigError::InvalidValue("PDF_EDITOR_DISK_CACHE_MB".to_string()))?
-                * 1024 * 1024;
+                * 1024
+                * 1024;
         }
 
         if let Ok(val) = std::env::var("PDF_EDITOR_CACHE_DIR") {
@@ -142,8 +147,7 @@ impl CacheConfig {
     /// # Errors
     /// Returns an error if the file cannot be read or parsed.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
-        let contents = fs::read_to_string(path.as_ref())
-            .map_err(ConfigError::IoError)?;
+        let contents = fs::read_to_string(path.as_ref()).map_err(ConfigError::IoError)?;
 
         Self::from_toml(&contents)
     }
@@ -164,19 +168,25 @@ impl CacheConfig {
 
                 match key {
                     "ram_cache_mb" => {
-                        config.ram_cache_size = value.parse::<usize>()
+                        config.ram_cache_size = value
+                            .parse::<usize>()
                             .map_err(|_| ConfigError::InvalidValue(key.to_string()))?
-                            * 1024 * 1024;
+                            * 1024
+                            * 1024;
                     }
                     "gpu_cache_mb" => {
-                        config.gpu_cache_size = value.parse::<usize>()
+                        config.gpu_cache_size = value
+                            .parse::<usize>()
                             .map_err(|_| ConfigError::InvalidValue(key.to_string()))?
-                            * 1024 * 1024;
+                            * 1024
+                            * 1024;
                     }
                     "disk_cache_mb" => {
-                        config.disk_cache_size = value.parse::<usize>()
+                        config.disk_cache_size = value
+                            .parse::<usize>()
                             .map_err(|_| ConfigError::InvalidValue(key.to_string()))?
-                            * 1024 * 1024;
+                            * 1024
+                            * 1024;
                     }
                     "disk_cache_dir" => {
                         config.disk_cache_dir = PathBuf::from(value);
@@ -195,8 +205,7 @@ impl CacheConfig {
     /// Returns an error if the file cannot be written.
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
         let toml = self.to_toml();
-        fs::write(path.as_ref(), toml)
-            .map_err(ConfigError::IoError)
+        fs::write(path.as_ref(), toml).map_err(ConfigError::IoError)
     }
 
     /// Converts configuration to TOML format.
@@ -242,7 +251,9 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigError::InvalidValue(key) => write!(f, "Invalid value for configuration key: {}", key),
+            ConfigError::InvalidValue(key) => {
+                write!(f, "Invalid value for configuration key: {}", key)
+            }
             ConfigError::IoError(e) => write!(f, "I/O error: {}", e),
         }
     }
@@ -253,6 +264,7 @@ impl std::error::Error for ConfigError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::env;
 
     #[test]
@@ -295,6 +307,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env() {
         // Save and restore env vars to avoid test pollution
         let _guard = EnvGuard::new(&[
@@ -317,6 +330,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_partial() {
         // Save and restore env vars to avoid test pollution
         let _guard = EnvGuard::new(&[
@@ -326,7 +340,10 @@ mod tests {
             "PDF_EDITOR_CACHE_DIR",
         ]);
 
-        // Only set some env vars, others should use defaults
+        // Clear all env vars first, then set only RAM
+        env::remove_var("PDF_EDITOR_GPU_CACHE_MB");
+        env::remove_var("PDF_EDITOR_DISK_CACHE_MB");
+        env::remove_var("PDF_EDITOR_CACHE_DIR");
         env::set_var("PDF_EDITOR_RAM_CACHE_MB", "128");
 
         let config = CacheConfig::from_env().unwrap();
@@ -336,6 +353,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_invalid() {
         let _guard = EnvGuard::new(&["PDF_EDITOR_RAM_CACHE_MB"]);
 

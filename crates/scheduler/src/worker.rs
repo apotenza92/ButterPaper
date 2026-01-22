@@ -232,9 +232,7 @@ impl Worker {
                 let job_id = job.id;
 
                 // Get the cancellation token for this job
-                let token = scheduler
-                    .get_cancellation_token(job_id)
-                    .unwrap_or_default();
+                let token = scheduler.get_cancellation_token(job_id).unwrap_or_default();
 
                 // Check if the job was already cancelled before execution
                 if !token.is_cancelled() {

@@ -592,6 +592,16 @@ pub fn refresh_open_recent_menu() {
             return;
         }
 
+        // Check that the menu bar has enough items before accessing.
+        // During early initialization (inside `resumed` callback), the menu bar
+        // may not be fully set up yet - winit may have replaced our menu bar
+        // with a minimal one. In this case, we silently return and the menu
+        // will be refreshed later when fully initialized.
+        let count: i64 = msg_send![main_menu, numberOfItems];
+        if count < 2 {
+            return;
+        }
+
         // Find the File menu (index 1, after the app menu)
         let file_menu_item: id = msg_send![main_menu, itemAtIndex: 1i64];
         if file_menu_item == nil {
@@ -600,6 +610,12 @@ pub fn refresh_open_recent_menu() {
 
         let file_menu: id = msg_send![file_menu_item, submenu];
         if file_menu == nil {
+            return;
+        }
+
+        // Check that the file menu has enough items
+        let file_count: i64 = msg_send![file_menu, numberOfItems];
+        if file_count < 2 {
             return;
         }
 

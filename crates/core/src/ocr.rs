@@ -34,7 +34,7 @@ impl Default for OcrConfig {
         Self {
             tessdata_path: None, // Will use system default
             language: "eng".to_string(),
-            engine_mode: 3, // Default mode
+            engine_mode: 3,            // Default mode
             page_segmentation_mode: 3, // Auto
             progressive: true,
             max_concurrent: 2,
@@ -106,7 +106,12 @@ pub struct OcrResult {
 
 impl OcrResult {
     /// Create a new OCR result
-    pub fn new(page_index: u16, text: String, text_blocks: Vec<TextBlock>, confidence: f32) -> Self {
+    pub fn new(
+        page_index: u16,
+        text: String,
+        text_blocks: Vec<TextBlock>,
+        confidence: f32,
+    ) -> Self {
         Self {
             page_index,
             text,
@@ -266,12 +271,7 @@ impl OcrEngine {
 
         // TODO: Perform actual OCR using Tesseract
         // For now, return a placeholder result
-        let result = OcrResult::new(
-            page_index,
-            String::new(),
-            Vec::new(),
-            0.0,
-        );
+        let result = OcrResult::new(page_index, String::new(), Vec::new(), 0.0);
 
         // Decrement active operations
         let mut state = self.state.lock().unwrap();
@@ -381,14 +381,20 @@ mod tests {
         assert_eq!(config.page_segmentation_mode, 6);
         assert!(!config.progressive);
         assert_eq!(config.max_concurrent, 4);
-        assert_eq!(config.tessdata_path, Some(PathBuf::from("/usr/share/tessdata")));
+        assert_eq!(
+            config.tessdata_path,
+            Some(PathBuf::from("/usr/share/tessdata"))
+        );
     }
 
     #[test]
     fn test_ocr_result_creation() {
-        let text_blocks = vec![
-            TextBlock::new("Hello".to_string(), (0.0, 0.0, 100.0, 20.0), 0.95, 12.0),
-        ];
+        let text_blocks = vec![TextBlock::new(
+            "Hello".to_string(),
+            (0.0, 0.0, 100.0, 20.0),
+            0.95,
+            12.0,
+        )];
 
         let result = OcrResult::new(0, "Hello".to_string(), text_blocks, 0.95);
         assert_eq!(result.page_index, 0);

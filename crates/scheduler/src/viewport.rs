@@ -39,14 +39,7 @@ pub struct Viewport {
 
 impl Viewport {
     /// Create a new viewport
-    pub fn new(
-        page_index: u16,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        zoom_level: u32,
-    ) -> Self {
+    pub fn new(page_index: u16, x: f32, y: f32, width: f32, height: f32, zoom_level: u32) -> Self {
         Self {
             page_index,
             x,
@@ -54,7 +47,7 @@ impl Viewport {
             width,
             height,
             zoom_level,
-            margin_tiles: 1, // Default: 1 tile margin
+            margin_tiles: 3, // Default: 3 tile margin for smooth scrolling
         }
     }
 
@@ -122,7 +115,10 @@ impl PriorityCalculator {
     /// * `viewport` - Current viewport state
     /// * `tile_size` - Tile size in pixels (e.g., 256)
     pub fn new(viewport: Viewport, tile_size: u32) -> Self {
-        Self { viewport, tile_size }
+        Self {
+            viewport,
+            tile_size,
+        }
     }
 
     /// Update the viewport
@@ -240,7 +236,7 @@ mod tests {
         assert_eq!(viewport.width, 800.0);
         assert_eq!(viewport.height, 600.0);
         assert_eq!(viewport.zoom_level, 100);
-        assert_eq!(viewport.margin_tiles, 1);
+        assert_eq!(viewport.margin_tiles, 3);
     }
 
     #[test]
@@ -266,15 +262,24 @@ mod tests {
 
         // Tile at origin should be visible
         let tile = TilePosition::new(0, 0, 0, 100);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Visible);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Visible
+        );
 
         // Tile at (1, 0) should be visible (within 800px width)
         let tile = TilePosition::new(0, 1, 0, 100);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Visible);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Visible
+        );
 
         // Tile at (0, 1) should be visible (within 600px height)
         let tile = TilePosition::new(0, 0, 1, 100);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Visible);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Visible
+        );
     }
 
     #[test]
@@ -287,11 +292,17 @@ mod tests {
 
         // Tile at (0, 0) should be in margin (top-left of viewport)
         let tile = TilePosition::new(0, 0, 0, 100);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Margin);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Margin
+        );
 
         // Tile at (5, 0) should be in margin (to the right of viewport)
         let tile = TilePosition::new(0, 5, 0, 100);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Margin);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Margin
+        );
     }
 
     #[test]
@@ -343,15 +354,24 @@ mod tests {
         // At 200% zoom, tile size in page coords is 128px
         // Tile at (0, 0) should be visible
         let tile = TilePosition::new(0, 0, 0, 200);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Visible);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Visible
+        );
 
         // Tile at (6, 0) should be visible (6 * 128 = 768 < 800)
         let tile = TilePosition::new(0, 6, 0, 200);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Visible);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Visible
+        );
 
         // Tile at (7, 0) should be in margin (7 * 128 = 896 > 800)
         let tile = TilePosition::new(0, 7, 0, 200);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Margin);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Margin
+        );
     }
 
     #[test]
@@ -398,7 +418,10 @@ mod tests {
         let mut calculator = PriorityCalculator::new(viewport, 256);
 
         let tile = TilePosition::new(0, 0, 0, 100);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Visible);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Visible
+        );
 
         // Update viewport to different page
         let new_viewport = Viewport::new(5, 0.0, 0.0, 800.0, 600.0, 100);
@@ -430,7 +453,10 @@ mod tests {
         // Viewport is 500-1300 x 300-900
         // Should be visible (overlaps)
         let tile = TilePosition::new(0, 2, 1, 100);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Visible);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Visible
+        );
     }
 
     #[test]
@@ -453,6 +479,9 @@ mod tests {
         // Tile at (0, 0) is 2 tiles away from visible area
         // Should be in margin with 2-tile margin setting
         let tile = TilePosition::new(0, 0, 0, 100);
-        assert_eq!(calculator.calculate_tile_priority(&tile), JobPriority::Margin);
+        assert_eq!(
+            calculator.calculate_tile_priority(&tile),
+            JobPriority::Margin
+        );
     }
 }

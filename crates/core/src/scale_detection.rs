@@ -401,20 +401,11 @@ mod tests {
 
     #[test]
     fn test_architectural_scale_variants() {
-        let variants = vec![
-            "1/8\" = 1'-0\"",
-            "1/8\" = 1'",
-            "1/8\"=1'-0\"",
-            "1/8\"=1'",
-        ];
+        let variants = vec!["1/8\" = 1'-0\"", "1/8\" = 1'", "1/8\"=1'-0\"", "1/8\"=1'"];
 
         for variant in variants {
             let scales = detect_scales(variant);
-            assert!(
-                !scales.is_empty(),
-                "Failed to detect scale in: {}",
-                variant
-            );
+            assert!(!scales.is_empty(), "Failed to detect scale in: {}", variant);
             assert_eq!(scales[0].ratio, 96.0);
             assert_eq!(scales[0].unit, "ft");
         }

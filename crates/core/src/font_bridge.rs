@@ -40,9 +40,7 @@ pub fn extract_font_for_region(
 
     let result = find_font_in_region(page, bbox)?;
 
-    Ok(result.map(|(font_info, size)| {
-        (font_info_to_text_edit_font(&font_info), size)
-    }))
+    Ok(result.map(|(font_info, size)| (font_info_to_text_edit_font(&font_info), size)))
 }
 
 #[cfg(test)]

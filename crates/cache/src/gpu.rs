@@ -300,10 +300,7 @@ impl GpuTextureCache {
             state.stats.hits += 1;
 
             // Return a reference wrapper that holds the lock
-            Some(TextureRef {
-                _guard: state,
-                key,
-            })
+            Some(TextureRef { _guard: state, key })
         } else {
             // Cache miss
             state.stats.misses += 1;
@@ -339,10 +336,7 @@ impl GpuTextureCache {
             state.stats.hits += 1;
 
             // Return a reference wrapper that holds the lock
-            Some(TextureRef {
-                _guard: state,
-                key,
-            })
+            Some(TextureRef { _guard: state, key })
         } else {
             // Cache miss
             state.stats.misses += 1;
@@ -456,7 +450,11 @@ pub struct TextureRef<'a> {
 impl<'a> TextureRef<'a> {
     /// Get the texture metadata
     pub fn metadata(&self) -> TextureMetadata {
-        let texture = self._guard.textures.get(&self.key).expect("Texture must exist");
+        let texture = self
+            ._guard
+            .textures
+            .get(&self.key)
+            .expect("Texture must exist");
         TextureMetadata {
             key: texture.key,
             width: texture.width,
@@ -469,7 +467,11 @@ impl<'a> TextureRef<'a> {
     ///
     /// Returns `None` if the type doesn't match.
     pub fn texture_handle<T: 'static>(&self) -> Option<&T> {
-        let texture = self._guard.textures.get(&self.key).expect("Texture must exist");
+        let texture = self
+            ._guard
+            .textures
+            .get(&self.key)
+            .expect("Texture must exist");
         texture.texture_handle()
     }
 }
@@ -513,7 +515,9 @@ mod tests {
         assert_eq!(metadata.vram_size, vram_size);
 
         // Verify we can downcast to the original type
-        let handle = texture_ref.texture_handle::<MockTexture>().expect("Should downcast");
+        let handle = texture_ref
+            .texture_handle::<MockTexture>()
+            .expect("Should downcast");
         assert_eq!(handle.id, 42);
     }
 
@@ -563,7 +567,7 @@ mod tests {
         cache.put(3, MockTexture { id: 3 }, 256, 256, vram_size);
 
         assert!(cache.get(1).is_some()); // Still present
-        assert!(cache.get(2).is_none());  // Evicted
+        assert!(cache.get(2).is_none()); // Evicted
         assert!(cache.get(3).is_some()); // Present
     }
 

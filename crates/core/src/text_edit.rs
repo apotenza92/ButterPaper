@@ -50,7 +50,8 @@ impl TextEditFont {
     /// Create a new font with standard characteristics
     pub fn new(name: String) -> Self {
         let is_bold = name.to_lowercase().contains("bold");
-        let is_italic = name.to_lowercase().contains("italic") || name.to_lowercase().contains("oblique");
+        let is_italic =
+            name.to_lowercase().contains("italic") || name.to_lowercase().contains("oblique");
 
         Self {
             name,
@@ -365,7 +366,11 @@ impl TextEditManager {
     }
 
     /// Remove a text edit by ID
-    pub fn remove_edit(&self, page_index: u16, edit_id: TextEditId) -> Result<Option<TextEdit>, String> {
+    pub fn remove_edit(
+        &self,
+        page_index: u16,
+        edit_id: TextEditId,
+    ) -> Result<Option<TextEdit>, String> {
         let mut edits = self.edits.write().map_err(|e| e.to_string())?;
 
         if let Some(page_edits) = edits.get_mut(&page_index) {
@@ -376,7 +381,12 @@ impl TextEditManager {
     }
 
     /// Update an existing text edit
-    pub fn update_edit_text(&self, page_index: u16, edit_id: TextEditId, new_text: String) -> Result<bool, String> {
+    pub fn update_edit_text(
+        &self,
+        page_index: u16,
+        edit_id: TextEditId,
+        new_text: String,
+    ) -> Result<bool, String> {
         let mut edits = self.edits.write().map_err(|e| e.to_string())?;
 
         if let Some(page_edits) = edits.get_mut(&page_index) {
@@ -412,18 +422,31 @@ impl TextEditManager {
     }
 
     /// Get edits in a specific bounding box on a page
-    pub fn get_edits_in_bbox(&self, page_index: u16, bbox: &TextBoundingBox) -> Result<Vec<TextEdit>, String> {
+    pub fn get_edits_in_bbox(
+        &self,
+        page_index: u16,
+        bbox: &TextBoundingBox,
+    ) -> Result<Vec<TextEdit>, String> {
         let edits = self.edits.read().map_err(|e| e.to_string())?;
 
         if let Some(page_edits) = edits.get(&page_index) {
-            Ok(page_edits.get_edits_in_bbox(bbox).into_iter().cloned().collect())
+            Ok(page_edits
+                .get_edits_in_bbox(bbox)
+                .into_iter()
+                .cloned()
+                .collect())
         } else {
             Ok(Vec::new())
         }
     }
 
     /// Set visibility of an edit
-    pub fn set_edit_visibility(&self, page_index: u16, edit_id: TextEditId, visible: bool) -> Result<bool, String> {
+    pub fn set_edit_visibility(
+        &self,
+        page_index: u16,
+        edit_id: TextEditId,
+        visible: bool,
+    ) -> Result<bool, String> {
         let mut edits = self.edits.write().map_err(|e| e.to_string())?;
 
         if let Some(page_edits) = edits.get_mut(&page_index) {
@@ -510,13 +533,7 @@ mod tests {
             height: 20.0,
         };
 
-        let edit = TextEdit::new(
-            0,
-            bbox,
-            "Original".to_string(),
-            "Edited".to_string(),
-            12.0,
-        );
+        let edit = TextEdit::new(0, bbox, "Original".to_string(), "Edited".to_string(), 12.0);
 
         assert_eq!(edit.page_index, 0);
         assert_eq!(edit.original_text, "Original");
@@ -562,13 +579,7 @@ mod tests {
             height: 20.0,
         };
 
-        let edit = TextEdit::new(
-            0,
-            bbox,
-            "Same".to_string(),
-            "Same".to_string(),
-            12.0,
-        );
+        let edit = TextEdit::new(0, bbox, "Same".to_string(), "Same".to_string(), 12.0);
 
         assert!(!edit.has_changes());
     }
@@ -634,14 +645,8 @@ mod tests {
         let mut font1 = TextEditFont::new("CustomFont-BoldItalic".to_string());
         font1.is_bold = true;
         font1.is_italic = true;
-        let edit1 = TextEdit::new_with_font(
-            0,
-            bbox,
-            "Test".to_string(),
-            "Test".to_string(),
-            12.0,
-            font1,
-        );
+        let edit1 =
+            TextEdit::new_with_font(0, bbox, "Test".to_string(), "Test".to_string(), 12.0, font1);
         let fallback1 = edit1.get_fallback_font();
         assert_eq!(fallback1.name, "Helvetica-BoldOblique");
         assert!(fallback1.is_standard);
@@ -649,41 +654,23 @@ mod tests {
         // Bold custom font should fallback to Helvetica-Bold
         let mut font2 = TextEditFont::new("CustomFont-Bold".to_string());
         font2.is_italic = false;
-        let edit2 = TextEdit::new_with_font(
-            0,
-            bbox,
-            "Test".to_string(),
-            "Test".to_string(),
-            12.0,
-            font2,
-        );
+        let edit2 =
+            TextEdit::new_with_font(0, bbox, "Test".to_string(), "Test".to_string(), 12.0, font2);
         let fallback2 = edit2.get_fallback_font();
         assert_eq!(fallback2.name, "Helvetica-Bold");
 
         // Italic custom font should fallback to Helvetica-Oblique
         let mut font3 = TextEditFont::new("CustomFont-Italic".to_string());
         font3.is_bold = false;
-        let edit3 = TextEdit::new_with_font(
-            0,
-            bbox,
-            "Test".to_string(),
-            "Test".to_string(),
-            12.0,
-            font3,
-        );
+        let edit3 =
+            TextEdit::new_with_font(0, bbox, "Test".to_string(), "Test".to_string(), 12.0, font3);
         let fallback3 = edit3.get_fallback_font();
         assert_eq!(fallback3.name, "Helvetica-Oblique");
 
         // Regular custom font should fallback to Helvetica
         let font4 = TextEditFont::new("CustomFont".to_string());
-        let edit4 = TextEdit::new_with_font(
-            0,
-            bbox,
-            "Test".to_string(),
-            "Test".to_string(),
-            12.0,
-            font4,
-        );
+        let edit4 =
+            TextEdit::new_with_font(0, bbox, "Test".to_string(), "Test".to_string(), 12.0, font4);
         let fallback4 = edit4.get_fallback_font();
         assert_eq!(fallback4.name, "Helvetica");
     }
@@ -697,13 +684,7 @@ mod tests {
             height: 20.0,
         };
 
-        let mut edit = TextEdit::new(
-            0,
-            bbox,
-            "Test".to_string(),
-            "Test".to_string(),
-            12.0,
-        );
+        let mut edit = TextEdit::new(0, bbox, "Test".to_string(), "Test".to_string(), 12.0);
 
         assert_eq!(edit.font.name, "Helvetica");
 
@@ -755,13 +736,7 @@ mod tests {
             height: 20.0,
         };
 
-        let edit = TextEdit::new(
-            0,
-            bbox,
-            "Original".to_string(),
-            "Edited".to_string(),
-            12.0,
-        );
+        let edit = TextEdit::new(0, bbox, "Original".to_string(), "Edited".to_string(), 12.0);
 
         let edit_id = edit.id;
 

@@ -71,7 +71,10 @@ impl Transform {
                 self.translation[0] + other.translation[0] * self.scale[0],
                 self.translation[1] + other.translation[1] * self.scale[1],
             ],
-            scale: [self.scale[0] * other.scale[0], self.scale[1] * other.scale[1]],
+            scale: [
+                self.scale[0] * other.scale[0],
+                self.scale[1] * other.scale[1],
+            ],
             rotation: self.rotation + other.rotation,
         }
     }
@@ -114,7 +117,12 @@ pub struct Rect {
 impl Rect {
     /// Create a new rectangle
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 }
 
@@ -122,15 +130,9 @@ impl Rect {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Primitive {
     /// Filled rectangle with solid color
-    Rectangle {
-        rect: Rect,
-        color: Color,
-    },
+    Rectangle { rect: Rect, color: Color },
     /// Textured quad (for images and cached text)
-    TexturedQuad {
-        rect: Rect,
-        texture_id: u64,
-    },
+    TexturedQuad { rect: Rect, texture_id: u64 },
     /// Line segment
     Line {
         start: [f32; 2],

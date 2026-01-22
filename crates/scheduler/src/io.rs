@@ -116,11 +116,7 @@ impl IoThread {
     /// * `scheduler` - Job scheduler to pull jobs from
     /// * `executor` - IO executor callback for executing IO jobs
     /// * `config` - IO thread configuration
-    pub fn new(
-        scheduler: Arc<JobScheduler>,
-        executor: IoExecutor,
-        config: IoThreadConfig,
-    ) -> Self {
+    pub fn new(scheduler: Arc<JobScheduler>, executor: IoExecutor, config: IoThreadConfig) -> Self {
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = shutdown.clone();
 
@@ -186,9 +182,7 @@ impl IoThread {
                     let job_id = job.id;
 
                     // Get the cancellation token for this job
-                    let token = scheduler
-                        .get_cancellation_token(job_id)
-                        .unwrap_or_default();
+                    let token = scheduler.get_cancellation_token(job_id).unwrap_or_default();
 
                     // Check if the job was already cancelled before execution
                     if !token.is_cancelled() {
@@ -306,7 +300,7 @@ mod tests {
             },
         );
         scheduler.submit(
-            JobPriority::Margin,  // Lower priority so it doesn't block second LoadFile
+            JobPriority::Margin, // Lower priority so it doesn't block second LoadFile
             JobType::RenderTile {
                 page_index: 0,
                 tile_x: 0,
@@ -407,7 +401,10 @@ mod tests {
         let executor = Arc::new(move |job: &Job, _token: &CancellationToken| {
             if let JobType::LoadFile { path } = &job.job_type {
                 let filename = path.file_name().unwrap().to_str().unwrap();
-                execution_order_clone.lock().unwrap().push(filename.to_string());
+                execution_order_clone
+                    .lock()
+                    .unwrap()
+                    .push(filename.to_string());
             }
             thread::sleep(Duration::from_millis(10));
         });

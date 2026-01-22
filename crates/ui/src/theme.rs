@@ -227,11 +227,11 @@ impl ThemeColors {
             border_focused: Color::rgba(0.30, 0.50, 0.80, 1.0),   // Matches accent_primary
             border_selected: Color::rgba(0.30, 0.60, 1.00, 1.0),  // Matches accent_secondary
 
-            // Button colors - medium grays with interaction states
-            button_normal: Color::rgba(0.25, 0.25, 0.25, 1.0),
-            button_hover: Color::rgba(0.35, 0.35, 0.35, 1.0),
-            button_active: Color::rgba(0.20, 0.40, 0.70, 1.0),    // Blue when active
-            button_icon: Color::rgba(0.90, 0.90, 0.90, 1.0),
+            // Button colors - better contrast with clearer hover states
+            button_normal: Color::rgba(0.28, 0.28, 0.28, 1.0),
+            button_hover: Color::rgba(0.40, 0.40, 0.42, 1.0),
+            button_active: Color::rgba(0.25, 0.50, 0.85, 1.0),    // Brighter blue when active
+            button_icon: Color::rgba(0.95, 0.95, 0.95, 1.0),      // Brighter icons
 
             // Separator
             separator: Color::rgba(0.30, 0.30, 0.30, 1.0),
@@ -315,7 +315,7 @@ impl Default for ThemeSizes {
             border_width_focused: 2.0,
             thumbnail_width: 120.0,
             thumbnail_height: 160.0,
-            border_radius: 0.0, // Currently rectangular
+            border_radius: 6.0, // Modern rounded corners
         }
     }
 }
@@ -407,10 +407,10 @@ static CURRENT_THEME: RwLock<ThemeState> = RwLock::new(ThemeState {
             border_secondary: Color { r: 0.30, g: 0.30, b: 0.30, a: 1.0 },
             border_focused: Color { r: 0.30, g: 0.50, b: 0.80, a: 1.0 },
             border_selected: Color { r: 0.30, g: 0.60, b: 1.00, a: 1.0 },
-            button_normal: Color { r: 0.25, g: 0.25, b: 0.25, a: 1.0 },
-            button_hover: Color { r: 0.35, g: 0.35, b: 0.35, a: 1.0 },
-            button_active: Color { r: 0.20, g: 0.40, b: 0.70, a: 1.0 },
-            button_icon: Color { r: 0.90, g: 0.90, b: 0.90, a: 1.0 },
+            button_normal: Color { r: 0.28, g: 0.28, b: 0.28, a: 1.0 },
+            button_hover: Color { r: 0.40, g: 0.40, b: 0.42, a: 1.0 },
+            button_active: Color { r: 0.25, g: 0.50, b: 0.85, a: 1.0 },
+            button_icon: Color { r: 0.95, g: 0.95, b: 0.95, a: 1.0 },
             separator: Color { r: 0.30, g: 0.30, b: 0.30, a: 1.0 },
             note_background: Color { r: 1.00, g: 1.00, b: 0.85, a: 0.98 },
             note_title_bar: Color { r: 0.95, g: 0.90, b: 0.70, a: 1.0 },
@@ -427,7 +427,7 @@ static CURRENT_THEME: RwLock<ThemeState> = RwLock::new(ThemeState {
             border_width_focused: 2.0,
             thumbnail_width: 120.0,
             thumbnail_height: 160.0,
-            border_radius: 0.0,
+            border_radius: 6.0,
         },
     },
     mode: AppearanceMode::Dark,

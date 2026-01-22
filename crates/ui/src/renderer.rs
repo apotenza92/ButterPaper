@@ -20,9 +20,7 @@ impl SceneRenderer {
         // 3. Set up vertex buffer layouts
         // 4. Create uniform buffers for transforms
 
-        Ok(Self {
-            _gpu_state: (),
-        })
+        Ok(Self { _gpu_state: () })
     }
 
     /// Render a scene graph

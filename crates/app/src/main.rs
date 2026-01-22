@@ -2008,7 +2008,17 @@ struct ErrorDialogTexture {
 const THUMBNAIL_STRIP_WIDTH: f32 = 136.0; // 120px thumbnail + 8px spacing * 2
 
 /// Gap between pages in continuous scroll mode (in screen pixels)
-const CONTINUOUS_SCROLL_PAGE_GAP: f32 = 20.0;
+const CONTINUOUS_SCROLL_PAGE_GAP: f32 = 6.0;
+
+/// Cached thumbnail image data
+struct ThumbnailCache {
+    /// RGBA pixel data for the thumbnail
+    pixels: Vec<u8>,
+    /// Width of the thumbnail in pixels
+    width: u32,
+    /// Height of the thumbnail in pixels
+    height: u32,
+}
 
 struct LoadedDocument {
     pdf: PdfDocument,
@@ -2028,6 +2038,8 @@ struct LoadedDocument {
     page_y_offsets: Vec<f32>,
     /// Total document height including gaps between pages
     total_document_height: f32,
+    /// Cached thumbnail images for fast rendering
+    thumbnail_cache: HashMap<u16, ThumbnailCache>,
 }
 
 struct App {
@@ -2160,6 +2172,10 @@ struct App {
     continuous_scroll_enabled: bool,
     /// Document-level Y offset for continuous scrolling (0 = top of first page)
     document_scroll_offset: f32,
+    /// Time of last scroll event - used to defer page rendering during rapid scroll
+    last_scroll_time: Instant,
+    /// Pages that need rendering after scroll settles
+    pending_page_renders: Vec<u16>,
 }
 
 impl App {
@@ -2268,6 +2284,8 @@ impl App {
             error_dialog_texture: None,
             continuous_scroll_enabled: true, // Enable continuous scroll by default
             document_scroll_offset: 0.0,
+            last_scroll_time: Instant::now(),
+            pending_page_renders: Vec::new(),
         }
     }
 
@@ -2365,6 +2383,7 @@ impl App {
                     page_dimensions,
                     page_y_offsets,
                     total_document_height,
+                    thumbnail_cache: HashMap::new(),
                 });
 
                 // Reset document scroll offset when loading new document
@@ -2382,6 +2401,10 @@ impl App {
                     page_count,
                     viewport_size,
                 );
+
+                // Pre-render all thumbnails on document load for instant display
+                self.preload_all_thumbnails();
+
                 self.update_thumbnail_texture();
 
                 // Initialize text layer manager for text selection
@@ -2482,6 +2505,44 @@ impl App {
                 println!("LAZY_LOADING: All {} pages text extracted", doc.page_count);
             }
         }
+    }
+
+    /// Pre-render all thumbnails on document load
+    ///
+    /// This loads the entire document into memory by rendering thumbnails for all pages.
+    /// This provides instant thumbnail display in the sidebar and ensures the document
+    /// is fully loaded for smooth navigation.
+    fn preload_all_thumbnails(&mut self) {
+        let Some(doc) = &mut self.document else { return };
+
+        let page_count = doc.page_count;
+        let thumb_width: u32 = 120;
+        let thumb_height: u32 = 160;
+
+        println!("PRELOAD: Rendering thumbnails for all {} pages...", page_count);
+        let start = std::time::Instant::now();
+
+        // Pre-render all page thumbnails
+        for page_idx in 0..page_count {
+            // Skip if already cached
+            if doc.thumbnail_cache.contains_key(&page_idx) {
+                continue;
+            }
+
+            // Render the page thumbnail
+            if let Ok((rgba_data, actual_width, actual_height)) =
+                doc.pdf.render_page_scaled(page_idx, thumb_width, thumb_height)
+            {
+                doc.thumbnail_cache.insert(page_idx, ThumbnailCache {
+                    pixels: rgba_data,
+                    width: actual_width,
+                    height: actual_height,
+                });
+            }
+        }
+
+        let elapsed = start.elapsed();
+        println!("PRELOAD: Completed {} thumbnails in {:?}", page_count, elapsed);
     }
 
     /// Start the loading spinner animation
@@ -3141,7 +3202,11 @@ impl App {
             return;
         }
 
-        let Some(device) = &self.device else { return };
+        // Check if device is available before proceeding
+        if self.device.is_none() {
+            return;
+        }
+
         let window_size = self.window.as_ref().map(|w| w.inner_size()).unwrap_or_default();
         let width = THUMBNAIL_STRIP_WIDTH as u32;
         let height = window_size.height.saturating_sub(TOOLBAR_HEIGHT as u32);
@@ -3174,8 +3239,11 @@ impl App {
             pixels[idx + 3] = 255; // A
         }
 
-        // Draw page thumbnails
+        // Draw page thumbnails (mutably borrows self)
         self.draw_thumbnail_items(&mut pixels, width, height);
+
+        // Now borrow device after draw_thumbnail_items is done
+        let Some(device) = &self.device else { return };
 
         // Create Metal texture
         let texture_desc = TextureDescriptor::new();
@@ -3212,32 +3280,42 @@ impl App {
 
     /// Draw thumbnail items onto the pixel buffer
     #[cfg(target_os = "macos")]
-    fn draw_thumbnail_items(&self, pixels: &mut [u8], tex_width: u32, tex_height: u32) {
-        let Some(doc) = &self.document else { return };
-
+    fn draw_thumbnail_items(&mut self, pixels: &mut [u8], tex_width: u32, tex_height: u32) {
         let thumb_width: u32 = 120;
         let thumb_height: u32 = 160;
         let spacing: u32 = 8;
         let start_x = spacing;
         let mut y = spacing;
 
-        for page_idx in 0..doc.page_count {
-            // Skip thumbnails above the visible area
-            if y + thumb_height < self.thumbnail_strip.current_page() as u32 * (thumb_height + spacing) {
+        // Get document info
+        let (page_count, current_page) = {
+            let Some(doc) = &self.document else { return };
+            (doc.page_count, doc.current_page)
+        };
+
+        // Get scroll offset from thumbnail strip for visibility culling
+        let scroll_offset = self.thumbnail_strip.scroll_offset() as u32;
+
+        for page_idx in 0..page_count {
+            // Skip thumbnails above the visible area (accounting for scroll)
+            if y + thumb_height < scroll_offset {
                 y += thumb_height + spacing;
                 continue;
             }
 
             // Stop drawing thumbnails below the visible area
-            if y > tex_height {
+            if y > scroll_offset + tex_height {
                 break;
             }
 
-            let is_selected = page_idx == doc.current_page;
+            // Adjust y position for scroll offset when drawing
+            let draw_y = y.saturating_sub(scroll_offset);
+
+            let is_selected = page_idx == current_page;
 
             // Draw border (highlight for selected)
             let border_color = if is_selected {
-                (255u8, 153u8, 76u8) // Blue in BGRA
+                (255u8, 153u8, 76u8) // Orange in BGRA for selected
             } else {
                 (102u8, 102u8, 102u8) // Gray in BGRA
             };
@@ -3249,30 +3327,104 @@ impl App {
                 tex_width,
                 tex_height,
                 start_x.saturating_sub(border_width),
-                y.saturating_sub(border_width),
+                draw_y.saturating_sub(border_width),
                 thumb_width + border_width * 2,
                 thumb_height + border_width * 2,
                 border_width,
                 border_color,
             );
 
-            // Draw placeholder thumbnail (light gray)
-            self.draw_filled_rect(
-                pixels,
-                tex_width,
-                tex_height,
-                start_x,
-                y,
-                thumb_width,
-                thumb_height,
-                (64, 64, 64, 255),
-            );
+            // Try to render actual PDF page thumbnail
+            let mut rendered = false;
 
-            // Draw page number text
-            let page_num = format!("{}", page_idx + 1);
-            let text_x = start_x + thumb_width / 2 - (page_num.len() as u32 * 3);
-            let text_y = y + thumb_height / 2 - 4;
-            self.draw_text_simple(pixels, tex_width, tex_height, text_x, text_y, &page_num);
+            // Check if we have a cached thumbnail or need to render one
+            let needs_render = {
+                let Some(doc) = &self.document else { continue };
+                !doc.thumbnail_cache.contains_key(&page_idx)
+            };
+
+            if needs_render {
+                // Render the page thumbnail
+                if let Some(doc) = &self.document {
+                    if let Ok((rgba_data, actual_width, actual_height)) =
+                        doc.pdf.render_page_scaled(page_idx, thumb_width, thumb_height)
+                    {
+                        // Cache the thumbnail
+                        if let Some(doc) = &mut self.document {
+                            doc.thumbnail_cache.insert(page_idx, ThumbnailCache {
+                                pixels: rgba_data,
+                                width: actual_width,
+                                height: actual_height,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Draw the cached thumbnail if available
+            if let Some(doc) = &self.document {
+                if let Some(cached) = doc.thumbnail_cache.get(&page_idx) {
+                    // Center the thumbnail within the allocated space
+                    let offset_x = start_x + (thumb_width.saturating_sub(cached.width)) / 2;
+                    let offset_y = draw_y + (thumb_height.saturating_sub(cached.height)) / 2;
+
+                    // Fill background with white first (for pages that might not fill the area)
+                    self.draw_filled_rect(
+                        pixels,
+                        tex_width,
+                        tex_height,
+                        start_x,
+                        draw_y,
+                        thumb_width,
+                        thumb_height,
+                        (255, 255, 255, 255),
+                    );
+
+                    // Copy RGBA to BGRA pixel buffer
+                    for ty in 0..cached.height {
+                        for tx in 0..cached.width {
+                            let dest_x = offset_x + tx;
+                            let dest_y = offset_y + ty;
+
+                            if dest_x >= tex_width || dest_y >= tex_height {
+                                continue;
+                            }
+
+                            let src_idx = ((ty * cached.width + tx) * 4) as usize;
+                            let dest_idx = ((dest_y * tex_width + dest_x) * 4) as usize;
+
+                            if src_idx + 3 < cached.pixels.len() && dest_idx + 3 < pixels.len() {
+                                // Convert RGBA to BGRA
+                                pixels[dest_idx] = cached.pixels[src_idx + 2];     // B <- R
+                                pixels[dest_idx + 1] = cached.pixels[src_idx + 1]; // G <- G
+                                pixels[dest_idx + 2] = cached.pixels[src_idx];     // R <- B
+                                pixels[dest_idx + 3] = cached.pixels[src_idx + 3]; // A <- A
+                            }
+                        }
+                    }
+                    rendered = true;
+                }
+            }
+
+            if !rendered {
+                // Draw placeholder if rendering failed
+                self.draw_filled_rect(
+                    pixels,
+                    tex_width,
+                    tex_height,
+                    start_x,
+                    draw_y,
+                    thumb_width,
+                    thumb_height,
+                    (64, 64, 64, 255),
+                );
+
+                // Draw page number text on placeholder
+                let page_num = format!("{}", page_idx + 1);
+                let text_x = start_x + thumb_width / 2 - (page_num.len() as u32 * 3);
+                let text_y = draw_y + thumb_height / 2 - 4;
+                self.draw_text_simple(pixels, tex_width, tex_height, text_x, text_y, &page_num);
+            }
 
             y += thumb_height + spacing;
         }
@@ -3907,6 +4059,9 @@ impl App {
 
     /// Update the document scroll offset for continuous scroll mode
     fn update_continuous_scroll(&mut self, delta: f32) {
+        // Track scroll timing for deferred rendering
+        self.last_scroll_time = Instant::now();
+
         // Extract what we need from document first
         let (total_height, page_info, current_page) = if let Some(doc) = &self.document {
             let info: Vec<_> = doc.page_y_offsets.iter()
@@ -3922,10 +4077,17 @@ impl App {
         let zoom_scale = self.input_handler.viewport().zoom_level as f32 / 100.0;
         let doc_delta = delta / zoom_scale;
 
-        // Update scroll offset with clamping
+        // Get viewport height in document coordinates
+        let viewport_height_screen = self.window.as_ref()
+            .map(|w| w.inner_size().height as f32)
+            .unwrap_or(800.0);
+        let viewport_height_doc = viewport_height_screen / zoom_scale;
+
+        // Update scroll offset with clamping - can't scroll past last page
+        let max_scroll = (total_height - viewport_height_doc).max(0.0);
         self.document_scroll_offset = (self.document_scroll_offset + doc_delta)
             .max(0.0)
-            .min(total_height);
+            .min(max_scroll);
 
         // Determine which page is now primarily visible (for thumbnail sync)
         let viewport_center = self.document_scroll_offset + 400.0 / zoom_scale;
@@ -3949,7 +4111,9 @@ impl App {
             self.thumbnail_strip.set_current_page(new_page);
             self.update_thumbnail_texture();
             self.ensure_current_page_text_extracted();
-            self.ensure_visible_pages_rendered();
+            // Defer page rendering during rapid scroll to avoid blocking the UI
+            // Pages will be rendered when scroll settles (see process_deferred_page_renders)
+            self.queue_visible_pages_for_render();
         }
 
         // Request redraw
@@ -3958,7 +4122,69 @@ impl App {
         }
     }
 
+    /// Queue visible pages for deferred rendering (called during scroll)
+    fn queue_visible_pages_for_render(&mut self) {
+        if let Some(doc) = &self.document {
+            let zoom_scale = self.input_handler.viewport().zoom_level as f32 / 100.0;
+            let viewport_height = self.window.as_ref()
+                .map(|w| w.inner_size().height as f32)
+                .unwrap_or(800.0);
+
+            let visible = calculate_visible_pages(
+                self.document_scroll_offset,
+                viewport_height,
+                &doc.page_dimensions,
+                &doc.page_y_offsets,
+                zoom_scale,
+            );
+
+            // Collect pages that need rendering
+            let pages_needed: Vec<u16> = visible.iter()
+                .filter(|vp| !doc.page_textures.contains_key(&vp.page_index))
+                .map(|vp| vp.page_index)
+                .collect();
+
+            // Update pending renders (replace with current visible set)
+            self.pending_page_renders = pages_needed;
+        }
+    }
+
+    /// Process deferred page renders after scroll settles
+    fn process_deferred_page_renders(&mut self) {
+        // Only render if we haven't scrolled recently (50ms debounce)
+        let scroll_settle_time = Duration::from_millis(50);
+        if self.last_scroll_time.elapsed() < scroll_settle_time {
+            return;
+        }
+
+        // Check if any pending pages are actually still visible and needed
+        if self.pending_page_renders.is_empty() {
+            return;
+        }
+
+        // Re-check which pages are currently visible and still need rendering
+        let pages_to_render: Vec<u16> = if let Some(doc) = &self.document {
+            self.pending_page_renders.iter()
+                .copied()
+                .filter(|page_idx| !doc.page_textures.contains_key(page_idx))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Clear pending list
+        self.pending_page_renders.clear();
+
+        // Render pages that are still needed (limit to 2 per frame to avoid stalls)
+        for page_index in pages_to_render.into_iter().take(2) {
+            self.render_page(page_index);
+        }
+    }
+
     /// Ensure all currently visible pages have their textures rendered
+    /// Note: During scroll, use queue_visible_pages_for_render() and
+    /// process_deferred_page_renders() instead to avoid blocking the UI
+    #[allow(dead_code)]
     fn ensure_visible_pages_rendered(&mut self) {
         // First collect info about which pages need rendering
         let pages_to_render: Vec<u16> = if let Some(doc) = &self.document {
@@ -5928,6 +6154,10 @@ impl App {
             }
         }
 
+        // Process deferred page renders after scroll settles
+        // This prevents synchronous rendering from blocking the UI during rapid scroll
+        self.process_deferred_page_renders();
+
         // Update the loading spinner animation
         #[cfg(target_os = "macos")]
         if let Some(spinner) = &mut self.loading_spinner {
@@ -6033,9 +6263,10 @@ impl App {
         // Critical for achieving 120fps on ProMotion displays
         layer.set_display_sync_enabled(true);
 
-        // Use 2 drawables for lower latency (default is 3)
-        // This reduces input lag while still allowing double-buffering
-        layer.set_maximum_drawable_count(2);
+        // Use 3 drawables (triple buffering) for smooth scrolling
+        // This prevents drawable starvation during rapid scroll when the GPU
+        // can't keep up with frame requests, avoiding visual glitches
+        layer.set_maximum_drawable_count(3);
 
         // Mark the framebuffer as opaque since we don't need transparency
         // This allows CAMetalLayer to optimize compositing

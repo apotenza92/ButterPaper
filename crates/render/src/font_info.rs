@@ -39,7 +39,8 @@ impl FontInfo {
     /// Create a new font info
     pub fn new(name: String) -> Self {
         let is_bold = name.to_lowercase().contains("bold");
-        let is_italic = name.to_lowercase().contains("italic") || name.to_lowercase().contains("oblique");
+        let is_italic =
+            name.to_lowercase().contains("italic") || name.to_lowercase().contains("oblique");
 
         Self {
             name,
@@ -219,9 +220,11 @@ pub fn find_font_in_region(
     // Find the most common font
     let mut font_counts: HashMap<String, (FontInfo, f32, usize)> = HashMap::new();
     for span in overlapping {
-        let entry = font_counts
-            .entry(span.font.name.clone())
-            .or_insert((span.font.clone(), span.font_size, 0));
+        let entry = font_counts.entry(span.font.name.clone()).or_insert((
+            span.font.clone(),
+            span.font_size,
+            0,
+        ));
         entry.2 += 1;
     }
 

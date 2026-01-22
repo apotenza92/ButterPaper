@@ -97,10 +97,7 @@ impl TextLayoutAdjuster {
     /// This function calculates the minimal layout changes needed when text is edited.
     /// It preserves the original position and font size, only adjusting the bounding box
     /// and line breaks as necessary.
-    pub fn adjust_layout(
-        edit: &TextEdit,
-        config: &LayoutConfig,
-    ) -> LayoutAdjustment {
+    pub fn adjust_layout(edit: &TextEdit, config: &LayoutConfig) -> LayoutAdjustment {
         let original_bbox = &edit.bbox;
         let text = &edit.edited_text;
         let font_size = edit.font_size;
@@ -114,9 +111,7 @@ impl TextLayoutAdjuster {
         // Determine max width for wrapping
         let max_width = match config.strategy {
             LayoutStrategy::SingleLine => None,
-            LayoutStrategy::MultiLine => {
-                config.max_width.or(Some(original_bbox.width))
-            }
+            LayoutStrategy::MultiLine => config.max_width.or(Some(original_bbox.width)),
         };
 
         // Perform layout adjustment
@@ -298,13 +293,7 @@ mod tests {
             height: 20.0,
         };
 
-        TextEdit::new(
-            0,
-            bbox,
-            "".to_string(),
-            text.to_string(),
-            12.0,
-        )
+        TextEdit::new(0, bbox, "".to_string(), text.to_string(), 12.0)
     }
 
     #[test]
