@@ -38,6 +38,20 @@ struct ThumbnailTexture {
     handle: egui::TextureHandle,
 }
 
+/// Viewport texture cache key
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct ViewportCacheKey {
+    page: usize,
+    zoom_percent: u32,
+}
+
+/// Viewport texture with dimensions
+struct ViewportTexture {
+    handle: egui::TextureHandle,
+    width: f32,
+    height: f32,
+}
+
 struct PdfEditorApp {
     // Document state
     document: Option<PdfDocument>,
@@ -53,6 +67,12 @@ struct PdfEditorApp {
 
     // Thumbnail cache: page_index -> texture
     thumbnails: HashMap<usize, ThumbnailTexture>,
+
+    // Viewport cache: (page, zoom) -> texture
+    viewport_cache: HashMap<ViewportCacheKey, ViewportTexture>,
+
+    // Viewport pan offset (for Hand tool dragging)
+    viewport_offset: egui::Vec2,
 
     // UI state
     sidebar_scroll_to_current: bool,
@@ -163,6 +183,8 @@ impl PdfEditorApp {
             zoom_level: 100.0,
             current_tool: Tool::default(),
             thumbnails: HashMap::new(),
+            viewport_cache: HashMap::new(),
+            viewport_offset: egui::Vec2::ZERO,
             sidebar_scroll_to_current: false,
             error_dialog: None,
             calibration_dialog: None,
@@ -197,6 +219,8 @@ impl PdfEditorApp {
                 self.file_path = Some(path);
                 self.document = Some(pdf);
                 self.thumbnails.clear();
+                self.viewport_cache.clear();
+                self.viewport_offset = egui::Vec2::ZERO;
                 self.sidebar_scroll_to_current = true;
             }
             Err(e) => {
@@ -237,8 +261,9 @@ impl PdfEditorApp {
 
     /// Navigate to a specific page
     fn go_to_page(&mut self, page: usize) {
-        if page < self.total_pages {
+        if page < self.total_pages && page != self.current_page {
             self.current_page = page;
+            self.viewport_offset = egui::Vec2::ZERO;
             self.sidebar_scroll_to_current = true;
         }
     }
@@ -450,6 +475,53 @@ impl PdfEditorApp {
             });
     }
 
+    fn render_viewport_page(&mut self, ctx: &egui::Context) -> Option<ViewportCacheKey> {
+        let pdf = self.document.as_ref()?;
+        let key = ViewportCacheKey {
+            page: self.current_page,
+            zoom_percent: self.zoom_level as u32,
+        };
+
+        if self.viewport_cache.contains_key(&key) {
+            return Some(key);
+        }
+
+        let page = pdf.get_page(self.current_page as u16).ok()?;
+        let page_width = page.width().value;
+        let page_height = page.height().value;
+
+        let scale = self.zoom_level / 100.0;
+        let render_width = (page_width * scale) as u32;
+        let render_height = (page_height * scale) as u32;
+
+        match pdf.render_page_rgba(self.current_page as u16, render_width, render_height) {
+            Ok(rgba_data) => {
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [render_width as usize, render_height as usize],
+                    &rgba_data,
+                );
+                let handle = ctx.load_texture(
+                    format!("viewport_{}_{}", self.current_page, self.zoom_level as u32),
+                    image,
+                    egui::TextureOptions::LINEAR,
+                );
+                self.viewport_cache.insert(
+                    key,
+                    ViewportTexture {
+                        handle,
+                        width: render_width as f32,
+                        height: render_height as f32,
+                    },
+                );
+                Some(key)
+            }
+            Err(e) => {
+                eprintln!("Failed to render page {}: {}", self.current_page, e);
+                None
+            }
+        }
+    }
+
     fn draw_viewport(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.document.is_none() {
@@ -459,13 +531,33 @@ impl PdfEditorApp {
                 return;
             }
 
-            ui.centered_and_justified(|ui| {
-                ui.heading(format!(
-                    "Page {} at {}%",
-                    self.current_page + 1,
-                    self.zoom_level as i32
-                ));
-            });
+            let key = self.render_viewport_page(ctx);
+
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if let Some(key) = key {
+                        if let Some(texture) = self.viewport_cache.get(&key) {
+                            let size = egui::vec2(texture.width, texture.height);
+
+                            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::drag());
+
+                            if response.dragged() && self.current_tool == Tool::Hand {
+                                self.viewport_offset += response.drag_delta();
+                            }
+
+                            ui.painter().image(
+                                texture.handle.id(),
+                                rect.translate(self.viewport_offset),
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
+                                egui::Color32::WHITE,
+                            );
+                        }
+                    }
+                });
         });
     }
 
