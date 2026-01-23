@@ -255,12 +255,7 @@ impl PdfDocument {
     ///
     /// # Returns
     /// RGBA pixel data (4 bytes per pixel) or an error
-    pub fn render_page_rgba(
-        &self,
-        page_index: u16,
-        width: u32,
-        height: u32,
-    ) -> PdfResult<Vec<u8>> {
+    pub fn render_page_rgba(&self, page_index: u16, width: u32, height: u32) -> PdfResult<Vec<u8>> {
         let page = self.get_page(page_index)?;
 
         let config = PdfRenderConfig::new()
@@ -358,9 +353,12 @@ impl PdfDocument {
 
             if is_whitespace || is_newline {
                 // End current span if we have content
-                if let (false, Some(start_x), Some(min_y), Some(max_y)) =
-                    (current_text.is_empty(), span_start_x, span_min_y, span_max_y)
-                {
+                if let (false, Some(start_x), Some(min_y), Some(max_y)) = (
+                    current_text.is_empty(),
+                    span_start_x,
+                    span_min_y,
+                    span_max_y,
+                ) {
                     spans.push(TextSpanInfo {
                         text: current_text.clone(),
                         x: start_x,
@@ -394,9 +392,12 @@ impl PdfDocument {
         }
 
         // Don't forget the last span
-        if let (false, Some(start_x), Some(min_y), Some(max_y)) =
-            (current_text.is_empty(), span_start_x, span_min_y, span_max_y)
-        {
+        if let (false, Some(start_x), Some(min_y), Some(max_y)) = (
+            current_text.is_empty(),
+            span_start_x,
+            span_min_y,
+            span_max_y,
+        ) {
             spans.push(TextSpanInfo {
                 text: current_text,
                 x: start_x,

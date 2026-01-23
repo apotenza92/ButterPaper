@@ -460,13 +460,14 @@ mod tests {
         // At 100% zoom
         let (cols, rows) = renderer.calculate_tile_grid(large_page_width, large_page_height, 100);
         assert_eq!(cols, 12); // 3024/256 = 11.81, rounds up to 12
-        assert_eq!(rows, 9);  // 2160/256 = 8.44, rounds up to 9
+        assert_eq!(rows, 9); // 2160/256 = 8.44, rounds up to 9
 
         let tiles_per_page = cols * rows;
         assert_eq!(tiles_per_page, 108);
 
         // At 200% zoom, tiles quadruple
-        let (cols_200, rows_200) = renderer.calculate_tile_grid(large_page_width, large_page_height, 200);
+        let (cols_200, rows_200) =
+            renderer.calculate_tile_grid(large_page_width, large_page_height, 200);
         assert_eq!(cols_200, 24); // 6048/256 = 23.625, rounds up to 24
         assert_eq!(rows_200, 17); // 4320/256 = 16.875, rounds up to 17
 
@@ -531,7 +532,11 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should be very fast (under 100ms for 6000 tile IDs)
-        assert!(elapsed.as_millis() < 100, "Tile ID generation took too long: {:?}", elapsed);
+        assert!(
+            elapsed.as_millis() < 100,
+            "Tile ID generation took too long: {:?}",
+            elapsed
+        );
         assert_eq!(tile_ids.len(), 6000);
     }
 
@@ -558,7 +563,11 @@ mod tests {
 
         // Check for uniqueness (no collisions)
         let unique_keys: std::collections::HashSet<_> = cache_keys.iter().collect();
-        assert_eq!(unique_keys.len(), cache_keys.len(), "Cache key collision detected");
+        assert_eq!(
+            unique_keys.len(),
+            cache_keys.len(),
+            "Cache key collision detected"
+        );
 
         // Check distribution - verify keys use a good range of values
         let min_key = *cache_keys.iter().min().unwrap();
