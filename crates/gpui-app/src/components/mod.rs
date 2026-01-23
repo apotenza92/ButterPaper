@@ -10,6 +10,7 @@ mod button;
 mod divider;
 mod dropdown;
 mod icon;
+mod icon_button;
 mod nav_item;
 mod setting_item;
 pub mod tab_bar;
@@ -18,5 +19,6 @@ mod tooltip;
 
 pub use button::{button, button_default, button_primary, ButtonSize, ButtonVariant};
 pub use icon::{icon, Icon};
+pub use icon_button::{icon_button, icon_button_conditional, IconButtonSize};
 pub use toggle_switch::toggle_switch;
 pub use tooltip::tooltip_builder;

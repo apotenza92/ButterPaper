@@ -18,7 +18,7 @@ Spec 02: Modular Architecture Refactoring
 - [x] Task 3.1: Extend UI Sizes Module (added SPACE_0-6, ICON_SM/MD/LG, RADIUS_LG)
 - [x] Task 3.2: Create Interactive Element Base (InteractiveExt + StatefulInteractiveExt traits)
 - [x] Task 3.3: Standardize Button Variants (ButtonVariant: Default/Primary/Ghost/Danger, ButtonSize: Sm/Md/Lg)
-- [ ] Task 3.4: Create IconButton Component
+- [x] Task 3.4: Create IconButton Component (icon_button, icon_button_conditional with Sm/Md/Lg sizes)
 - [ ] Task 3.5: Create Card Component
 - [ ] Task 3.6: Create Input Component
 - [ ] Task 3.7: Document Component API

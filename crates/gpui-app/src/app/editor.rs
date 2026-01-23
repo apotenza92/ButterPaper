@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use super::document::DocumentTab;
 use crate::components::tab_bar::TabId as UiTabId;
-use crate::components::{icon, tooltip_builder, Icon};
+use crate::components::{icon, icon_button, icon_button_conditional, tooltip_builder, Icon, IconButtonSize};
 use crate::sidebar::ThumbnailSidebar;
 use crate::viewport::PdfViewport;
 use crate::workspace::{load_preferences, TabPreferences};
@@ -341,31 +341,20 @@ impl PdfEditor {
                         let text_muted = theme.text_muted;
                         move |d| d.child(icon(Icon::Dirty, 12.0, text_muted))
                     })
-                    // Close button (hidden by default, visible on hover)
-                    .child({
-                        let hover_bg = theme.element_hover;
-                        let text_muted = theme.text_muted;
-                        div()
-                            .id(gpui::SharedString::from(format!("tab-close-{}", tab_id)))
-                            .w(ui::sizes::ICON_SM)
-                            .h(ui::sizes::ICON_SM)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(ui::sizes::RADIUS_SM)
-                            .text_xs()
-                            .text_color(text_muted)
-                            // Always visible
-                            .hover(move |s| s.bg(hover_bg))
-                            .on_click(move |_, window, cx| {
-                                if let Some(editor) = entity_for_close.upgrade() {
-                                    editor.update(cx, |editor, cx| {
-                                        editor.close_tab(tab_id, window, cx);
-                                    });
-                                }
-                            })
-                            .child(icon(Icon::Close, 12.0, text_muted))
-                    })
+                    // Close button
+                    .child(icon_button(
+                        format!("tab-close-{}", tab_id),
+                        Icon::Close,
+                        IconButtonSize::Sm,
+                        theme,
+                        move |_, window, cx| {
+                            if let Some(editor) = entity_for_close.upgrade() {
+                                editor.update(cx, |editor, cx| {
+                                    editor.close_tab(tab_id, window, cx);
+                                });
+                            }
+                        },
+                    ))
             })
             .collect()
     }
@@ -383,9 +372,6 @@ impl PdfEditor {
         let can_go_back = current_page > 1;
         let can_go_forward = current_page < page_count;
 
-        let text_enabled = theme.text;
-        let text_disabled = theme.text_muted;
-        let hover_bg = theme.element_hover;
         let border = theme.border;
 
         let entity_for_back = entity.clone();
@@ -398,71 +384,49 @@ impl PdfEditor {
             .flex_row()
             .items_center()
             .gap(ui::sizes::SPACE_1)
-            .px(ui::sizes::SPACE_2)  // Symmetric padding
-            .border_b_1() // Bottom border only (left edge from sidebar's right border)
+            .px(ui::sizes::SPACE_2)
+            .border_b_1()
             .border_color(border)
             // Back button (←)
-            .child(
-                div()
-                    .id("nav-back")
-                    .w(ui::sizes::ICON_LG)
-                    .h(ui::sizes::ICON_LG)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(ui::sizes::RADIUS_SM)
-                    .text_sm()
-                    .when(can_go_back, move |d| {
-                        d.cursor_pointer()
-                            .text_color(text_enabled)
-                            .hover(move |s| s.bg(hover_bg))
-                            .on_click(move |_, _, cx| {
-                                if let Some(editor) = entity_for_back.upgrade() {
-                                    editor.update(cx, |editor, cx| {
-                                        if let Some(tab) = editor.active_tab() {
-                                            let viewport = tab.viewport.clone();
-                                            viewport.update(cx, |vp, cx| {
-                                                vp.prev_page(cx);
-                                            });
-                                        }
-                                    });
-                                }
-                            })
-                    })
-                    .when(!can_go_back, move |d| d.text_color(text_disabled))
-                    .child(Icon::ArrowLeft.as_str())
-            )
+            .child(icon_button_conditional(
+                "nav-back",
+                Icon::ArrowLeft,
+                IconButtonSize::Lg,
+                can_go_back,
+                theme,
+                move |_, _, cx| {
+                    if let Some(editor) = entity_for_back.upgrade() {
+                        editor.update(cx, |editor, cx| {
+                            if let Some(tab) = editor.active_tab() {
+                                let viewport = tab.viewport.clone();
+                                viewport.update(cx, |vp, cx| {
+                                    vp.prev_page(cx);
+                                });
+                            }
+                        });
+                    }
+                },
+            ))
             // Forward button (→)
-            .child(
-                div()
-                    .id("nav-forward")
-                    .w(ui::sizes::ICON_LG)
-                    .h(ui::sizes::ICON_LG)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(ui::sizes::RADIUS_SM)
-                    .text_sm()
-                    .when(can_go_forward, move |d| {
-                        d.cursor_pointer()
-                            .text_color(text_enabled)
-                            .hover(move |s| s.bg(hover_bg))
-                            .on_click(move |_, _, cx| {
-                                if let Some(editor) = entity_for_forward.upgrade() {
-                                    editor.update(cx, |editor, cx| {
-                                        if let Some(tab) = editor.active_tab() {
-                                            let viewport = tab.viewport.clone();
-                                            viewport.update(cx, |vp, cx| {
-                                                vp.next_page(cx);
-                                            });
-                                        }
-                                    });
-                                }
-                            })
-                    })
-                    .when(!can_go_forward, move |d| d.text_color(text_disabled))
-                    .child(Icon::ArrowRight.as_str())
-            )
+            .child(icon_button_conditional(
+                "nav-forward",
+                Icon::ArrowRight,
+                IconButtonSize::Lg,
+                can_go_forward,
+                theme,
+                move |_, _, cx| {
+                    if let Some(editor) = entity_for_forward.upgrade() {
+                        editor.update(cx, |editor, cx| {
+                            if let Some(tab) = editor.active_tab() {
+                                let viewport = tab.viewport.clone();
+                                viewport.update(cx, |vp, cx| {
+                                    vp.next_page(cx);
+                                });
+                            }
+                        });
+                    }
+                },
+            ))
     }
 }
 
