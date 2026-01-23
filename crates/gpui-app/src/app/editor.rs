@@ -280,7 +280,7 @@ impl PdfEditor {
                     .id(gpui::SharedString::from(format!("tab-{}", tab_id)))
                     .group("tab")
                     .h_full()
-                    .px(px(12.0)) // Consistent horizontal padding for text
+                    .px(ui::sizes::SPACE_3) // Consistent horizontal padding for text
                     .flex()
                     .flex_row()
                     .items_center()
@@ -347,8 +347,8 @@ impl PdfEditor {
                         let text_muted = theme.text_muted;
                         div()
                             .id(gpui::SharedString::from(format!("tab-close-{}", tab_id)))
-                            .w(px(16.0))
-                            .h(px(16.0))
+                            .w(ui::sizes::ICON_SM)
+                            .h(ui::sizes::ICON_SM)
                             .flex()
                             .items_center()
                             .justify_center()
@@ -397,16 +397,16 @@ impl PdfEditor {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(4.0))
-            .px(px(8.0))  // Symmetric padding
+            .gap(ui::sizes::SPACE_1)
+            .px(ui::sizes::SPACE_2)  // Symmetric padding
             .border_b_1() // Bottom border only (left edge from sidebar's right border)
             .border_color(border)
             // Back button (←)
             .child(
                 div()
                     .id("nav-back")
-                    .w(px(24.0))
-                    .h(px(24.0))
+                    .w(ui::sizes::ICON_LG)
+                    .h(ui::sizes::ICON_LG)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -436,8 +436,8 @@ impl PdfEditor {
             .child(
                 div()
                     .id("nav-forward")
-                    .w(px(24.0))
-                    .h(px(24.0))
+                    .w(ui::sizes::ICON_LG)
+                    .h(ui::sizes::ICON_LG)
                     .flex()
                     .items_center()
                     .justify_center()
@@ -631,7 +631,7 @@ impl Render for PdfEditor {
                                     .flex_row()
                                     .items_center()
                                     .justify_center()
-                                    .h(px(24.0))
+                                    .h(ui::sizes::ICON_LG)
                                     .bg(theme.elevated_surface)
                                     .border_t_1()
                                     .border_color(theme.border)

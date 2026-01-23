@@ -1,6 +1,6 @@
 //! Shared tooltip component for consistent tooltip styling across the app.
 
-use gpui::{div, prelude::*, px, Rgba, SharedString};
+use gpui::{div, prelude::*, Rgba, SharedString};
 
 use crate::ui::sizes;
 
@@ -14,8 +14,8 @@ pub struct TooltipView {
 impl Render for TooltipView {
     fn render(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
         div()
-            .px(px(8.0))
-            .py(px(4.0))
+            .px(sizes::SPACE_2)
+            .py(sizes::SPACE_1)
             .bg(self.bg)
             .border_1()
             .border_color(self.border)

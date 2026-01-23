@@ -35,7 +35,7 @@ where
 
     // Switch dimensions
     let switch_width = px(44.0);
-    let switch_height = px(24.0);
+    let switch_height = sizes::ICON_LG;
     let knob_size = px(18.0);
     let knob_offset_off = px(3.0);
     let knob_offset_on = switch_width - knob_size - px(3.0);
@@ -81,8 +81,8 @@ where
 
     div()
         .id(id.into())
-        .w(px(20.0))
-        .h(px(20.0))
+        .w(sizes::ICON_MD)
+        .h(sizes::ICON_MD)
         .flex()
         .items_center()
         .justify_center()
