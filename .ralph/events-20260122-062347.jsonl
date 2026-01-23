@@ -1,0 +1,46 @@
+{"payload":"spec: specs/01-tauri-setup.md","topic":"spec.start","ts":"2026-01-22T06:24:26.142623+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md, hat: spec-writer","topic":"spec.start","ts":"2026-01-22T06:24:45.877905+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md","topic":"spec.ready","ts":"2026-01-22T06:25:41.250581+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md - routing to Spec Critic for review","topic":"spec.ready","ts":"2026-01-22T06:25:59.818975+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md, verdict: comprehensive and implementable","topic":"spec.approved","ts":"2026-01-22T06:26:25.706143+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md, ready for implementation","topic":"spec.approved","ts":"2026-01-22T06:26:42.796397+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md, ready for implementation","topic":"spec.approved","ts":"2026-01-22T06:27:00.119619+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md, delegating to Implementer","topic":"spec.approved","ts":"2026-01-22T06:27:18.164793+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md, delegating to Implementer","topic":"spec.approved","ts":"2026-01-22T06:27:35.855727+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md, all ACs implemented","topic":"implementation.done","ts":"2026-01-22T06:32:02.309489+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md","topic":"verification.start","ts":"2026-01-22T06:32:26.381694+00:00"}
+{"payload":"spec: specs/01-tauri-setup.md, all ACs verified","topic":"task.complete","ts":"2026-01-22T06:34:45.494071+00:00"}
+{"payload":"Spec 02: Rust Backend IPC Layer - specs/02-ipc-layer.md","topic":"spec.start","ts":"2026-01-22T06:35:20.230645+00:00"}
+{"payload":"spec: 02-ipc-layer.md, task: review and enhance spec for Rust Backend IPC Layer","topic":"spec.start","ts":"2026-01-22T06:35:37.633771+00:00"}
+{"payload":"spec: 02-ipc-layer.md, enhanced with Given-When-Then, examples, edge cases","topic":"spec.ready","ts":"2026-01-22T06:37:07.330787+00:00"}
+{"payload":"spec: 02-ipc-layer.md, ready for Spec Critic review","topic":"spec.ready","ts":"2026-01-22T06:37:33.548220+00:00"}
+{"payload":"spec: 02-ipc-layer.md, verdict: comprehensive and implementable","topic":"spec.approved","ts":"2026-01-22T06:38:03.206491+00:00"}
+{"payload":"spec: 02-ipc-layer.md - Implementer should implement the IPC layer","topic":"spec.approved","ts":"2026-01-22T06:38:24.494372+00:00"}
+{"payload":"spec: 02-ipc-layer.md - Implementer should implement the IPC layer","topic":"spec.approved","ts":"2026-01-22T06:38:57.266637+00:00"}
+{"payload":"spec: 02-ipc-layer.md, status: complete","topic":"implementation.done","ts":"2026-01-22T06:49:04.489219+00:00"}
+{"payload":"spec: 02-ipc-layer.md, verify implementation matches spec","topic":"verify.start","ts":"2026-01-22T06:49:25.743900+00:00"}
+{"payload":"spec: 02-ipc-layer.md, all acceptance criteria verified","topic":"task.complete","ts":"2026-01-22T06:50:35.651334+00:00"}
+{"payload":"spec: 03-frontend-ui.md","topic":"spec.start","ts":"2026-01-22T06:50:44.065911+00:00"}
+{"payload":"spec: 03-frontend-ui.md, routing to Spec Writer hat","topic":"spec.start","ts":"2026-01-22T06:51:01.229033+00:00"}
+{"payload":"spec: 03-frontend-ui.md","topic":"spec.ready","ts":"2026-01-22T06:53:08.695748+00:00"}
+{"payload":"spec: 03-frontend-ui.md, reviewer: Spec Critic","topic":"spec.approved","ts":"2026-01-22T06:53:37.262424+00:00"}
+{"payload":"spec: 03-frontend-ui.md, reviewer: Spec Critic","topic":"spec.approved","ts":"2026-01-22T06:53:54.977477+00:00"}
+{"payload":"spec: 03-frontend-ui.md, assignee: Implementer","topic":"spec.approved","ts":"2026-01-22T06:54:13.440229+00:00"}
+{"payload":"spec: 03-frontend-ui.md - Implementer should implement React UI components with Tailwind","topic":"spec.approved","ts":"2026-01-22T06:54:39.427247+00:00"}
+{"payload":"spec: 03-frontend-ui.md - All components implemented, TypeScript compiles, build passes","topic":"implementation.done","ts":"2026-01-22T06:59:30.420013+00:00"}
+{"payload":"spec: 03-frontend-ui.md, verify implementation matches acceptance criteria","topic":"verify.spec","ts":"2026-01-22T06:59:56.526303+00:00"}
+{"payload":"spec: 03-frontend-ui.md verified - all acceptance criteria pass","topic":"task.complete","ts":"2026-01-22T07:01:48.647360+00:00"}
+{"payload":"spec: 04-integration.md - proceed with end-to-end integration","topic":"spec.approved","ts":"2026-01-22T07:01:56.155206+00:00"}
+{"payload":"spec: 04-integration.md - Implementer: integrate IPC with frontend UI for full PDF viewer","topic":"spec.approved","ts":"2026-01-22T07:02:15.302034+00:00"}
+{"payload":"spec: 04-integration.md, delegate: Implementer, task: integrate IPC with frontend UI for full PDF viewer","topic":"spec.approved","ts":"2026-01-22T07:02:35.615358+00:00"}
+{"payload":"spec: 04-integration.md, delegate: Implementer","topic":"spec.approved","ts":"2026-01-22T07:02:55.089738+00:00"}
+{"payload":"spec: 04-integration.md, delegate: Implementer","topic":"spec.approved","ts":"2026-01-22T07:03:22.828621+00:00"}
+{"payload":"spec: 04-integration.md, commit: feat: full PDF viewer integration","topic":"implementation.done","ts":"2026-01-22T07:09:24.826135+00:00"}
+{"payload":"spec: 04-integration.md, all acceptance criteria verified","topic":"task.complete","ts":"2026-01-22T07:12:34.741305+00:00"}
+{"payload":"Create spec for 9.5: Cleanup - Remove egui implementation after Tauri migration","topic":"spec.start","ts":"2026-01-22T07:12:58.878131+00:00"}
+{"payload":"9.5: Cleanup - Remove egui implementation after Tauri migration","topic":"spec.start","ts":"2026-01-22T07:13:20.710865+00:00"}
+{"payload":"specs/05-cleanup-egui.md ready for review","topic":"spec.ready","ts":"2026-01-22T07:14:13.727619+00:00"}
+{"payload":"specs/05-cleanup-egui.md - all criteria clear and testable","topic":"spec.approved","ts":"2026-01-22T07:14:39.614464+00:00"}
+{"payload":"specs/05-cleanup-egui.md - Implementer: begin implementation","topic":"spec.approved","ts":"2026-01-22T07:14:56.819482+00:00"}
+{"payload":"specs/05-cleanup-egui.md - all changes complete, all ACs pass","topic":"implementation.done","ts":"2026-01-22T07:20:20.310602+00:00"}
+{"payload":"spec: 05-cleanup-egui, status: egui removed, ready for verification","topic":"implementation.done","ts":"2026-01-22T07:23:08.155419+00:00"}

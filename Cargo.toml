@@ -1,19 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/app",
-    "crates/core",
-    "crates/ui",
     "crates/render",
-    "crates/cache",
-    "crates/scheduler",
+    "crates/gpui-app",
+    "tools/xcap",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourusername/pdf-editor"
+repository = "https://github.com/apotenza92/pdf-editor"
 
 [workspace.dependencies]
-# Common dependencies will be added here as needed
+pdf-editor-render = { path = "crates/render" }

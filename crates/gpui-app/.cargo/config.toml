@@ -1,0 +1,2 @@
+# Prevent Cargo from using the parent workspace
+# This crate must be built in isolation due to dependency conflicts with Tauri

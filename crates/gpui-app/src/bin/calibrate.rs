@@ -64,11 +64,7 @@ impl Render for CalibrationWindow {
                 }),
             )
             // Title bar with centered title
-            .child(ui::title_bar(
-                "Calibration",
-                rgb(0xcdd6f4),
-                rgb(0x45475a),
-            ))
+            .child(ui::title_bar("Calibration", rgb(0xcdd6f4), rgb(0x45475a)))
             // Content area with grid of markers
             .child(
                 div()

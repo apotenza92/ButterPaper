@@ -18,6 +18,8 @@ use gpui::{
     FocusHandle, Focusable, Global, KeyBinding, Menu, MenuItem, TitlebarOptions, Window,
     WindowAppearance, WindowBounds, WindowOptions,
 };
+
+use components::tooltip_builder;
 use sidebar::ThumbnailSidebar;
 use std::path::PathBuf;
 pub use theme::{Theme, ThemeSettings};
@@ -118,6 +120,7 @@ struct CliArgs {
     list_elements: bool,
     click_element: Option<String>,
     dev_mode: bool,
+    gui_mode: bool,
 }
 
 /// Parse command line arguments
@@ -152,6 +155,7 @@ fn parse_args() -> CliArgs {
         println!("  --focus                    Focus a window (use with --window-title)");
         println!("  --settings                 Open settings window");
         println!("  --dev                      Enable dev mode (dynamic element tracking)");
+        println!("  --gui                      Force GUI mode (skip screenshot/headless commands)");
         println!();
         println!("Keyboard Shortcuts:");
         println!("  Cmd+O              Open file");
@@ -192,6 +196,7 @@ fn parse_args() -> CliArgs {
         list_elements: false,
         click_element: None,
         dev_mode: false,
+        gui_mode: false,
     };
 
     let mut i = 1;
@@ -257,6 +262,9 @@ fn parse_args() -> CliArgs {
             }
             "--dev" => {
                 cli.dev_mode = true;
+            }
+            "--gui" => {
+                cli.gui_mode = true;
             }
             arg if !arg.starts_with('-') => {
                 cli.files.push(PathBuf::from(arg));
@@ -345,7 +353,7 @@ fn list_windows() {
     match Window::all() {
         Ok(windows) => {
             println!("Capturable windows:");
-            println!("{:<8} {:<30} {:<20} {}", "ID", "App", "Position", "Title");
+            println!("{:<8} {:<30} {:<20} Title", "ID", "App", "Position");
             println!("{}", "-".repeat(100));
             for w in windows {
                 let id = w.id().unwrap_or(0);
@@ -748,8 +756,9 @@ fn capture_window(
         ));
     };
 
-    let window = window
-        .ok_or_else(|| "Window not found. Use --list-windows to see available windows.".to_string())?;
+    let window = window.ok_or_else(|| {
+        "Window not found. Use --list-windows to see available windows.".to_string()
+    })?;
 
     let id = window.id().unwrap_or(0);
     let app = window.app_name().unwrap_or_default();
@@ -818,22 +827,28 @@ impl PdfEditor {
         let sidebar = cx.new(ThumbnailSidebar::new);
 
         // Set up page change callback from viewport to sidebar
-        let sidebar_handle = sidebar.clone();
+        // Use WeakEntity to avoid dangling references if tab is closed
+        let sidebar_weak = sidebar.downgrade();
         viewport.update(cx, |vp, _cx| {
             vp.set_on_page_change(move |page, cx| {
-                sidebar_handle.update(cx, |sb, cx| {
-                    sb.set_selected_page(page, cx);
-                });
+                if let Some(sidebar_handle) = sidebar_weak.upgrade() {
+                    sidebar_handle.update(cx, |sb, cx| {
+                        sb.set_selected_page(page, cx);
+                    });
+                }
             });
         });
 
         // Set up page select callback from sidebar to viewport
-        let viewport_handle = viewport.clone();
+        // Use WeakEntity to avoid dangling references if tab is closed
+        let viewport_weak = viewport.downgrade();
         sidebar.update(cx, |sb, _cx| {
             sb.set_on_page_select(move |page, cx| {
-                viewport_handle.update(cx, |vp, cx| {
-                    vp.go_to_page(page, cx);
-                });
+                if let Some(viewport_handle) = viewport_weak.upgrade() {
+                    viewport_handle.update(cx, |vp, cx| {
+                        vp.go_to_page(page, cx);
+                    });
+                }
             });
         });
 
@@ -1022,16 +1037,24 @@ impl PdfEditor {
         }
     }
 
-    /// Render the tab bar component.
-    fn render_tab_bar(&self, theme: &Theme, cx: &Context<Self>) -> impl IntoElement {
+    /// Render individual tab items (for use in the tab bar header).
+    /// Styled to match Zed's tab aesthetic:
+    /// - Active tab: elevated background, side borders, NO bottom border (flows into content)
+    /// - Inactive tabs: surface background, bottom border only
+    /// - First tab never has left border (nav buttons provide the left edge)
+    fn render_tab_items(
+        &self,
+        theme: &Theme,
+        cx: &Context<Self>,
+    ) -> Vec<impl IntoElement + use<'_>> {
         let entity = cx.entity().downgrade();
 
-        let tabs_for_render: Vec<_> = self
-            .tabs
+        self.tabs
             .iter()
             .enumerate()
             .map(|(idx, doc_tab)| {
                 let is_active = idx == self.active_tab_index;
+                let is_first = idx == 0;
                 let title = doc_tab.title.clone();
                 let is_dirty = doc_tab.is_dirty;
                 let tab_id = doc_tab.id;
@@ -1039,21 +1062,48 @@ impl PdfEditor {
                 let entity_for_select = entity.clone();
                 let entity_for_close = entity.clone();
 
+                // Zed-style tabs:
+                // - Active: elevated bg, right border (left border only if not first), NO bottom border
+                // - Inactive: surface bg, bottom border only
+                // - First tab: no left border (nav buttons provide the edge)
                 div()
                     .id(gpui::SharedString::from(format!("tab-{}", tab_id)))
-                    .h(px(26.0))
-                    .px(ui::sizes::PADDING_MD)
+                    .group("tab")
+                    .h_full()
+                    .px(px(12.0)) // Consistent horizontal padding for text
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(ui::sizes::GAP_SM)
-                    .rounded(ui::sizes::RADIUS_SM)
+                    .gap(px(6.0))
                     .cursor_pointer()
                     .text_sm()
-                    .when(is_active, |d| d.bg(theme.element_selected))
+                    // Active tab: elevated background, side borders, no bottom border
+                    .when(is_active, {
+                        let bg = theme.elevated_surface;
+                        let text = theme.text;
+                        let border = theme.border;
+                        move |d| {
+                            d.bg(bg)
+                                .text_color(text)
+                                .border_r_1() // Right border always
+                                .border_color(border)
+                                // Left border only if not first tab (nav buttons provide left edge)
+                                .when(!is_first, |d| d.border_l_1())
+                            // No bottom border - tab flows into content
+                        }
+                    })
+                    // Inactive tab: bottom border only, muted text
                     .when(!is_active, {
+                        let text_muted = theme.text_muted;
+                        let text = theme.text;
                         let hover_bg = theme.element_hover;
-                        move |d| d.hover(move |s| s.bg(hover_bg))
+                        let border = theme.border;
+                        move |d| {
+                            d.text_color(text_muted)
+                                .border_b_1()
+                                .border_color(border)
+                                .hover(move |s| s.text_color(text).bg(hover_bg))
+                        }
                     })
                     .on_click(move |_, _, cx| {
                         if let Some(editor) = entity_for_select.upgrade() {
@@ -1062,7 +1112,7 @@ impl PdfEditor {
                             });
                         }
                     })
-                    // Tab title
+                    // Tab title with truncation
                     .child(
                         div()
                             .max_w(px(150.0))
@@ -1071,18 +1121,20 @@ impl PdfEditor {
                             .text_ellipsis()
                             .child(title),
                     )
-                    // Dirty indicator
-                    .when(is_dirty, |d| {
-                        d.child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.text_muted)
-                                .child("\u{2022}"),
-                        )
+                    .tooltip(tooltip_builder(
+                        doc_tab.title.clone(),
+                        theme.surface,
+                        theme.border,
+                    ))
+                    // Dirty indicator (always visible when dirty)
+                    .when(is_dirty, {
+                        let text_muted = theme.text_muted;
+                        move |d| d.child(div().text_xs().text_color(text_muted).child("\u{2022}"))
                     })
-                    // Close button
+                    // Close button (hidden by default, visible on hover)
                     .child({
                         let hover_bg = theme.element_hover;
+                        let text_muted = theme.text_muted;
                         div()
                             .id(gpui::SharedString::from(format!("tab-close-{}", tab_id)))
                             .w(px(16.0))
@@ -1092,7 +1144,8 @@ impl PdfEditor {
                             .justify_center()
                             .rounded(ui::sizes::RADIUS_SM)
                             .text_xs()
-                            .text_color(theme.text_muted)
+                            .text_color(text_muted)
+                            // Always visible
                             .hover(move |s| s.bg(hover_bg))
                             .on_click(move |_, window, cx| {
                                 if let Some(editor) = entity_for_close.upgrade() {
@@ -1104,21 +1157,102 @@ impl PdfEditor {
                             .child("\u{2715}") // X symbol
                     })
             })
-            .collect();
+            .collect()
+    }
+
+    /// Render navigation buttons (← →) for page navigation.
+    /// Has bottom border only; left edge is provided by sidebar's right border.
+    fn render_nav_buttons(
+        &self,
+        theme: &Theme,
+        page_count: u16,
+        current_page: u16,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let entity = cx.entity().downgrade();
+        let can_go_back = current_page > 1;
+        let can_go_forward = current_page < page_count;
+
+        let text_enabled = theme.text;
+        let text_disabled = theme.text_muted;
+        let hover_bg = theme.element_hover;
+        let border = theme.border;
+
+        let entity_for_back = entity.clone();
+        let entity_for_forward = entity;
 
         div()
-            .id("tab-bar")
-            .h(px(32.0))
-            .w_full()
+            .id("nav-buttons")
+            .h_full()
             .flex()
             .flex_row()
             .items_center()
-            .bg(theme.surface)
-            .border_b_1()
-            .border_color(theme.border)
-            .px(ui::sizes::PADDING_SM)
-            .gap(px(2.0))
-            .children(tabs_for_render)
+            .gap(px(4.0))
+            .px(px(8.0))  // Symmetric padding
+            .border_b_1() // Bottom border only (left edge from sidebar's right border)
+            .border_color(border)
+            // Back button (←)
+            .child(
+                div()
+                    .id("nav-back")
+                    .w(px(24.0))
+                    .h(px(24.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(ui::sizes::RADIUS_SM)
+                    .text_sm()
+                    .when(can_go_back, move |d| {
+                        d.cursor_pointer()
+                            .text_color(text_enabled)
+                            .hover(move |s| s.bg(hover_bg))
+                            .on_click(move |_, _, cx| {
+                                if let Some(editor) = entity_for_back.upgrade() {
+                                    editor.update(cx, |editor, cx| {
+                                        if let Some(tab) = editor.active_tab() {
+                                            let viewport = tab.viewport.clone();
+                                            viewport.update(cx, |vp, cx| {
+                                                vp.prev_page(cx);
+                                            });
+                                        }
+                                    });
+                                }
+                            })
+                    })
+                    .when(!can_go_back, move |d| d.text_color(text_disabled))
+                    .child("\u{2190}"), // ←
+            )
+            // Forward button (→)
+            .child(
+                div()
+                    .id("nav-forward")
+                    .w(px(24.0))
+                    .h(px(24.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(ui::sizes::RADIUS_SM)
+                    .text_sm()
+                    .when(can_go_forward, move |d| {
+                        d.cursor_pointer()
+                            .text_color(text_enabled)
+                            .hover(move |s| s.bg(hover_bg))
+                            .on_click(move |_, _, cx| {
+                                if let Some(editor) = entity_for_forward.upgrade() {
+                                    editor.update(cx, |editor, cx| {
+                                        if let Some(tab) = editor.active_tab() {
+                                            let viewport = tab.viewport.clone();
+                                            viewport.update(cx, |vp, cx| {
+                                                vp.next_page(cx);
+                                            });
+                                        }
+                                    });
+                                }
+                            })
+                    })
+                    .when(!can_go_forward, move |d| d.text_color(text_disabled))
+                    .child("\u{2192}"), // →
+            )
     }
 }
 
@@ -1155,6 +1289,8 @@ impl Render for PdfEditor {
 
         let show_tab_bar = self.show_tab_bar();
 
+        // Layout: Titlebar (32px) -> Content (sidebar | main)
+        // CRITICAL: Titlebar MUST remain empty except for traffic lights
         div()
             .id("pdf-editor")
             .key_context("PdfEditor")
@@ -1169,52 +1305,133 @@ impl Render for PdfEditor {
             .on_action(cx.listener(Self::handle_prev_tab))
             .on_action(cx.listener(Self::handle_close_tab))
             .flex()
-            .flex_col()
+            .flex_col() // Vertical layout: titlebar -> content
             .bg(theme.surface)
             .text_color(theme.text)
             .size_full()
-            // Title bar with centered title
+            // Title bar (32px) - EMPTY, only traffic lights
             .child(ui::title_bar("PDF Editor", theme.text, theme.border))
-            // Tab bar (conditional)
-            .when(show_tab_bar, |d| d.child(self.render_tab_bar(&theme, cx)))
-            // Main content: sidebar + viewport
+            // Main content below titlebar: sidebar | right column
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .flex_1()
                     .overflow_hidden()
-                    .when_some(self.active_tab(), |d, tab| {
-                        d.child(tab.sidebar.clone()).child(tab.viewport.clone())
-                    })
+                    // Left: Sidebar
+                    .when_some(self.active_tab(), |d, tab| d.child(tab.sidebar.clone()))
                     .when(self.active_tab().is_none(), |d| {
+                        // Empty sidebar placeholder when no document
+                        // No right border - content column provides left border for clean corners
                         d.child(
                             div()
-                                .flex_1()
+                                .w(px(160.0))
+                                .h_full()
+                                .bg(theme.surface)
                                 .flex()
-                                .items_center()
-                                .justify_center()
-                                .text_color(theme.text_muted)
-                                .child("Open a PDF file to get started (Cmd+O)"),
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .h(ui::sizes::TAB_BAR_HEIGHT)
+                                        .w_full()
+                                        .flex()
+                                        .items_center()
+                                        .px(ui::sizes::PADDING_SM)
+                                        .border_b_1()
+                                        .border_color(theme.border)
+                                        .child(div().text_xs().text_color(theme.text_muted).child("Pages")),
+                                ),
                         )
-                    }),
-            )
-            // Status bar at bottom
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_center()
-                    .h(px(24.0))
-                    .bg(theme.elevated_surface)
-                    .border_t_1()
-                    .border_color(theme.border)
+                    })
+                    // Right: Content column (tab bar + viewport + status bar)
+                    // Left border separates from sidebar (sidebar has no right border for clean corners)
                     .child(
                         div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child(status_text),
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .overflow_hidden()
+                            .border_l_1()
+                            .border_color(theme.border)
+                            // Tab bar - Zed style: individual elements have bottom borders
+                            .child(
+                                div()
+                                    .h(ui::sizes::TAB_BAR_HEIGHT)
+                                    .w_full()
+                                    .flex()
+                                    .flex_row()
+                                    .bg(theme.surface)
+                                    // No left padding - nav buttons have their own padding with left border
+                                    // Navigation buttons (← →) - with left and bottom borders
+                                    .child(self.render_nav_buttons(&theme, page_count, current_page, cx))
+                                    // Tabs area
+                                    .when(show_tab_bar, |d| {
+                                        d.children(self.render_tab_items(&theme, cx))
+                                    })
+                                    .when(!show_tab_bar && self.active_tab().is_some(), {
+                                        // Show document title when single tab
+                                        let title = self
+                                            .active_tab()
+                                            .map(|t| t.title.clone())
+                                            .unwrap_or_default();
+                                        let border = theme.border;
+                                        move |d| {
+                                            d.child(
+                                                div()
+                                                    .h_full()
+                                                    .flex()
+                                                    .items_center()
+                                                    .border_b_1()
+                                                    .border_color(border)
+                                                    .text_sm()
+                                                    .text_color(theme.text)
+                                                    .child(title),
+                                            )
+                                        }
+                                    })
+                                    // Fill remaining space with border line
+                                    .child({
+                                        let border = theme.border;
+                                        div().flex_1().h_full().border_b_1().border_color(border)
+                                    }),
+                            )
+                            // Viewport
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .bg(theme.elevated_surface)
+                                    .when_some(self.active_tab(), |d, tab| d.child(tab.viewport.clone()))
+                                    .when(self.active_tab().is_none(), |d| {
+                                        d.child(
+                                            div()
+                                                .size_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .text_color(theme.text_muted)
+                                                .child("Open a PDF file to get started (Cmd+O)"),
+                                        )
+                                    }),
+                            )
+                            // Status bar
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .justify_center()
+                                    .h(px(24.0))
+                                    .bg(theme.elevated_surface)
+                                    .border_t_1()
+                                    .border_color(theme.border)
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.text_muted)
+                                            .child(status_text),
+                                    ),
+                            ),
                     ),
             )
     }
@@ -1277,15 +1494,17 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Schedule screenshot if requested
-    if let Some(screenshot_path) = cli.screenshot.clone() {
-        schedule_screenshot(
-            screenshot_path,
-            cli.screenshot_delay_ms,
-            cli.window_id,
-            cli.window_title.clone(),
-            cli.mouse_action.clone(),
-        );
+    // Schedule screenshot if requested (skip in gui mode)
+    if !cli.gui_mode {
+        if let Some(screenshot_path) = cli.screenshot.clone() {
+            schedule_screenshot(
+                screenshot_path,
+                cli.screenshot_delay_ms,
+                cli.window_id,
+                cli.window_title.clone(),
+                cli.mouse_action.clone(),
+            );
+        }
     }
 
     let initial_files = cli.files;

@@ -11,6 +11,9 @@ pub mod sizes {
     /// Title bar height - ALL windows use 32px transparent title bars for consistent mouse automation
     pub const TITLE_BAR_HEIGHT: Pixels = px(32.0);
 
+    /// Tab bar height - content area below titlebar
+    pub const TAB_BAR_HEIGHT: Pixels = px(32.0);
+
     /// Standard control heights
     pub const CONTROL_HEIGHT: Pixels = px(28.0);
 
