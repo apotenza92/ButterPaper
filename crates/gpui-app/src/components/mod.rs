@@ -7,6 +7,7 @@
 #![allow(unused_imports)]
 
 mod button;
+mod card;
 mod divider;
 mod dropdown;
 mod icon;
@@ -18,6 +19,7 @@ mod toggle_switch;
 mod tooltip;
 
 pub use button::{button, button_default, button_primary, ButtonSize, ButtonVariant};
+pub use card::{card, card_header, card_with_header};
 pub use icon::{icon, Icon};
 pub use icon_button::{icon_button, icon_button_conditional, IconButtonSize};
 pub use toggle_switch::toggle_switch;
