@@ -2,7 +2,10 @@
 
 #![allow(dead_code)]
 
-use gpui::{div, prelude::*, px, IntoElement, Rgba, SharedString};
+use gpui::{
+    div, prelude::*, px, InteractiveElement, IntoElement, Rgba, SharedString,
+    StatefulInteractiveElement, Styled,
+};
 
 /// Standard UI sizing constants
 pub mod sizes {
@@ -80,6 +83,39 @@ pub mod sizes {
     /// Settings content max width (prevents overflow)
     pub const SETTINGS_CONTENT_MAX_WIDTH: Pixels = px(600.0);
 }
+
+// ============================================
+// Interactive Element Extensions
+// ============================================
+
+/// Extension trait for interactive elements with hover states.
+/// Provides consistent styling for buttons, links, and other clickable elements.
+pub trait InteractiveExt: InteractiveElement + Styled + Sized {
+    /// Apply hover background color for interactive elements.
+    fn hover_bg(self, hover: Rgba) -> Self {
+        self.hover(move |s| s.bg(hover))
+    }
+
+    /// Apply default and hover text colors for interactive text elements.
+    fn interactive_text(self, default: Rgba, hover: Rgba) -> Self {
+        self.text_color(default)
+            .hover(move |s| s.text_color(hover))
+    }
+}
+
+impl<T: InteractiveElement + Styled> InteractiveExt for T {}
+
+/// Extension trait for stateful interactive elements with hover AND active states.
+/// Use this for elements that have an id() and support active (pressed) state styling.
+pub trait StatefulInteractiveExt: StatefulInteractiveElement + Styled + Sized {
+    /// Apply hover and active background colors for interactive elements.
+    fn interactive_bg(self, hover: Rgba, active: Rgba) -> Self {
+        self.hover(move |s| s.bg(hover))
+            .active(move |s| s.bg(active))
+    }
+}
+
+impl<T: StatefulInteractiveElement + Styled> StatefulInteractiveExt for T {}
 
 /// Standard text sizes following Zed conventions
 pub mod text {

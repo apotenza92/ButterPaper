@@ -2,7 +2,7 @@
 
 use gpui::{div, prelude::*, ClickEvent, SharedString, Window};
 
-use crate::ui::sizes;
+use crate::ui::{sizes, StatefulInteractiveExt};
 use crate::Theme;
 
 /// Standard button with consistent styling.
@@ -20,6 +20,7 @@ where
     let surface = theme.surface;
     let border = theme.border;
     let hover = theme.element_hover;
+    let active = theme.element_selected; // Used as pressed state
 
     div()
         .id(SharedString::from(format!("btn-{}", label.into())))
@@ -34,7 +35,7 @@ where
         .rounded(sizes::RADIUS_SM)
         .cursor_pointer()
         .text_sm()
-        .hover(move |s| s.bg(hover))
+        .interactive_bg(hover, active)
         .on_click(on_click)
 }
 

@@ -15,8 +15,8 @@ Spec 02: Modular Architecture Refactoring
 - [x] Task 2.7: Clean up unused TabBar (removed Tab/TabBar struct, kept TabId only)
 
 ### Spec 03 Tasks
-- [ ] Task 3.1: Extend UI Sizes Module
-- [ ] Task 3.2: Create Interactive Element Base
+- [x] Task 3.1: Extend UI Sizes Module (added SPACE_0-6, ICON_SM/MD/LG, RADIUS_LG)
+- [x] Task 3.2: Create Interactive Element Base (InteractiveExt + StatefulInteractiveExt traits)
 - [ ] Task 3.3: Standardize Button Variants
 - [ ] Task 3.4: Create IconButton Component
 - [ ] Task 3.5: Create Card Component
