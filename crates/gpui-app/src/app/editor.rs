@@ -1,6 +1,6 @@
 //! PDF Editor main component with tabbed document management.
 
-use gpui::{div, prelude::*, px, App, Context, FocusHandle, Focusable, Window};
+use gpui::{div, prelude::*, px, App, Context, ExternalPaths, FocusHandle, Focusable, MouseButton, Window};
 use std::path::PathBuf;
 
 use super::document::DocumentTab;
@@ -31,8 +31,9 @@ impl PdfEditor {
         }
     }
 
-    /// Create a new document tab for a file path.
-    fn create_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) -> usize {
+    /// Create a new document tab, optionally with a file path.
+    /// If path is None, creates a welcome tab.
+    fn create_tab(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) -> usize {
         let viewport = cx.new(PdfViewport::new);
         let sidebar = cx.new(ThumbnailSidebar::new);
 
@@ -63,9 +64,10 @@ impl PdfEditor {
         });
 
         let title = path
-            .file_name()
+            .as_ref()
+            .and_then(|p| p.file_name())
             .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Untitled".to_string());
+            .unwrap_or_else(|| "Welcome".to_string());
 
         let tab = DocumentTab {
             id: UiTabId::new(),
@@ -80,19 +82,44 @@ impl PdfEditor {
         self.tabs.len() - 1
     }
 
+    /// Create a new welcome tab (no file loaded).
+    fn create_welcome_tab(&mut self, cx: &mut Context<Self>) -> usize {
+        self.create_tab(None, cx)
+    }
+
+    /// Create a new welcome tab and make it active.
+    fn new_tab(&mut self, cx: &mut Context<Self>) {
+        let idx = self.create_welcome_tab(cx);
+        self.active_tab_index = idx;
+        cx.notify();
+    }
+
     pub fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         // Check if file is already open in a tab
-        if let Some(idx) = self.tabs.iter().position(|t| t.path == path) {
+        if let Some(idx) = self.tabs.iter().position(|t| t.path.as_ref() == Some(&path)) {
             self.active_tab_index = idx;
             cx.notify();
             return;
         }
 
-        // Create new tab
-        let tab_index = self.create_tab(path.clone(), cx);
-        self.active_tab_index = tab_index;
+        // If current tab is a welcome tab, reuse it instead of creating a new one
+        let tab_index = if self.active_tab().map(|t| t.is_welcome()).unwrap_or(false) {
+            // Update the existing welcome tab with the file
+            let tab = &mut self.tabs[self.active_tab_index];
+            tab.path = Some(path.clone());
+            tab.title = path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Untitled".to_string());
+            self.active_tab_index
+        } else {
+            // Create new tab
+            let idx = self.create_tab(Some(path.clone()), cx);
+            self.active_tab_index = idx;
+            idx
+        };
 
-        // Load the PDF in the new tab
+        // Load the PDF in the tab
         let tab = &self.tabs[tab_index];
         tab.viewport.update(cx, |viewport, cx| {
             if let Err(e) = viewport.load_pdf(path, cx) {
@@ -107,6 +134,18 @@ impl PdfEditor {
         });
 
         cx.notify();
+    }
+
+    /// Handle dropped files by opening them as new tabs.
+    fn handle_file_drop(&mut self, paths: &ExternalPaths, cx: &mut Context<Self>) {
+        for path in paths.paths() {
+            // Only handle PDF files (case-insensitive)
+            if let Some(ext) = path.extension() {
+                if ext.to_string_lossy().to_lowercase() == "pdf" {
+                    self.open_file(path.clone(), cx);
+                }
+            }
+        }
     }
 
     fn active_tab(&self) -> Option<&DocumentTab> {
@@ -478,6 +517,10 @@ impl Render for PdfEditor {
             .on_action(cx.listener(Self::handle_next_tab))
             .on_action(cx.listener(Self::handle_prev_tab))
             .on_action(cx.listener(Self::handle_close_tab))
+            // Handle dropped files (PDFs only)
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _window, cx| {
+                this.handle_file_drop(paths, cx);
+            }))
             .flex()
             .flex_col() // Vertical layout: titlebar -> content
             .bg(theme.surface)
@@ -542,6 +585,35 @@ impl Render for PdfEditor {
                                     .when(show_tab_bar, |d| {
                                         d.children(self.render_tab_items(&theme, cx))
                                     })
+                                    // "+" button to create new tab (shown when tab bar is visible)
+                                    .when(show_tab_bar, {
+                                        let entity = cx.entity().downgrade();
+                                        let border = theme.border;
+                                        move |d| {
+                                            d.child(
+                                                div()
+                                                    .h_full()
+                                                    .flex()
+                                                    .items_center()
+                                                    .px(ui::sizes::SPACE_1)
+                                                    .border_b_1()
+                                                    .border_color(border)
+                                                    .child(icon_button(
+                                                        "new-tab",
+                                                        Icon::Plus,
+                                                        IconButtonSize::Md,
+                                                        &theme,
+                                                        move |_, _, cx| {
+                                                            if let Some(editor) = entity.upgrade() {
+                                                                editor.update(cx, |editor, cx| {
+                                                                    editor.new_tab(cx);
+                                                                });
+                                                            }
+                                                        },
+                                                    )),
+                                            )
+                                        }
+                                    })
                                     .when(!show_tab_bar && self.active_tab().is_some(), {
                                         // Show document title when single tab
                                         let title = self
@@ -564,9 +636,25 @@ impl Render for PdfEditor {
                                         }
                                     })
                                     // Fill remaining space with border line
+                                    // Double-click to create new tab
                                     .child({
                                         let border = theme.border;
-                                        div().flex_1().h_full().border_b_1().border_color(border)
+                                        let entity = cx.entity().downgrade();
+                                        div()
+                                            .id("tab-bar-empty")
+                                            .flex_1()
+                                            .h_full()
+                                            .border_b_1()
+                                            .border_color(border)
+                                            .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                                                if event.click_count == 2 {
+                                                    if let Some(editor) = entity.upgrade() {
+                                                        editor.update(cx, |editor, cx| {
+                                                            editor.new_tab(cx);
+                                                        });
+                                                    }
+                                                }
+                                            })
                                     }),
                             )
                             // Viewport

@@ -26,6 +26,8 @@ pub enum Icon {
     Check,
     /// Down arrow for dropdowns (▼)
     ChevronDown,
+    /// Plus sign for add/new actions (+)
+    Plus,
 }
 
 impl Icon {
@@ -41,6 +43,7 @@ impl Icon {
             Icon::Settings => "\u{2699}",
             Icon::Check => "\u{2713}",
             Icon::ChevronDown => "\u{25BC}",
+            Icon::Plus => "+",
         }
     }
 }

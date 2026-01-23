@@ -10,9 +10,17 @@ use crate::viewport::PdfViewport;
 /// A document tab containing the viewport and sidebar for a single PDF.
 pub struct DocumentTab {
     pub id: UiTabId,
-    pub path: PathBuf,
+    /// File path to the PDF. None for welcome tabs.
+    pub path: Option<PathBuf>,
     pub title: String,
     pub viewport: Entity<PdfViewport>,
     pub sidebar: Entity<ThumbnailSidebar>,
     pub is_dirty: bool,
+}
+
+impl DocumentTab {
+    /// Returns true if this is a welcome tab (no file loaded).
+    pub fn is_welcome(&self) -> bool {
+        self.path.is_none()
+    }
 }
