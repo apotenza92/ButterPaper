@@ -19,8 +19,8 @@ Spec 02: Modular Architecture Refactoring
 - [x] Task 3.2: Create Interactive Element Base (InteractiveExt + StatefulInteractiveExt traits)
 - [x] Task 3.3: Standardize Button Variants (ButtonVariant: Default/Primary/Ghost/Danger, ButtonSize: Sm/Md/Lg)
 - [x] Task 3.4: Create IconButton Component (icon_button, icon_button_conditional with Sm/Md/Lg sizes)
-- [ ] Task 3.5: Create Card Component
-- [ ] Task 3.6: Create Input Component
+- [x] Task 3.5: Create Card Component (card, card_header, card_with_header)
+- [x] Task 3.6: Create Input Component (text_input, text_input_default, InputSize enum)
 - [ ] Task 3.7: Document Component API
 
 ## Notes
