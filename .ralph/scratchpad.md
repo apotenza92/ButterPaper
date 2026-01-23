@@ -8,7 +8,7 @@ Spec 02: Modular Architecture Refactoring
 ### Spec 02 Tasks
 - [x] Task 2.1: Create shared Tooltip component
 - [x] Task 2.6: Create Icon component
-- [ ] Task 2.2: Extract CLI module
+- [x] Task 2.2: Extract CLI module
 - [ ] Task 2.3: Extract Window module
 - [ ] Task 2.4: Extract Editor module
 - [ ] Task 2.5: Slim main.rs to ~100 lines
@@ -25,7 +25,7 @@ Spec 02: Modular Architecture Refactoring
 
 ## Notes
 
-- main.rs currently 1638 lines
+- main.rs currently 1255 lines (was 1638)
 - TooltipView duplicated in main.rs and components/tab_bar.rs
 - components/tab_bar.rs TabBar struct is not actually used
 
