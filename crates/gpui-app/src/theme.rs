@@ -9,11 +9,56 @@
 
 #![allow(dead_code)]
 
-use gpui::{Global, Rgba, SharedString};
+use gpui::{App, Global, Rgba, SharedString, Window, WindowAppearance};
 use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::theme_updater;
+
+/// User's preferred appearance mode
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AppearanceMode {
+    Light,
+    Dark,
+    #[default]
+    System,
+}
+
+impl Global for AppearanceMode {}
+
+impl AppearanceMode {
+    /// Resolve the effective appearance based on mode and system setting
+    pub fn resolve(&self, window_appearance: WindowAppearance) -> WindowAppearance {
+        match self {
+            AppearanceMode::Light => WindowAppearance::Light,
+            AppearanceMode::Dark => WindowAppearance::Dark,
+            AppearanceMode::System => window_appearance,
+        }
+    }
+}
+
+/// Get the current theme based on appearance mode and user's theme selection
+pub fn current_theme(window: &Window, cx: &App) -> Theme {
+    let mode = cx
+        .try_global::<AppearanceMode>()
+        .copied()
+        .unwrap_or_default();
+    let settings = cx
+        .try_global::<ThemeSettings>()
+        .cloned()
+        .unwrap_or_default();
+    let appearance = mode.resolve(window.appearance());
+    let registry = theme_registry();
+
+    match appearance {
+        WindowAppearance::Dark | WindowAppearance::VibrantDark => {
+            registry.get_colors(&settings.dark_theme, true)
+        }
+        WindowAppearance::Light | WindowAppearance::VibrantLight => {
+            registry.get_colors(&settings.light_theme, false)
+        }
+    }
+}
 
 /// Built-in theme JSON files (embedded as fallback)
 const ONE_THEME_JSON: &str = include_str!("../assets/themes/one.json");

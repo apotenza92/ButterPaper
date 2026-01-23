@@ -11,8 +11,8 @@ Spec 02: Modular Architecture Refactoring
 - [x] Task 2.2: Extract CLI module
 - [x] Task 2.3: Extract Window module
 - [x] Task 2.4: Extract Editor module
-- [ ] Task 2.5: Slim main.rs to ~100 lines
-- [ ] Task 2.7: Clean up unused TabBar
+- [x] Task 2.5: Slim main.rs (232 -> 187 lines, moved AppearanceMode/current_theme to theme.rs)
+- [x] Task 2.7: Clean up unused TabBar (removed Tab/TabBar struct, kept TabId only)
 
 ### Spec 03 Tasks
 - [ ] Task 3.1: Extend UI Sizes Module
@@ -25,9 +25,9 @@ Spec 02: Modular Architecture Refactoring
 
 ## Notes
 
-- main.rs currently 232 lines (was 910, originally 1638)
-- Editor module extracted: app/document.rs, app/editor.rs, app/menus.rs
-- Next: Task 2.5 (slim main.rs further) or Task 2.7 (TabBar cleanup)
+- main.rs now 187 lines (was 232, originally 1638)
+- Spec 02 complete! All tasks done.
+- Next: Spec 03 - UI Component Standards
 
 ## Build Commands
 ```bash

@@ -15,15 +15,15 @@ mod window;
 mod workspace;
 
 pub use element_registry::{ElementInfo, ElementType};
+pub use theme::{current_theme, AppearanceMode, Theme, ThemeSettings};
 
 use gpui::{
-    actions, point, prelude::*, px, size, App, Application, Bounds, Global, KeyBinding,
-    TitlebarOptions, Window, WindowAppearance, WindowBounds, WindowOptions,
+    actions, point, prelude::*, px, size, App, Application, Bounds, KeyBinding, TitlebarOptions,
+    WindowBounds, WindowOptions,
 };
 
 use app::{set_menus, PdfEditor};
 use cli::parse_args;
-pub use theme::{Theme, ThemeSettings};
 use window::{focus_window, list_windows, schedule_screenshot};
 
 actions!(
@@ -42,51 +42,6 @@ actions!(
         CloseTab
     ]
 );
-
-/// User's preferred appearance mode
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum AppearanceMode {
-    Light,
-    Dark,
-    #[default]
-    System,
-}
-
-impl Global for AppearanceMode {}
-
-impl AppearanceMode {
-    /// Resolve the effective appearance based on mode and system setting
-    pub fn resolve(&self, window_appearance: WindowAppearance) -> WindowAppearance {
-        match self {
-            AppearanceMode::Light => WindowAppearance::Light,
-            AppearanceMode::Dark => WindowAppearance::Dark,
-            AppearanceMode::System => window_appearance,
-        }
-    }
-}
-
-/// Get the current theme based on appearance mode and user's theme selection
-pub fn current_theme(window: &Window, cx: &App) -> Theme {
-    let mode = cx
-        .try_global::<AppearanceMode>()
-        .copied()
-        .unwrap_or_default();
-    let settings = cx
-        .try_global::<ThemeSettings>()
-        .cloned()
-        .unwrap_or_default();
-    let appearance = mode.resolve(window.appearance());
-    let registry = theme::theme_registry();
-
-    match appearance {
-        WindowAppearance::Dark | WindowAppearance::VibrantDark => {
-            registry.get_colors(&settings.dark_theme, true)
-        }
-        WindowAppearance::Light | WindowAppearance::VibrantLight => {
-            registry.get_colors(&settings.light_theme, false)
-        }
-    }
-}
 
 fn main() {
     // Parse CLI args before starting the app
