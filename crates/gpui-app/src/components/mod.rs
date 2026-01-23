@@ -4,6 +4,7 @@
 //! and use constants from `ui::sizes` for consistent sizing.
 
 #![allow(dead_code)]
+#![allow(unused_imports)]
 
 mod button;
 mod divider;
@@ -15,6 +16,7 @@ pub mod tab_bar;
 mod toggle_switch;
 mod tooltip;
 
+pub use button::{button, button_default, button_primary, ButtonSize, ButtonVariant};
 pub use icon::{icon, Icon};
 pub use toggle_switch::toggle_switch;
 pub use tooltip::tooltip_builder;
