@@ -8,11 +8,13 @@
 mod button;
 mod divider;
 mod dropdown;
+mod icon;
 mod nav_item;
 mod setting_item;
 pub mod tab_bar;
 mod toggle_switch;
 mod tooltip;
 
+pub use icon::{icon, Icon};
 pub use toggle_switch::toggle_switch;
 pub use tooltip::tooltip_builder;

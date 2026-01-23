@@ -19,7 +19,7 @@ use gpui::{
     WindowAppearance, WindowBounds, WindowOptions,
 };
 
-use components::tooltip_builder;
+use components::{icon, tooltip_builder, Icon};
 use sidebar::ThumbnailSidebar;
 use std::path::PathBuf;
 pub use theme::{Theme, ThemeSettings};
@@ -1129,7 +1129,7 @@ impl PdfEditor {
                     // Dirty indicator (always visible when dirty)
                     .when(is_dirty, {
                         let text_muted = theme.text_muted;
-                        move |d| d.child(div().text_xs().text_color(text_muted).child("\u{2022}"))
+                        move |d| d.child(icon(Icon::Dirty, 12.0, text_muted))
                     })
                     // Close button (hidden by default, visible on hover)
                     .child({
@@ -1154,7 +1154,7 @@ impl PdfEditor {
                                     });
                                 }
                             })
-                            .child("\u{2715}") // X symbol
+                            .child(icon(Icon::Close, 12.0, text_muted))
                     })
             })
             .collect()
@@ -1220,7 +1220,7 @@ impl PdfEditor {
                             })
                     })
                     .when(!can_go_back, move |d| d.text_color(text_disabled))
-                    .child("\u{2190}"), // ←
+                    .child(Icon::ArrowLeft.as_str())
             )
             // Forward button (→)
             .child(
@@ -1251,7 +1251,7 @@ impl PdfEditor {
                             })
                     })
                     .when(!can_go_forward, move |d| d.text_color(text_disabled))
-                    .child("\u{2192}"), // →
+                    .child(Icon::ArrowRight.as_str())
             )
     }
 }

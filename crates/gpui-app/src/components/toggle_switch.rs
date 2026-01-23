@@ -2,6 +2,7 @@
 
 use gpui::{div, prelude::*, px, ClickEvent, SharedString, Window};
 
+use super::{icon, Icon};
 use crate::ui::sizes;
 use crate::Theme;
 
@@ -93,8 +94,6 @@ where
         .when(!checked, move |d| d.bg(surface))
         .on_click(on_toggle)
         .when(checked, move |d| {
-            d.child(
-                div().text_sm().text_color(text).child("\u{2713}"), // Checkmark
-            )
+            d.child(icon(Icon::Check, 14.0, text))
         })
 }

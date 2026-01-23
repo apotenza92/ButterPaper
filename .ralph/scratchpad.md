@@ -7,7 +7,7 @@ Spec 02: Modular Architecture Refactoring
 
 ### Spec 02 Tasks
 - [x] Task 2.1: Create shared Tooltip component
-- [ ] Task 2.6: Create Icon component
+- [x] Task 2.6: Create Icon component
 - [ ] Task 2.2: Extract CLI module
 - [ ] Task 2.3: Extract Window module
 - [ ] Task 2.4: Extract Editor module

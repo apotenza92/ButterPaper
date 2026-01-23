@@ -4,7 +4,7 @@ use gpui::{div, prelude::*, px, SharedString};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use super::tooltip_builder;
+use super::{icon, tooltip_builder, Icon};
 use crate::ui::sizes;
 use crate::Theme;
 
@@ -156,7 +156,7 @@ where
                     .tooltip(tooltip_builder(tab.title.clone(), surface, border))
                     // Dirty indicator
                     .when(tab.is_dirty, |d| {
-                        d.child(div().text_xs().text_color(text_muted).child("\u{2022}"))
+                        d.child(icon(Icon::Dirty, 12.0, text_muted))
                     })
                     // Close button
                     .child(
@@ -174,7 +174,7 @@ where
                             .on_click(move |_, _, cx| {
                                 on_close(tab_id, cx);
                             })
-                            .child("\u{2715}"), // X symbol
+                            .child(icon(Icon::Close, 12.0, text_muted))
                     )
             }))
     }

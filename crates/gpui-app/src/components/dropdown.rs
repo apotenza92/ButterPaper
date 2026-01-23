@@ -4,6 +4,7 @@
 
 use gpui::{deferred, div, prelude::*, px, SharedString};
 
+use super::{icon, Icon};
 use crate::ui::sizes;
 use crate::Theme;
 
@@ -143,10 +144,8 @@ where
             )
             .child(
                 div()
-                    .text_xs()
-                    .text_color(text_muted)
                     .ml(sizes::GAP_SM)
-                    .child("\u{25BC}"), // Down arrow
+                    .child(icon(Icon::ChevronDown, 10.0, text_muted)),
             )
             .when(is_open, |d| {
                 let options = self.options.clone();
@@ -194,12 +193,7 @@ where
                                             })
                                             .child(opt.label.clone())
                                             .when(is_selected, |d| {
-                                                d.child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(accent)
-                                                        .child("\u{2713}"), // Checkmark
-                                                )
+                                                d.child(icon(Icon::Check, 14.0, accent))
                                             })
                                     })),
                             )
