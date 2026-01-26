@@ -4,3 +4,5 @@ logs/
 .agent/
 specs/
 tasks/
+
+target/
