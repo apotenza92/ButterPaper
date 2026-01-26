@@ -1,4 +1,4 @@
-//! PDF Editor Render Library
+//! ButterPaper Render Library
 //!
 //! PDF render pipeline with tile-based rendering, preview and crisp profiles.
 

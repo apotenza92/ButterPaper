@@ -81,14 +81,14 @@ pub fn list_elements() {
         eprintln!("  1. The Settings window is open (--settings)");
         eprintln!("  2. Dev mode is enabled (--dev)");
         eprintln!();
-        eprintln!("Example: pdf-editor --settings --dev");
+        eprintln!("Example: butterpaper --settings --dev");
         std::process::exit(1);
     }
     println!("UI Elements (dynamically tracked):");
     println!();
     element_registry::print_elements_table(&elements);
     println!();
-    println!("Usage: pdf-editor --click-element <id> --window-title Settings");
+    println!("Usage: butterpaper --click-element <id> --window-title Settings");
     std::process::exit(0);
 }
 

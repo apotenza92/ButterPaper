@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test PDF Editor --list-annotations functionality
+# Test ButterPaper --list-annotations functionality
 #
 # This script tests the --list-annotations CLI functionality:
 # - List annotations from a PDF with annotations
@@ -12,8 +12,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-BIN="$PROJECT_DIR/target/release/pdf-editor"
-TEST_DIR="/tmp/pdf-editor-test-pdfs"
+BIN="$PROJECT_DIR/target/release/butterpaper"
+TEST_DIR="/tmp/butterpaper-test-pdfs"
 
 # Colors
 RED='\033[0;31m'
@@ -28,13 +28,13 @@ info() { echo -e "${YELLOW}INFO${NC}: $1"; }
 PASSED=0
 FAILED=0
 
-echo "=== PDF Editor List Annotations Test Suite ==="
+echo "=== ButterPaper List Annotations Test Suite ==="
 echo ""
 
 # Ensure binary exists
 if [ ! -f "$BIN" ]; then
     info "Building release binary..."
-    cargo build --release -p pdf-editor
+    cargo build --release -p butterpaper-gpui
 fi
 
 # Create test directory

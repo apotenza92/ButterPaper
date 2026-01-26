@@ -1,11 +1,11 @@
-//! PDF Editor main component with tabbed document management.
+//! ButterPaper main component with tabbed document management.
 
-use gpui::{div, prelude::*, px, App, Context, ExternalPaths, FocusHandle, Focusable, MouseButton, Window};
+use gpui::{div, prelude::*, px, App, Context, ExternalPaths, FocusHandle, Focusable, MouseButton, ScrollDelta, ScrollWheelEvent, Window};
 use std::path::PathBuf;
 
 use super::document::DocumentTab;
 use crate::components::tab_bar::TabId as UiTabId;
-use crate::components::{icon, icon_button, icon_button_conditional, tooltip_builder, Icon, IconButtonSize};
+use crate::components::{icon, icon_button, text_button_with_shortcut, Icon, IconButtonSize, TextButtonSize};
 use crate::sidebar::ThumbnailSidebar;
 use crate::viewport::PdfViewport;
 use crate::workspace::{load_preferences, TabPreferences};
@@ -19,15 +19,19 @@ pub struct PdfEditor {
     active_tab_index: usize,
     focus_handle: FocusHandle,
     preferences: TabPreferences,
+    /// Horizontal scroll offset for the tab bar (in pixels)
+    tab_scroll_offset: f32,
 }
 
 impl PdfEditor {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        // Start with no tabs - shows the full welcome screen
         Self {
             tabs: Vec::new(),
             active_tab_index: 0,
             focus_handle: cx.focus_handle(),
             preferences: load_preferences(),
+            tab_scroll_offset: 0.0,
         }
     }
 
@@ -148,6 +152,36 @@ impl PdfEditor {
         }
     }
 
+    /// Handle scroll wheel on tab bar - converts vertical scroll to horizontal.
+    fn handle_tab_scroll(&mut self, delta: ScrollDelta, cx: &mut Context<Self>) {
+        let scroll_amount: f32 = match delta {
+            ScrollDelta::Lines(lines) => {
+                // Both vertical and horizontal scroll - use whichever is larger
+                // Vertical scroll (lines.y) maps to horizontal movement
+                let horizontal = lines.x * 30.0;
+                let vertical_as_horizontal = lines.y * 30.0;
+                if horizontal.abs() > vertical_as_horizontal.abs() {
+                    horizontal
+                } else {
+                    vertical_as_horizontal
+                }
+            }
+            ScrollDelta::Pixels(pixels) => {
+                // Use horizontal if present, otherwise use vertical
+                let px_x: f32 = pixels.x.into();
+                let px_y: f32 = pixels.y.into();
+                if px_x.abs() > px_y.abs() {
+                    px_x
+                } else {
+                    px_y
+                }
+            }
+        };
+
+        self.tab_scroll_offset = (self.tab_scroll_offset - scroll_amount).max(0.0);
+        cx.notify();
+    }
+
     fn active_tab(&self) -> Option<&DocumentTab> {
         self.tabs.get(self.active_tab_index)
     }
@@ -159,14 +193,14 @@ impl PdfEditor {
         }
     }
 
-    fn close_tab(&mut self, tab_id: UiTabId, window: &mut Window, cx: &mut Context<Self>) {
+    fn close_tab(&mut self, tab_id: UiTabId, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) {
             self.tabs.remove(idx);
 
-            // Adjust active index
+            // If no tabs left, show welcome screen (empty tabs vec)
             if self.tabs.is_empty() {
-                // Close window if no tabs left
-                window.remove_window();
+                self.active_tab_index = 0;
+                cx.notify();
                 return;
             }
 
@@ -287,10 +321,8 @@ impl PdfEditor {
     }
 
     /// Render individual tab items (for use in the tab bar header).
-    /// Styled to match Zed's tab aesthetic:
-    /// - Active tab: elevated background, side borders, NO bottom border (flows into content)
-    /// - Inactive tabs: surface background, bottom border only
-    /// - First tab never has left border (nav buttons provide the left edge)
+    /// Simple styling - no borders, just background color for active state.
+    /// Close button only visible on active tab or hover.
     fn render_tab_items(
         &self,
         theme: &Theme,
@@ -303,7 +335,6 @@ impl PdfEditor {
             .enumerate()
             .map(|(idx, doc_tab)| {
                 let is_active = idx == self.active_tab_index;
-                let is_first = idx == 0;
                 let title = doc_tab.title.clone();
                 let is_dirty = doc_tab.is_dirty;
                 let tab_id = doc_tab.id;
@@ -311,48 +342,27 @@ impl PdfEditor {
                 let entity_for_select = entity.clone();
                 let entity_for_close = entity.clone();
 
-                // Zed-style tabs:
-                // - Active: elevated bg, right border (left border only if not first), NO bottom border
-                // - Inactive: surface bg, bottom border only
-                // - First tab: no left border (nav buttons provide the edge)
+                let bg = if is_active { theme.elevated_surface } else { theme.surface };
+                let text_color = if is_active { theme.text } else { theme.text_muted };
+                let hover_bg = theme.element_hover;
+                let hover_text = theme.text;
+
                 div()
                     .id(gpui::SharedString::from(format!("tab-{}", tab_id)))
                     .group("tab")
                     .h_full()
-                    .px(ui::sizes::SPACE_3) // Consistent horizontal padding for text
+                    .px(ui::sizes::SPACE_3)
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap(px(6.0))
                     .cursor_pointer()
                     .text_sm()
-                    // Active tab: elevated background, side borders, no bottom border
-                    .when(is_active, {
-                        let bg = theme.elevated_surface;
-                        let text = theme.text;
-                        let border = theme.border;
-                        move |d| {
-                            d.bg(bg)
-                                .text_color(text)
-                                .border_r_1() // Right border always
-                                .border_color(border)
-                                // Left border only if not first tab (nav buttons provide left edge)
-                                .when(!is_first, |d| d.border_l_1())
-                            // No bottom border - tab flows into content
-                        }
-                    })
-                    // Inactive tab: bottom border only, muted text
-                    .when(!is_active, {
-                        let text_muted = theme.text_muted;
-                        let text = theme.text;
-                        let hover_bg = theme.element_hover;
-                        let border = theme.border;
-                        move |d| {
-                            d.text_color(text_muted)
-                                .border_b_1()
-                                .border_color(border)
-                                .hover(move |s| s.text_color(text).bg(hover_bg))
-                        }
+                    .bg(bg)
+                    .text_color(text_color)
+                    // Hover effect for inactive tabs
+                    .when(!is_active, move |d| {
+                        d.hover(move |s| s.text_color(hover_text).bg(hover_bg))
                     })
                     .on_click(move |_, _, cx| {
                         if let Some(editor) = entity_for_select.upgrade() {
@@ -361,112 +371,35 @@ impl PdfEditor {
                             });
                         }
                     })
-                    // Tab title with truncation
-                    .child(
-                        div()
-                            .max_w(px(150.0))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(title),
-                    )
-                    .tooltip(tooltip_builder(
-                        doc_tab.title.clone(),
-                        theme.surface,
-                        theme.border,
-                    ))
-                    // Dirty indicator (always visible when dirty)
+                    // Tab title
+                    .child(div().whitespace_nowrap().child(title))
+                    // Dirty indicator
                     .when(is_dirty, {
                         let text_muted = theme.text_muted;
                         move |d| d.child(icon(Icon::Dirty, 12.0, text_muted))
                     })
-                    // Close button
-                    .child(icon_button(
-                        format!("tab-close-{}", tab_id),
-                        Icon::Close,
-                        IconButtonSize::Sm,
-                        theme,
-                        move |_, window, cx| {
-                            if let Some(editor) = entity_for_close.upgrade() {
-                                editor.update(cx, |editor, cx| {
-                                    editor.close_tab(tab_id, window, cx);
-                                });
-                            }
-                        },
-                    ))
+                    // Close button - visible only on active tab or hover
+                    .child(
+                        div()
+                            .when(!is_active, |d| d.invisible().group_hover("tab", |s| s.visible()))
+                            .child(icon_button(
+                                format!("tab-close-{}", tab_id),
+                                Icon::Close,
+                                IconButtonSize::Sm,
+                                theme,
+                                move |_, window, cx| {
+                                    if let Some(editor) = entity_for_close.upgrade() {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.close_tab(tab_id, window, cx);
+                                        });
+                                    }
+                                },
+                            )),
+                    )
             })
             .collect()
     }
 
-    /// Render navigation buttons (← →) for page navigation.
-    /// Has bottom border only; left edge is provided by sidebar's right border.
-    fn render_nav_buttons(
-        &self,
-        theme: &Theme,
-        page_count: u16,
-        current_page: u16,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let entity = cx.entity().downgrade();
-        let can_go_back = current_page > 1;
-        let can_go_forward = current_page < page_count;
-
-        let border = theme.border;
-
-        let entity_for_back = entity.clone();
-        let entity_for_forward = entity;
-
-        div()
-            .id("nav-buttons")
-            .h_full()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(ui::sizes::SPACE_1)
-            .px(ui::sizes::SPACE_2)
-            .border_b_1()
-            .border_color(border)
-            // Back button (←)
-            .child(icon_button_conditional(
-                "nav-back",
-                Icon::ArrowLeft,
-                IconButtonSize::Lg,
-                can_go_back,
-                theme,
-                move |_, _, cx| {
-                    if let Some(editor) = entity_for_back.upgrade() {
-                        editor.update(cx, |editor, cx| {
-                            if let Some(tab) = editor.active_tab() {
-                                let viewport = tab.viewport.clone();
-                                viewport.update(cx, |vp, cx| {
-                                    vp.prev_page(cx);
-                                });
-                            }
-                        });
-                    }
-                },
-            ))
-            // Forward button (→)
-            .child(icon_button_conditional(
-                "nav-forward",
-                Icon::ArrowRight,
-                IconButtonSize::Lg,
-                can_go_forward,
-                theme,
-                move |_, _, cx| {
-                    if let Some(editor) = entity_for_forward.upgrade() {
-                        editor.update(cx, |editor, cx| {
-                            if let Some(tab) = editor.active_tab() {
-                                let viewport = tab.viewport.clone();
-                                viewport.update(cx, |vp, cx| {
-                                    vp.next_page(cx);
-                                });
-                            }
-                        });
-                    }
-                },
-            ))
-    }
 }
 
 impl Focusable for PdfEditor {
@@ -479,33 +412,12 @@ impl Render for PdfEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = current_theme(window, cx);
 
-        // Get viewport info for status bar
-        let (page_count, current_page, zoom_level) = if let Some(tab) = self.active_tab() {
-            let viewport = tab.viewport.read(cx);
-            (
-                viewport.page_count(),
-                viewport.current_page_display(),
-                viewport.zoom_level,
-            )
-        } else {
-            (0, 0, 100)
-        };
-
-        let status_text = if page_count > 0 {
-            format!(
-                "Page {} of {} \u{2022} {}%",
-                current_page, page_count, zoom_level
-            )
-        } else {
-            "No document".to_string()
-        };
-
         let show_tab_bar = self.show_tab_bar();
 
         // Layout: Titlebar (32px) -> Content (sidebar | main)
         // CRITICAL: Titlebar MUST remain empty except for traffic lights
         div()
-            .id("pdf-editor")
+            .id("butterpaper")
             .key_context("PdfEditor")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_zoom_in))
@@ -527,77 +439,140 @@ impl Render for PdfEditor {
             .text_color(theme.text)
             .size_full()
             // Title bar (32px) - EMPTY, only traffic lights
-            .child(ui::title_bar("PDF Editor", theme.text, theme.border))
-            // Main content below titlebar: sidebar | right column
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .overflow_hidden()
-                    // Left: Sidebar
-                    .when_some(self.active_tab(), |d, tab| d.child(tab.sidebar.clone()))
-                    .when(self.active_tab().is_none(), |d| {
-                        // Empty sidebar placeholder when no document
-                        // No right border - content column provides left border for clean corners
-                        d.child(
+            .child(ui::title_bar("ButterPaper", theme.text, theme.border))
+            // Main content below titlebar
+            // When no tabs: full welcome screen
+            // When tabs: sidebar | right column
+            .when(self.tabs.is_empty(), {
+                // Full welcome screen - no tabs, no sidebar, just welcome content
+                let entity = cx.entity().downgrade();
+                let theme_clone = theme.clone();
+                move |d| {
+                    d.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .bg(theme.elevated_surface)
+                            .child(text_button_with_shortcut(
+                                "welcome-open-file",
+                                "Open File",
+                                "⌘O",
+                                TextButtonSize::Md,
+                                &theme_clone,
+                                move |_, window, cx| {
+                                    if let Some(editor) = entity.upgrade() {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.handle_open(&Open, window, cx);
+                                        });
+                                    }
+                                },
+                            )),
+                    )
+                }
+            })
+            .when(!self.tabs.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_1()
+                        .overflow_hidden()
+                        // Left: Sidebar (always show when tabs exist)
+                        .when_some(self.active_tab(), |d, tab| d.child(tab.sidebar.clone()))
+                        // Right: Content column (tab bar + viewport + status bar)
+                        // Left border separates from sidebar (always present when tabs exist)
+                        .child({
                             div()
-                                .w(px(160.0))
-                                .h_full()
-                                .bg(theme.surface)
                                 .flex()
                                 .flex_col()
+                                .flex_1()
+                                .overflow_hidden()
+                                .border_l_1()
+                                .border_color(theme.border)
+                                // Tab bar - simple layout with single bottom border
                                 .child(
                                     div()
                                         .h(ui::sizes::TAB_BAR_HEIGHT)
                                         .w_full()
                                         .flex()
+                                        .flex_row()
                                         .items_center()
-                                        .px(ui::sizes::PADDING_SM)
+                                        .bg(theme.surface)
                                         .border_b_1()
                                         .border_color(theme.border)
-                                        .child(div().text_xs().text_color(theme.text_muted).child("Pages")),
-                                ),
-                        )
-                    })
-                    // Right: Content column (tab bar + viewport + status bar)
-                    // Left border separates from sidebar (sidebar has no right border for clean corners)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .overflow_hidden()
-                            .border_l_1()
-                            .border_color(theme.border)
-                            // Tab bar - Zed style: individual elements have bottom borders
-                            .child(
-                                div()
-                                    .h(ui::sizes::TAB_BAR_HEIGHT)
-                                    .w_full()
-                                    .flex()
-                                    .flex_row()
-                                    .bg(theme.surface)
-                                    // No left padding - nav buttons have their own padding with left border
-                                    // Navigation buttons (← →) - with left and bottom borders
-                                    .child(self.render_nav_buttons(&theme, page_count, current_page, cx))
-                                    // Tabs area
-                                    .when(show_tab_bar, |d| {
-                                        d.children(self.render_tab_items(&theme, cx))
-                                    })
-                                    // "+" button to create new tab (shown when tab bar is visible)
-                                    .when(show_tab_bar, {
-                                        let entity = cx.entity().downgrade();
-                                        let border = theme.border;
-                                        move |d| {
+                                        // Scrollable tabs container
+                                        .when(show_tab_bar, |d| {
+                                            let scroll_offset = self.tab_scroll_offset;
+                                            let tab_items = self.render_tab_items(&theme, cx);
                                             d.child(
                                                 div()
+                                                    .id("tabs-scroll")
+                                                    .flex()
+                                                    .flex_row()
+                                                    .h_full()
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
+                                                        this.handle_tab_scroll(event.delta, cx);
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .flex_row()
+                                                            .h_full()
+                                                            .ml(px(-scroll_offset))
+                                                            .children(tab_items),
+                                                    ),
+                                            )
+                                        })
+                                        .when(!show_tab_bar, {
+                                            // Show document title when single tab
+                                            let title = self
+                                                .active_tab()
+                                                .map(|t| t.title.clone())
+                                                .unwrap_or_default();
+                                            move |d| {
+                                                d.child(
+                                                    div()
+                                                        .h_full()
+                                                        .flex()
+                                                        .items_center()
+                                                        .text_sm()
+                                                        .text_color(theme.text)
+                                                        .child(title),
+                                                )
+                                            }
+                                        })
+                                        // Empty space - fills remaining width, double-click to create new tab
+                                        .child({
+                                            let entity = cx.entity().downgrade();
+                                            div()
+                                                .id("tab-bar-empty")
+                                                .flex_1()
+                                                .h_full()
+                                                .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                                                    if event.click_count == 2 {
+                                                        if let Some(editor) = entity.upgrade() {
+                                                            editor.update(cx, |editor, cx| {
+                                                                editor.new_tab(cx);
+                                                            });
+                                                        }
+                                                    }
+                                                })
+                                        })
+                                        // "+" button on far right
+                                        .when(show_tab_bar, |d| {
+                                            let entity = cx.entity().downgrade();
+                                            d.child(
+                                                div()
+                                                    .flex_shrink_0()
                                                     .h_full()
                                                     .flex()
                                                     .items_center()
                                                     .px(ui::sizes::SPACE_1)
-                                                    .border_b_1()
-                                                    .border_color(border)
                                                     .child(icon_button(
                                                         "new-tab",
                                                         Icon::Plus,
@@ -612,89 +587,51 @@ impl Render for PdfEditor {
                                                         },
                                                     )),
                                             )
-                                        }
-                                    })
-                                    .when(!show_tab_bar && self.active_tab().is_some(), {
-                                        // Show document title when single tab
-                                        let title = self
-                                            .active_tab()
-                                            .map(|t| t.title.clone())
-                                            .unwrap_or_default();
-                                        let border = theme.border;
-                                        move |d| {
+                                        }),
+                                )
+                                // Viewport / Welcome tab content
+                                .child({
+                                    let is_welcome = self.active_tab().map(|t| t.is_welcome()).unwrap_or(false);
+                                    let viewport = self.active_tab().map(|t| t.viewport.clone());
+                                    let entity = cx.entity().downgrade();
+                                    let theme_clone = theme.clone();
+
+                                    div()
+                                        .flex_1()
+                                        .overflow_hidden()
+                                        .bg(theme.elevated_surface)
+                                        // Show welcome content for welcome tabs
+                                        .when(is_welcome, |d| {
                                             d.child(
                                                 div()
-                                                    .h_full()
+                                                    .size_full()
                                                     .flex()
+                                                    .flex_col()
                                                     .items_center()
-                                                    .border_b_1()
-                                                    .border_color(border)
-                                                    .text_sm()
-                                                    .text_color(theme.text)
-                                                    .child(title),
+                                                    .justify_center()
+                                                    .child(text_button_with_shortcut(
+                                                        "tab-welcome-open-file",
+                                                        "Open File",
+                                                        "⌘O",
+                                                        TextButtonSize::Md,
+                                                        &theme_clone,
+                                                        move |_, window, cx| {
+                                                            if let Some(editor) = entity.upgrade() {
+                                                                editor.update(cx, |editor, cx| {
+                                                                    editor.handle_open(&Open, window, cx);
+                                                                });
+                                                            }
+                                                        },
+                                                    )),
                                             )
-                                        }
-                                    })
-                                    // Fill remaining space with border line
-                                    // Double-click to create new tab
-                                    .child({
-                                        let border = theme.border;
-                                        let entity = cx.entity().downgrade();
-                                        div()
-                                            .id("tab-bar-empty")
-                                            .flex_1()
-                                            .h_full()
-                                            .border_b_1()
-                                            .border_color(border)
-                                            .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
-                                                if event.click_count == 2 {
-                                                    if let Some(editor) = entity.upgrade() {
-                                                        editor.update(cx, |editor, cx| {
-                                                            editor.new_tab(cx);
-                                                        });
-                                                    }
-                                                }
-                                            })
-                                    }),
-                            )
-                            // Viewport
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .overflow_hidden()
-                                    .bg(theme.elevated_surface)
-                                    .when_some(self.active_tab(), |d, tab| d.child(tab.viewport.clone()))
-                                    .when(self.active_tab().is_none(), |d| {
-                                        d.child(
-                                            div()
-                                                .size_full()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .text_color(theme.text_muted)
-                                                .child("Open a PDF file to get started (Cmd+O)"),
-                                        )
-                                    }),
-                            )
-                            // Status bar
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .justify_center()
-                                    .h(ui::sizes::ICON_LG)
-                                    .bg(theme.elevated_surface)
-                                    .border_t_1()
-                                    .border_color(theme.border)
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme.text_muted)
-                                            .child(status_text),
-                                    ),
-                            ),
-                    ),
-            )
+                                        })
+                                        // Show viewport for document tabs
+                                        .when_some(viewport.filter(|_| !is_welcome), |d, vp| {
+                                            d.child(vp)
+                                        })
+                                })
+                        })
+                )
+            })
     }
 }

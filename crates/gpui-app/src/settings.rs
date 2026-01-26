@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 
-use crate::components::toggle_switch;
+use crate::components::checkbox;
 use crate::theme::{theme_registry, ThemeSettings};
 use crate::ui::sizes;
 use crate::workspace::{load_preferences, save_preferences, TabPreferences};
@@ -422,42 +422,54 @@ impl SettingsView {
             .child(self.render_setting_row(
                 "Open PDFs in tabs",
                 "New PDFs open as tabs in the current window instead of new windows.",
-                toggle_switch(
-                    "prefer-tabs",
-                    prefer_tabs,
-                    theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.toggle_prefer_tabs(cx);
-                    }),
-                ),
+                div()
+                    .flex()
+                    .justify_end()
+                    .w_full()
+                    .child(checkbox(
+                        "prefer-tabs",
+                        prefer_tabs,
+                        theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_prefer_tabs(cx);
+                        }),
+                    )),
                 theme,
             ))
             // Show tab bar
             .child(self.render_setting_row(
                 "Show tab bar",
                 "Always show the tab bar, even when only one document is open.",
-                toggle_switch(
-                    "show-tab-bar",
-                    show_tab_bar,
-                    theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.toggle_show_tab_bar(cx);
-                    }),
-                ),
+                div()
+                    .flex()
+                    .justify_end()
+                    .w_full()
+                    .child(checkbox(
+                        "show-tab-bar",
+                        show_tab_bar,
+                        theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_show_tab_bar(cx);
+                        }),
+                    )),
                 theme,
             ))
             // Allow window merging
             .child(self.render_setting_row(
                 "Allow window merging",
                 "Drag tabs between windows to merge them together.",
-                toggle_switch(
-                    "allow-merge",
-                    allow_merge,
-                    theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.toggle_allow_merge(cx);
-                    }),
-                ),
+                div()
+                    .flex()
+                    .justify_end()
+                    .w_full()
+                    .child(checkbox(
+                        "allow-merge",
+                        allow_merge,
+                        theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_allow_merge(cx);
+                        }),
+                    )),
                 theme,
             ))
     }
@@ -614,11 +626,6 @@ impl SettingsView {
                                                 this.close_dropdown(cx);
                                             }))
                                             .child(label.clone())
-                                            .when(is_selected, |d| {
-                                                d.child(
-                                                    div().text_sm().text_color(accent).child("✓"),
-                                                )
-                                            })
                                     })),
                             )
                             .with_priority(1),

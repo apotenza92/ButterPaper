@@ -3,7 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-BIN="$PROJECT_DIR/target/release/pdf-editor"
+BIN="$PROJECT_DIR/target/release/butterpaper"
 TEST_PDF="${1:-/tmp/sample.pdf}"
 
 # Colors
@@ -18,7 +18,7 @@ skip() { echo -e "${YELLOW}○ SKIP${NC}: $1"; }
 
 FAILURES=0
 
-echo "=== PDF Editor Test Suite ==="
+echo "=== ButterPaper Test Suite ==="
 echo "Binary: $BIN"
 echo "Test PDF: $TEST_PDF"
 echo ""
@@ -26,7 +26,7 @@ echo ""
 # Ensure binary exists
 if [ ! -f "$BIN" ]; then
     echo "Building..."
-    cargo build --release -p pdf-editor
+    cargo build --release -p butterpaper-gpui
 fi
 
 # Ensure test PDF exists
@@ -37,17 +37,17 @@ fi
 
 echo ""
 echo "--- Unit Tests ---"
-cargo test --release -p pdf-editor-core --quiet 2>/dev/null && pass "pdf-editor-core tests" || fail "pdf-editor-core tests"
-cargo test --release -p pdf-editor-render --quiet 2>/dev/null && pass "pdf-editor-render tests" || fail "pdf-editor-render tests"
-cargo test --release -p pdf-editor-cache --quiet 2>/dev/null && pass "pdf-editor-cache tests" || fail "pdf-editor-cache tests"
-cargo test --release -p pdf-editor-scheduler --quiet 2>/dev/null && pass "pdf-editor-scheduler tests" || fail "pdf-editor-scheduler tests"
-cargo test --release -p pdf-editor-ui --quiet 2>/dev/null && pass "pdf-editor-ui tests" || fail "pdf-editor-ui tests"
+cargo test --release -p butterpaper-core --quiet 2>/dev/null && pass "butterpaper-core tests" || fail "butterpaper-core tests"
+cargo test --release -p butterpaper-render --quiet 2>/dev/null && pass "butterpaper-render tests" || fail "butterpaper-render tests"
+cargo test --release -p butterpaper-cache --quiet 2>/dev/null && pass "butterpaper-cache tests" || fail "butterpaper-cache tests"
+cargo test --release -p butterpaper-scheduler --quiet 2>/dev/null && pass "butterpaper-scheduler tests" || fail "butterpaper-scheduler tests"
+cargo test --release -p butterpaper-ui --quiet 2>/dev/null && pass "butterpaper-ui tests" || fail "butterpaper-ui tests"
 
 echo ""
 echo "--- Integration Tests ---"
 
 # Test 1: Binary exists and runs
-if "$BIN" --help 2>&1 | grep -q "PDF Editor\|Usage\|error" || timeout 1 "$BIN" 2>&1 | grep -q "PDF Editor"; then
+if "$BIN" --help 2>&1 | grep -q "ButterPaper\|Usage\|error" || timeout 1 "$BIN" 2>&1 | grep -q "ButterPaper"; then
     pass "Binary runs"
 else
     # App might not have --help, just check it starts

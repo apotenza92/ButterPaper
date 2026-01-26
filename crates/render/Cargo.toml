@@ -1,5 +1,5 @@
 [package]
-name = "pdf-editor-render"
+name = "butterpaper-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

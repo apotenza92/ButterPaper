@@ -1,32 +1,47 @@
 //! Icon-only button component for close buttons, navigation, and actions.
 //!
-//! Provides a standardized icon button with consistent sizing and hover states.
+//! Provides a standardized icon button following Zed's design patterns with
+//! consistent sizing, proper hit areas, and hover/active states.
+//!
+//! # Size Reference (matching Zed button sizes)
+//! - Sm: 24px button, 14px icon - for tab close buttons, dense UIs
+//! - Md: 28px button, 16px icon - default, general purpose
+//! - Lg: 32px button, 18px icon - navigation, toolbars, prominent actions
 
-use gpui::{div, prelude::*, ClickEvent, SharedString, Window};
+use gpui::{div, prelude::*, px, ClickEvent, Pixels, SharedString, Window};
 
 use crate::components::icon::{icon, Icon};
 use crate::ui::{sizes, StatefulInteractiveExt};
 use crate::Theme;
 
-/// Size variants for icon buttons.
-#[derive(Clone, Copy, Default)]
+/// Size variants for icon buttons, matching standard Zed button sizes.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub enum IconButtonSize {
-    /// Small: 16x16px (for inline use like tab close)
+    /// Small: 24x24px button with 14px icon
     Sm,
-    /// Medium: 20x20px
+    /// Medium: 28x28px button with 16px icon (default)
     #[default]
     Md,
-    /// Large: 24x24px (for navigation buttons)
+    /// Large: 32x32px button with 18px icon
     Lg,
 }
 
 impl IconButtonSize {
-    /// Returns the container size and icon font size for this variant.
-    fn dimensions(self) -> (gpui::Pixels, f32) {
+    /// Returns the button container size (square).
+    pub fn button_size(self) -> Pixels {
         match self {
-            IconButtonSize::Sm => (sizes::ICON_SM, 12.0),
-            IconButtonSize::Md => (sizes::ICON_MD, 14.0),
-            IconButtonSize::Lg => (sizes::ICON_LG, 16.0),
+            IconButtonSize::Sm => px(24.0),
+            IconButtonSize::Md => px(28.0),
+            IconButtonSize::Lg => px(32.0),
+        }
+    }
+
+    /// Returns the icon size for this button size.
+    pub fn icon_size(self) -> f32 {
+        match self {
+            IconButtonSize::Sm => 14.0,
+            IconButtonSize::Md => 16.0,
+            IconButtonSize::Lg => 18.0,
         }
     }
 }
@@ -60,16 +75,18 @@ pub fn icon_button<F>(
 where
     F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let (container_size, icon_size) = size.dimensions();
+    let button_size = size.button_size();
+    let icon_size = size.icon_size();
     let text_color = theme.text_muted;
     let hover_bg = theme.element_hover;
     let active_bg = theme.element_selected;
 
     div()
         .id(id.into())
-        .w(container_size)
-        .h(container_size)
+        .w(button_size)
+        .h(button_size)
         .flex()
+        .flex_shrink_0()
         .items_center()
         .justify_center()
         .rounded(sizes::RADIUS_SM)
@@ -106,7 +123,8 @@ pub fn icon_button_conditional<F>(
 where
     F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let (container_size, icon_size) = size.dimensions();
+    let button_size = size.button_size();
+    let icon_size = size.icon_size();
     let text_enabled = theme.text;
     let text_disabled = theme.text_muted;
     let hover_bg = theme.element_hover;
@@ -116,9 +134,10 @@ where
 
     div()
         .id(id.into())
-        .w(container_size)
-        .h(container_size)
+        .w(button_size)
+        .h(button_size)
         .flex()
+        .flex_shrink_0()
         .items_center()
         .justify_center()
         .rounded(sizes::RADIUS_SM)

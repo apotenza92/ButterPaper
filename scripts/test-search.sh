@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test PDF Editor search functionality using --search flag
+# Test ButterPaper search functionality using --search flag
 #
 # This script tests the --search CLI functionality:
 # - Search for text that exists in the PDF
@@ -13,8 +13,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-BIN="$PROJECT_DIR/target/release/pdf-editor"
-TEST_DIR="/tmp/pdf-editor-test-pdfs"
+BIN="$PROJECT_DIR/target/release/butterpaper"
+TEST_DIR="/tmp/butterpaper-test-pdfs"
 
 # Colors
 RED='\033[0;31m'
@@ -29,13 +29,13 @@ info() { echo -e "${YELLOW}INFO${NC}: $1"; }
 PASSED=0
 FAILED=0
 
-echo "=== PDF Editor Search Test Suite ==="
+echo "=== ButterPaper Search Test Suite ==="
 echo ""
 
 # Ensure binary exists
 if [ ! -f "$BIN" ]; then
     info "Building release binary..."
-    cargo build --release -p pdf-editor
+    cargo build --release -p butterpaper-gpui
 fi
 
 # Create test directory

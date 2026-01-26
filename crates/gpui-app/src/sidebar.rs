@@ -1,19 +1,17 @@
 //! Thumbnail sidebar component
 //!
 //! Displays page thumbnails for navigation.
-//! Includes a header section with "Pages" label (below the titlebar).
 
 #![allow(dead_code)]
 #![allow(clippy::type_complexity)]
 
 use crate::current_theme;
-use crate::ui::sizes;
 use gpui::{
     div, img, prelude::*, px, rgb, FocusHandle, Focusable, ImageSource, ScrollDelta,
     ScrollWheelEvent,
 };
 use image::{ImageBuffer, Rgba};
-use pdf_editor_render::PdfDocument;
+use butterpaper_render::PdfDocument;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -176,19 +174,6 @@ impl Render for ThumbnailSidebar {
             .bg(theme.surface)
             // No right border - content column provides left border for clean corner connection
             .overflow_hidden()
-            // Header section (below titlebar)
-            .child(
-                div()
-                    .id("sidebar-header")
-                    .h(sizes::TAB_BAR_HEIGHT)
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .px(sizes::PADDING_SM)
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(div().text_xs().text_color(theme.text_muted).child("Pages")),
-            )
             // Scrollable thumbnail list
             .child(
                 div()

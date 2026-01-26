@@ -12,7 +12,7 @@ use gpui::{
     div, img, prelude::*, px, FocusHandle, Focusable, ImageSource, MouseMoveEvent, Pixels, Point,
     ScrollDelta, ScrollWheelEvent,
 };
-use pdf_editor_render::PdfDocument;
+use butterpaper_render::PdfDocument;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -105,25 +105,32 @@ impl PdfViewport {
         self.on_page_change = Some(Box::new(callback));
     }
 
-    /// Load a PDF from file path
+    /// Load a PDF from file path (synchronous - blocks UI)
+    #[allow(dead_code)]
     pub fn load_pdf(&mut self, path: PathBuf, cx: &mut gpui::Context<Self>) -> Result<(), String> {
         match PdfDocument::open(&path) {
             Ok(doc) => {
                 let doc = Arc::new(doc);
-                self.document = Some(doc);
-                self.scroll_y = 0.0;
-                self.cache.clear();
-                self.pending_renders.clear();
-                self.compute_layout();
-                self.update_visible_pages();
-                cx.notify();
+                self.set_document(doc, cx);
                 Ok(())
             }
             Err(e) => Err(format!("Failed to load PDF: {}", e)),
         }
     }
 
+    /// Set the document (used after async loading completes)
+    pub fn set_document(&mut self, doc: Arc<PdfDocument>, cx: &mut gpui::Context<Self>) {
+        self.document = Some(doc);
+        self.scroll_y = 0.0;
+        self.cache.clear();
+        self.pending_renders.clear();
+        self.compute_layout();
+        self.update_visible_pages();
+        cx.notify();
+    }
+
     /// Get the document (for sharing with sidebar)
+    #[allow(dead_code)] // May be used for document info display
     pub fn document(&self) -> Option<Arc<PdfDocument>> {
         self.document.clone()
     }

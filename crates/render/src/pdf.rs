@@ -3,7 +3,16 @@
 //! Provides a high-level interface to PDF documents using PDFium.
 
 use pdfium_render::prelude::*;
+use std::cell::OnceCell;
 use std::path::Path;
+
+thread_local! {
+    /// Thread-local Pdfium instance, leaked for 'static lifetime.
+    /// Initialized once per thread on first use.
+    /// Since the app runs primarily on the main thread, this effectively
+    /// creates a single shared instance while avoiding Send+Sync requirements.
+    static PDFIUM: OnceCell<&'static Pdfium> = const { OnceCell::new() };
+}
 
 /// Minimum number of non-whitespace characters required to skip OCR
 const MIN_TEXT_CHARS_THRESHOLD: usize = 50;
@@ -125,6 +134,44 @@ impl PdfDocument {
         ))
     }
 
+    /// Get or initialize the thread-local Pdfium instance.
+    ///
+    /// This ensures only one Pdfium instance exists per thread,
+    /// eliminating memory leaks from repeated initialization.
+    /// Since the app runs on the main thread, this effectively
+    /// provides a single shared instance.
+    fn get_pdfium() -> PdfResult<&'static Pdfium> {
+        PDFIUM.with(|cell| {
+            // Check if already initialized
+            if let Some(pdfium) = cell.get() {
+                return Ok(*pdfium);
+            }
+
+            // Initialize Pdfium and leak it to get 'static reference
+            // This is intentional - we want one instance for the app lifetime
+            let pdfium = Self::init_pdfium()?;
+            let pdfium_static: &'static Pdfium = Box::leak(Box::new(pdfium));
+
+            // Store it (ignore error if another thread beat us - shouldn't happen with thread_local)
+            let _ = cell.set(pdfium_static);
+
+            Ok(pdfium_static)
+        })
+    }
+
+    /// Pre-initialize Pdfium library.
+    ///
+    /// Call this early in the application startup to ensure Pdfium is ready
+    /// before any PDF operations. This moves the initialization cost away
+    /// from the first PDF open.
+    ///
+    /// # Returns
+    /// `Ok(())` if initialization succeeds, or an error if it fails.
+    pub fn init_pdfium_global() -> PdfResult<()> {
+        Self::get_pdfium()?;
+        Ok(())
+    }
+
     /// Load a PDF document from a file path
     ///
     /// # Arguments
@@ -133,8 +180,8 @@ impl PdfDocument {
     /// # Returns
     /// A `PdfDocument` instance or an error
     pub fn open<P: AsRef<Path>>(path: P) -> PdfResult<Self> {
-        // Initialize PDFium library
-        let pdfium = Box::leak(Box::new(Self::init_pdfium()?));
+        // Get the shared Pdfium instance
+        let pdfium = Self::get_pdfium()?;
 
         // Load the PDF document
         let document = pdfium
@@ -152,10 +199,12 @@ impl PdfDocument {
     /// # Returns
     /// A `PdfDocument` instance or an error
     pub fn from_bytes(data: Vec<u8>) -> PdfResult<Self> {
-        // Initialize PDFium library
-        let pdfium = Box::leak(Box::new(Self::init_pdfium()?));
+        // Get the shared Pdfium instance
+        let pdfium = Self::get_pdfium()?;
 
         // Leak the data to get a 'static reference
+        // Note: This is still a leak for byte data, but it's unavoidable
+        // due to pdfium-render's lifetime requirements
         let data_static: &'static [u8] = Box::leak(data.into_boxed_slice());
 
         // Load the PDF document from bytes

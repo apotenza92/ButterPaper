@@ -134,13 +134,13 @@ specs/             # Architecture specs
 ./scripts/build-gpui.sh
 
 # Or directly with cargo
-cargo build --release -p pdf-editor-gpui
+cargo build --release -p butterpaper-gpui
 
 # Run with a PDF file
-./target/release/pdf-editor path/to/file.pdf
+./target/release/butterpaper path/to/file.pdf
 
 # Show help
-./target/release/pdf-editor --help
+./target/release/butterpaper --help
 ```
 
 ## Runtime Requirements
@@ -206,7 +206,7 @@ PdfDocument (pdfium-render) is NOT Send+Sync due to raw pointers. Cannot use bac
 The `crates/render` crate provides the PDF rendering API:
 
 ```rust
-use pdf_editor_render::PdfDocument;
+use butterpaper_render::PdfDocument;
 
 let doc = PdfDocument::open(&path)?;
 let page_count = doc.page_count();  // u16
@@ -218,10 +218,10 @@ let pixels = doc.render_page_rgba(page_index, width, height)?;  // Vec<u8> RGBA
 
 ```bash
 # Test with sample PDF
-./target/release/pdf-editor test.pdf
+./target/release/butterpaper test.pdf
 
 # Check help
-./target/release/pdf-editor --help
+./target/release/butterpaper --help
 ```
 
 ## Mouse Automation & Coordinate System
@@ -289,16 +289,16 @@ Screen position to click = (100 + 200, 100 + 232) = (300, 332)
 
 ```bash
 # List windows with positions
-pdf-editor --list-windows
+butterpaper --list-windows
 
 # List UI elements with clickable coordinates
-pdf-editor --list-elements
+butterpaper --list-elements
 
 # Focus a window (required before clicking)
-pdf-editor --focus --window-title Settings
+butterpaper --focus --window-title Settings
 
 # Click a UI element by ID
-pdf-editor --click-element settings.appearance --window-title Settings
+butterpaper --click-element settings.appearance --window-title Settings
 
 # Calibration tool to verify coordinates
 ./target/release/calibrate
@@ -342,13 +342,13 @@ The app has a dev mode (`--dev` flag) for agentic automation that tracks UI elem
 
 ```bash
 # Start app with dev mode enabled
-./target/release/pdf-editor --settings --dev
+./target/release/butterpaper --settings --dev
 
 # Then in another terminal, list elements (requires window to be rendered)
-./target/release/pdf-editor --list-elements
+./target/release/butterpaper --list-elements
 
 # Click an element
-./target/release/pdf-editor --click-element settings.dark_theme --window-title Settings
+./target/release/butterpaper --click-element settings.dark_theme --window-title Settings
 ```
 
 ### Adding Trackable Elements

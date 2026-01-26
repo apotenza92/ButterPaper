@@ -1,8 +1,0 @@
-{"payload":"Phase 1 complete: egui scaffolding with toolbar, sidebar, viewport placeholders. Build passes. Next: Phase 2 - migrate full toolbar functionality","topic":"phase.done","ts":"2026-01-22T05:36:17.828638+00:00"}
-{"payload":"Phase 1 complete: egui scaffolding with toolbar, sidebar, viewport","topic":"phase.done","ts":"2026-01-22T05:36:18.211485+00:00"}
-{"payload":"Sidebar with PDF thumbnails: lazy-load, click nav, auto-scroll","topic":"phase3.done","ts":"2026-01-22T05:38:00.036814+00:00"}
-{"payload":"Phase 4 complete: error dialog, calibration dialog, search bar migrated to egui","topic":"task.done","ts":"2026-01-22T05:40:20.467246+00:00"}
-{"payload":"Phase 5: PDF Viewport Integration - researching egui rendering approaches","topic":"research.start","ts":"2026-01-22T05:40:55.193549+00:00"}
-{"payload":"PDF viewport rendering implemented with zoom/pan, build passes","topic":"phase5.done","ts":"2026-01-22T05:42:55.099224+00:00"}
-{"payload":"Phase 6: Cleanup - fixing dead code warnings and verifying tests","topic":"task.start","ts":"2026-01-22T05:43:20.809218+00:00"}
-{"payload":"egui migration complete: all 6 phases done, tests pass, both binaries build","topic":"loop.complete","ts":"2026-01-22T05:47:40.393099+00:00"}

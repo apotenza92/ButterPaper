@@ -6,9 +6,9 @@ use std::path::PathBuf;
 
 use super::types::{EditorWindow, TabPreferences, Workspace};
 
-/// Get the config directory for pdf-editor.
+/// Get the config directory for butterpaper.
 fn config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|p| p.join("pdf-editor"))
+    dirs::config_dir().map(|p| p.join("butterpaper"))
 }
 
 /// Get the path to the preferences file.

@@ -44,9 +44,9 @@ pub fn parse_args() -> CliArgs {
 
     // Check for help flag
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("PDF Editor - GPUI Edition");
+        println!("ButterPaper - GPUI Edition");
         println!();
-        println!("Usage: pdf-editor [OPTIONS] [FILE...]");
+        println!("Usage: butterpaper [OPTIONS] [FILE...]");
         println!();
         println!("Arguments:");
         println!("  [FILE...]  PDF files to open (multiple files open as tabs)");
@@ -85,16 +85,16 @@ pub fn parse_args() -> CliArgs {
         println!();
         println!("Visual Testing:");
         println!("  # Screenshot main window with a PDF");
-        println!("  pdf-editor test.pdf --screenshot screenshot.png");
+        println!("  butterpaper test.pdf --screenshot screenshot.png");
         println!();
         println!("  # Screenshot settings window");
-        println!("  pdf-editor --settings --screenshot settings.png");
+        println!("  butterpaper --settings --screenshot settings.png");
         std::process::exit(0);
     }
 
     // Check for version flag
     if args.iter().any(|a| a == "-v" || a == "--version") {
-        println!("pdf-editor 0.1.0 (GPUI)");
+        println!("butterpaper 0.1.0 (GPUI)");
         std::process::exit(0);
     }
 

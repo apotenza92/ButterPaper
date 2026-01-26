@@ -64,7 +64,12 @@ where
         )
 }
 
-/// Simple checkbox toggle.
+/// Checkbox size in pixels (Zed uses 14-16px)
+const CHECKBOX_SIZE: gpui::Pixels = px(16.0);
+/// Checkmark icon size
+const CHECK_ICON_SIZE: f32 = 10.0;
+
+/// Zed-style checkbox without label.
 pub fn checkbox<F>(
     id: impl Into<SharedString>,
     checked: bool,
@@ -74,26 +79,81 @@ pub fn checkbox<F>(
 where
     F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let accent = theme.accent;
-    let surface = theme.surface;
     let border = theme.border;
-    let text = theme.text;
+    let surface = theme.surface;
+    let hover_bg = theme.element_hover;
+    let selected_bg = theme.element_selected;
+    let check_color = theme.text_muted;
 
     div()
         .id(id.into())
-        .w(sizes::ICON_MD)
-        .h(sizes::ICON_MD)
+        .w(CHECKBOX_SIZE)
+        .h(CHECKBOX_SIZE)
         .flex()
         .items_center()
         .justify_center()
         .rounded(sizes::RADIUS_SM)
         .cursor_pointer()
         .border_1()
-        .border_color(border)
-        .when(checked, move |d| d.bg(accent))
-        .when(!checked, move |d| d.bg(surface))
-        .on_click(on_toggle)
         .when(checked, move |d| {
-            d.child(icon(Icon::Check, 14.0, text))
+            d.bg(selected_bg)
+                .border_color(border)
+                .child(icon(Icon::Close, CHECK_ICON_SIZE, check_color))
         })
+        .when(!checked, move |d| {
+            d.bg(surface).border_color(border).hover(move |s| s.bg(hover_bg))
+        })
+        .on_click(on_toggle)
+}
+
+/// Zed-style checkbox with label.
+pub fn checkbox_with_label<F>(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    checked: bool,
+    theme: &Theme,
+    on_toggle: F,
+) -> impl IntoElement
+where
+    F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+{
+    let id = id.into();
+    let label = label.into();
+    let border = theme.border;
+    let surface = theme.surface;
+    let hover_bg = theme.element_hover;
+    let selected_bg = theme.element_selected;
+    let text_color = theme.text;
+    let check_color = theme.text_muted;
+
+    div()
+        .id(id)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(sizes::GAP_SM)
+        .cursor_pointer()
+        .on_click(on_toggle)
+        .child(
+            div()
+                .w(CHECKBOX_SIZE)
+                .h(CHECKBOX_SIZE)
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(sizes::RADIUS_SM)
+                .border_1()
+                .when(checked, move |d| {
+                    d.bg(selected_bg)
+                        .border_color(border)
+                        .child(icon(Icon::Close, CHECK_ICON_SIZE, check_color))
+                })
+                .when(!checked, move |d| {
+                    d.bg(surface)
+                        .border_color(border)
+                        .hover(move |s| s.bg(hover_bg))
+                }),
+        )
+        .child(div().text_sm().text_color(text_color).child(label))
 }

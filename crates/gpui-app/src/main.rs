@@ -18,16 +18,17 @@ pub use element_registry::{ElementInfo, ElementType};
 pub use theme::{current_theme, AppearanceMode, Theme, ThemeSettings};
 
 use gpui::{
-    actions, point, prelude::*, px, size, App, Application, Bounds, KeyBinding, TitlebarOptions,
-    WindowBounds, WindowOptions,
+    actions, point, prelude::*, px, size, App, Application, Bounds, Focusable, KeyBinding,
+    TitlebarOptions, WindowBounds, WindowOptions,
 };
+use butterpaper_render::PdfDocument;
 
 use app::{set_menus, PdfEditor};
 use cli::parse_args;
 use window::{focus_window, list_windows, schedule_screenshot};
 
 actions!(
-    pdf_editor,
+    butterpaper,
     [
         Quit,
         Open,
@@ -44,6 +45,13 @@ actions!(
 );
 
 fn main() {
+    // Pre-initialize Pdfium library early (shared instance for all documents)
+    // This moves the initialization cost to startup rather than first PDF open
+    if let Err(e) = PdfDocument::init_pdfium_global() {
+        eprintln!("Warning: Failed to pre-initialize PDFium: {}", e);
+        // Continue anyway - it will retry when opening a PDF
+    }
+
     // Parse CLI args before starting the app
     let cli = parse_args();
 
@@ -126,7 +134,7 @@ fn main() {
         // Global actions
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.on_action(|_: &About, _cx| {
-            println!("PDF Editor - GPUI Edition");
+            println!("ButterPaper - GPUI Edition");
         });
 
         // Settings action
@@ -146,7 +154,7 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("PDF Editor".into()),
+                    title: Some("ButterPaper".into()),
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(12.0), px(9.0))),
                 }),
@@ -164,7 +172,7 @@ fn main() {
                     })
                     .detach();
 
-                cx.new(|cx| {
+                let editor = cx.new(|cx| {
                     let mut editor = PdfEditor::new(cx);
 
                     // Open initial files if provided via CLI (each as a separate tab)
@@ -177,7 +185,12 @@ fn main() {
                     }
 
                     editor
-                })
+                });
+
+                // Focus the editor immediately so keyboard shortcuts work right away
+                editor.focus_handle(cx).focus(window);
+
+                editor
             },
         )
         .unwrap();

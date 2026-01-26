@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Capture a specific window by process name
-# Usage: ./capture-window.sh "pdf-editor" output.png
+# Usage: ./capture-window.sh "butterpaper" output.png
 
-PROCESS_NAME="${1:-pdf-editor}"
+PROCESS_NAME="${1:-butterpaper}"
 OUTPUT="${2:-/tmp/window-capture.png}"
 
 # Get window ID using CGWindowListCopyWindowInfo via Python

@@ -7,7 +7,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
 echo "╔══════════════════════════════════════╗"
-echo "║     PDF Editor - Full Test Suite     ║"
+echo "║     ButterPaper - Full Test Suite     ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -23,7 +23,7 @@ echo ""
 # ============================================
 echo "━━━ Layer 2: Integration Tests ━━━"
 
-BIN="$PROJECT_DIR/target/release/pdf-editor"
+BIN="$PROJECT_DIR/target/release/butterpaper"
 TEST_PDF="/tmp/sample.pdf"
 
 # Ensure test PDF
@@ -33,12 +33,12 @@ TEST_PDF="/tmp/sample.pdf"
 echo -n "PDF load + render: "
 cd "$PROJECT_DIR"
 # Run app in background, capture output for 3 seconds
-"$BIN" "$TEST_PDF" > /tmp/pdf-editor-test.log 2>&1 &
+"$BIN" "$TEST_PDF" > /tmp/butterpaper-test.log 2>&1 &
 PID=$!
 sleep 3
 kill $PID 2>/dev/null
 wait $PID 2>/dev/null || true
-OUTPUT=$(cat /tmp/pdf-editor-test.log 2>/dev/null || echo "")
+OUTPUT=$(cat /tmp/butterpaper-test.log 2>/dev/null || echo "")
 if echo "$OUTPUT" | grep -q "SUCCESS.*texture created"; then
     echo "✓ PASS"
 elif echo "$OUTPUT" | grep -q "SUCCESS: Loaded PDF"; then
@@ -55,7 +55,7 @@ echo ""
 # ============================================
 echo "━━━ Layer 3: Smoke Tests ━━━"
 
-APP="$PROJECT_DIR/target/release/bundle/osx/PDF Editor.app"
+APP="$PROJECT_DIR/target/release/bundle/osx/ButterPaper.app"
 
 # Build if needed
 [ -d "$APP" ] || "$SCRIPT_DIR/build-app.sh" > /dev/null 2>&1
@@ -64,7 +64,7 @@ APP="$PROJECT_DIR/target/release/bundle/osx/PDF Editor.app"
 echo -n "App launches: "
 open "$APP"
 sleep 2
-if pgrep -x "pdf-editor" > /dev/null; then
+if pgrep -x "butterpaper" > /dev/null; then
     echo "✓ PASS"
 else
     echo "✗ FAIL"
@@ -72,7 +72,7 @@ fi
 
 # Test: Window appears
 echo -n "Window visible: "
-WINDOWS=$(osascript -e 'tell app "System Events" to count windows of process "pdf-editor"' 2>/dev/null || echo 0)
+WINDOWS=$(osascript -e 'tell app "System Events" to count windows of process "butterpaper"' 2>/dev/null || echo 0)
 if [ "$WINDOWS" -gt 0 ]; then
     echo "✓ PASS ($WINDOWS window)"
 else
@@ -81,7 +81,7 @@ fi
 
 # Test: Menu bar exists
 echo -n "Has menu bar: "
-MENUS=$(osascript -e 'tell app "System Events" to count menu bars of process "pdf-editor"' 2>/dev/null || echo 0)
+MENUS=$(osascript -e 'tell app "System Events" to count menu bars of process "butterpaper"' 2>/dev/null || echo 0)
 if [ "$MENUS" -gt 0 ]; then
     echo "✓ PASS"
 else
@@ -89,7 +89,7 @@ else
 fi
 
 # Cleanup
-pkill -x "pdf-editor" 2>/dev/null || true
+pkill -x "butterpaper" 2>/dev/null || true
 
 echo ""
 
@@ -100,7 +100,7 @@ echo "━━━ Layer 4: Render Verification ━━━"
 
 # Instead of screenshots (requires permissions), verify via stdout logs
 cd "$PROJECT_DIR"
-"$APP/Contents/MacOS/pdf-editor" "$TEST_PDF" &
+"$APP/Contents/MacOS/butterpaper" "$TEST_PDF" &
 PID=$!
 sleep 3
 
@@ -129,7 +129,7 @@ if [ -t 1 ] && [ "${SKIP_SCREENSHOT:-}" != "1" ]; then
     mkdir -p "$SCREENSHOTS"
     echo ""
     echo "Taking screenshot (requires Screen Recording permission)..."
-    "$APP/Contents/MacOS/pdf-editor" "$TEST_PDF" &
+    "$APP/Contents/MacOS/butterpaper" "$TEST_PDF" &
     PID=$!
     sleep 2
     if screencapture -x "$SCREENSHOTS/current.png" 2>/dev/null; then

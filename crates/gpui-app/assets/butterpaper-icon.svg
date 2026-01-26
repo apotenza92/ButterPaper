@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ButterPaper app icon">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <defs>
+      <clipPath id="grid-clip">
+        <rect x="96" y="96" width="320" height="320" rx="36"/>
+      </clipPath>
+    </defs>
+    <rect x="96" y="96" width="320" height="320" rx="36" fill="#F6E3A3" fill-opacity="0.9"/>
+    <g clip-path="url(#grid-clip)" stroke="#111111" stroke-opacity="0.15" stroke-width="2">
+      <path d="M96 116 H416 M96 156 H416 M96 196 H416 M96 236 H416 M96 276 H416 M96 316 H416 M96 356 H416 M96 396 H416"/>
+      <path d="M116 96 V416 M156 96 V416 M196 96 V416 M236 96 V416 M276 96 V416 M316 96 V416 M356 96 V416 M396 96 V416"/>
+    </g>
+    <rect x="96" y="96" width="320" height="320" rx="36" fill="none" stroke="#D1B56D" stroke-width="12"/>
+    <g transform="rotate(45 256 256)">
+      <path d="M256 256 V376" fill="none" stroke="#B1442A" stroke-width="40" stroke-linecap="butt"/>
+      <path d="M256 126 L186 266 L326 266 Z" fill="#B1442A"/>
+    </g>
+  </g>
+</svg>

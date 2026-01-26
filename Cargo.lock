@@ -3821,7 +3821,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdf-editor-gpui"
+name = "butterpaper-gpui"
 version = "0.1.0"
 dependencies = [
  "block2 0.5.1",
@@ -3833,7 +3833,7 @@ dependencies = [
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
- "pdf-editor-render",
+ "butterpaper-render",
  "serde",
  "serde_json",
  "smallvec",
@@ -3843,7 +3843,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdf-editor-render"
+name = "butterpaper-render"
 version = "0.1.0"
 dependencies = [
  "pdfium-render",

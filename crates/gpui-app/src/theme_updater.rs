@@ -15,7 +15,7 @@ const UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Get the themes cache directory
 pub fn themes_cache_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|p| p.join("pdf-editor").join("themes"))
+    dirs::config_dir().map(|p| p.join("butterpaper").join("themes"))
 }
 
 /// Get the path to the last update timestamp file

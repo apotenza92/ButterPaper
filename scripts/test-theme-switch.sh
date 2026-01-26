@@ -1,7 +1,9 @@
 #!/bin/bash
 # Test script to toggle macOS dark/light mode and capture screenshots
 
-SCREENSHOT_DIR="/Users/alex/code/pdf-editor/test-screenshots"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+SCREENSHOT_DIR="$PROJECT_DIR/test-screenshots"
 rm -rf "$SCREENSHOT_DIR"
 mkdir -p "$SCREENSHOT_DIR"
 

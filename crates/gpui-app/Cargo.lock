@@ -3174,17 +3174,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdf-editor-gpui"
+name = "butterpaper-gpui"
 version = "0.1.0"
 dependencies = [
  "gpui",
  "image",
- "pdf-editor-render",
+ "butterpaper-render",
  "smallvec",
 ]
 
 [[package]]
-name = "pdf-editor-render"
+name = "butterpaper-render"
 version = "0.1.0"
 dependencies = [
  "pdfium-render",

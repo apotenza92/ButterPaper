@@ -16,7 +16,7 @@ use gpui::{
     div, point, prelude::*, px, rgb, size, App, Application, Bounds, Context, MouseMoveEvent,
     TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
-use pdf_editor_gpui::ui;
+use butterpaper_gpui::ui;
 
 struct CalibrationWindow {
     mouse_pos: Option<gpui::Point<gpui::Pixels>>,

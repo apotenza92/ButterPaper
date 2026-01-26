@@ -9,13 +9,13 @@ use crate::{About, NextPage, Open, PrevPage, Quit, ZoomIn, ZoomOut};
 pub fn set_menus(cx: &mut App) {
     cx.set_menus(vec![
         Menu {
-            name: "PDF Editor".into(),
+            name: "ButterPaper".into(),
             items: vec![
-                MenuItem::action("About PDF Editor", About),
+                MenuItem::action("About ButterPaper", About),
                 MenuItem::separator(),
                 MenuItem::action("Settings...", settings::OpenSettings),
                 MenuItem::separator(),
-                MenuItem::action("Quit PDF Editor", Quit),
+                MenuItem::action("Quit ButterPaper", Quit),
             ],
         },
         Menu {

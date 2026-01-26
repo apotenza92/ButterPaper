@@ -20,11 +20,11 @@ fi
 cd "$PROJECT_ROOT"
 
 # Kill any running instances of the app
-pkill -f "target/release/pdf-editor" 2>/dev/null || true
-pkill -f "target/debug/pdf-editor" 2>/dev/null || true
+pkill -f "target/release/butterpaper" 2>/dev/null || true
+pkill -f "target/debug/butterpaper" 2>/dev/null || true
 
-echo "Building PDF Editor (GPUI)..."
-cargo build --release -p pdf-editor-gpui
+echo "Building ButterPaper (GPUI)..."
+cargo build --release -p butterpaper-gpui
 
 # Copy libpdfium.dylib to target/release if it exists in project root
 if [ -f "$PROJECT_ROOT/libpdfium.dylib" ]; then
@@ -32,13 +32,13 @@ if [ -f "$PROJECT_ROOT/libpdfium.dylib" ]; then
 fi
 
 # Create convenience symlink
-ln -sf pdf-editor "$PROJECT_ROOT/target/release/pdf-editor-gpui" 2>/dev/null || true
+ln -sf butterpaper "$PROJECT_ROOT/target/release/butterpaper-gpui" 2>/dev/null || true
 
 # Code sign (required on macOS to avoid Gatekeeper blocking)
 echo "Signing binary..."
-xattr -cr "$PROJECT_ROOT/target/release/pdf-editor" 2>/dev/null || true
-codesign -s - --force "$PROJECT_ROOT/target/release/pdf-editor" 2>/dev/null || true
+xattr -cr "$PROJECT_ROOT/target/release/butterpaper" 2>/dev/null || true
+codesign -s - --force "$PROJECT_ROOT/target/release/butterpaper" 2>/dev/null || true
 
 echo ""
 echo "Build complete! Run with:"
-echo "  $PROJECT_ROOT/target/release/pdf-editor"
+echo "  $PROJECT_ROOT/target/release/butterpaper"

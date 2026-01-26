@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GUI Testing for PDF Editor using screenshots and automation
+# GUI Testing for ButterPaper using screenshots and automation
 #
 # This script uses macOS automation to test the GUI.
 # For full Playwright-style testing, we'd need a browser-based app.
@@ -9,7 +9,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-APP_PATH="$PROJECT_DIR/target/release/bundle/osx/PDF Editor.app"
+APP_PATH="$PROJECT_DIR/target/release/bundle/osx/ButterPaper.app"
 TEST_PDF="/tmp/sample.pdf"
 SCREENSHOT_DIR="$PROJECT_DIR/test-screenshots"
 
@@ -27,7 +27,7 @@ info() { echo -e "${YELLOW}→${NC} $1"; }
 
 FAILURES=0
 
-echo "=== PDF Editor GUI Test Suite ==="
+echo "=== ButterPaper GUI Test Suite ==="
 echo "App: $APP_PATH"
 echo ""
 
@@ -48,7 +48,7 @@ open "$APP_PATH"
 sleep 2
 
 # Check if app is running
-if pgrep -x "pdf-editor" > /dev/null; then
+if pgrep -x "butterpaper" > /dev/null; then
     pass "App launched"
 else
     fail "App did not launch"
@@ -61,7 +61,7 @@ info "Screenshot saved: 01-app-launched.png"
 
 # Test 2: Window is visible
 info "Test 2: Window visible..."
-WINDOW_COUNT=$(osascript -e 'tell application "System Events" to count windows of process "pdf-editor"' 2>/dev/null || echo "0")
+WINDOW_COUNT=$(osascript -e 'tell application "System Events" to count windows of process "butterpaper"' 2>/dev/null || echo "0")
 if [ "$WINDOW_COUNT" -gt 0 ]; then
     pass "Window is visible (count: $WINDOW_COUNT)"
 else
@@ -71,11 +71,11 @@ fi
 # Test 3: Open PDF via command line (simulate)
 info "Test 3: Opening PDF..."
 # Kill current instance
-pkill -x "pdf-editor" 2>/dev/null || true
+pkill -x "butterpaper" 2>/dev/null || true
 sleep 1
 
 # Start with PDF
-"$APP_PATH/Contents/MacOS/pdf-editor" "$TEST_PDF" &
+"$APP_PATH/Contents/MacOS/butterpaper" "$TEST_PDF" &
 APP_PID=$!
 sleep 3
 

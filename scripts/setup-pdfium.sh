@@ -22,7 +22,7 @@ else
 fi
 
 # Check bundle location
-BUNDLE_DIR="$PROJECT_DIR/target/release/bundle/osx/PDF Editor.app/Contents/MacOS"
+BUNDLE_DIR="$PROJECT_DIR/target/release/bundle/osx/ButterPaper.app/Contents/MacOS"
 if [ -d "$BUNDLE_DIR" ]; then
     if [ ! -f "$BUNDLE_DIR/$PDFIUM_LIB" ]; then
         cp "$PROJECT_DIR/$PDFIUM_LIB" "$BUNDLE_DIR/"
