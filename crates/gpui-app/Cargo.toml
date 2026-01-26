@@ -43,5 +43,5 @@ uuid = { version = "1.0", features = ["v4"] }
 block2 = "0.5"
 dispatch = "0.2"
 objc2 = "0.5"
-objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSAppearance", "NSResponder"] }
+objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSAppearance", "NSImage", "NSResponder"] }
 objc2-foundation = "0.2"

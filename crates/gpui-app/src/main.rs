@@ -96,6 +96,9 @@ fn main() {
     let open_settings = cli.open_settings;
 
     Application::new().run(move |cx: &mut App| {
+        #[cfg(target_os = "macos")]
+        macos::set_app_icon();
+
         let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
 
         // Bind keyboard shortcuts - global
