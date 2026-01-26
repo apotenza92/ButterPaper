@@ -626,6 +626,14 @@ impl SettingsView {
                                                 this.close_dropdown(cx);
                                             }))
                                             .child(label.clone())
+                                            .when(is_selected, |d| {
+                                                d.child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(accent)
+                                                        .child("✓"),
+                                                )
+                                            })
                                     })),
                             )
                             .with_priority(1),

@@ -152,6 +152,7 @@ impl PdfViewport {
     }
 
     /// Get current page (1-based for display)
+    #[allow(dead_code)] // Used by UI elements in development
     pub fn current_page_display(&self) -> u16 {
         self.current_page() + 1
     }

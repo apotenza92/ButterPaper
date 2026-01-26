@@ -651,6 +651,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
+name = "butterpaper-gpui"
+version = "0.1.0"
+dependencies = [
+ "block2 0.5.1",
+ "butterpaper-render",
+ "dirs 5.0.1",
+ "dispatch",
+ "enigo",
+ "gpui",
+ "image",
+ "objc2 0.5.2",
+ "objc2-app-kit 0.2.2",
+ "objc2-foundation 0.2.2",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "ureq",
+ "uuid",
+ "xcap",
+]
+
+[[package]]
+name = "butterpaper-render"
+version = "0.1.0"
+dependencies = [
+ "pdfium-render",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3818,35 +3847,6 @@ checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest",
  "hmac",
-]
-
-[[package]]
-name = "butterpaper-gpui"
-version = "0.1.0"
-dependencies = [
- "block2 0.5.1",
- "dirs 5.0.1",
- "dispatch",
- "enigo",
- "gpui",
- "image",
- "objc2 0.5.2",
- "objc2-app-kit 0.2.2",
- "objc2-foundation 0.2.2",
- "butterpaper-render",
- "serde",
- "serde_json",
- "smallvec",
- "ureq",
- "uuid",
- "xcap",
-]
-
-[[package]]
-name = "butterpaper-render"
-version = "0.1.0"
-dependencies = [
- "pdfium-render",
 ]
 
 [[package]]
