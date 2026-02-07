@@ -62,7 +62,7 @@ mod tests {
         assert_eq!(h, 28.0);
         assert_eq!(px_val, 12.0);
         assert_eq!(text, 14.0);
-        assert_eq!(icon, 16.0);
+        assert_eq!(icon, 18.0);
     }
 
     #[test]

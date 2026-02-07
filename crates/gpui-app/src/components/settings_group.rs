@@ -2,7 +2,7 @@
 
 use gpui::{div, prelude::*, AnyElement, SharedString};
 
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
 pub fn settings_group(
@@ -15,7 +15,9 @@ pub fn settings_group(
         .flex_col()
         .w_full()
         .when_some(title.into(), |d, title| {
-            d.child(div().text_sm().text_color(theme.text_muted).mb(sizes::SPACE_2).child(title))
+            d.child(
+                div().text_ui_body().text_color(theme.text_muted).mb(sizes::SPACE_2).child(title),
+            )
         })
         .children(children)
 }

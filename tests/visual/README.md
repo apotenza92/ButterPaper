@@ -2,5 +2,11 @@
 
 Visual regression uses screenshot baselines and committed hash/image artifacts per platform.
 
-Current suite entrypoint:
-- GPUI desktop visual capture harness (to be maintained under `crates/gpui-app/tests` and CI scripts).
+Editor toolbar visual flow:
+- Capture candidates: `./scripts/capture_editor_toolbar_visuals.sh`
+- Compare against baselines: `./scripts/compare_visuals.sh`
+- Promote local candidates: `./scripts/promote_visual_baselines.sh`
+
+Directory layout:
+- Baselines: `tests/visual/baselines/{darwin,linux,windows}/editor/*.png`
+- Candidates: `tests/visual/candidates/{darwin,linux,windows}/editor/*.png`

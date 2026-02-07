@@ -4,3 +4,4 @@
 .nextest
 *.snap.new
 third_party/pdfium/
+/samples

@@ -4,7 +4,7 @@ use gpui::{div, prelude::*, px, ClickEvent, SharedString, Window};
 
 use super::{icon, Icon};
 use crate::ui::color;
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
 /// Toggle switch for boolean values.
@@ -158,5 +158,5 @@ where
                     d.bg(surface).border_color(subtle_border).hover(move |s| s.bg(hover_bg))
                 }),
         )
-        .child(div().text_sm().text_color(text_color).child(label))
+        .child(div().text_ui_body().text_color(text_color).child(label))
 }

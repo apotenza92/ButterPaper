@@ -3,7 +3,7 @@
 use gpui::{div, prelude::*, px, ClickEvent, SharedString, Window};
 
 use crate::ui::color;
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
 const RADIO_SIZE: gpui::Pixels = sizes::RADIO_SIZE;
@@ -65,5 +65,5 @@ where
         .cursor_pointer()
         .on_click(on_select)
         .child(radio("radio-inner", selected, theme, |_, _, _| {}))
-        .child(div().text_sm().text_color(text).child(label))
+        .child(div().text_ui_body().text_color(text).child(label))
 }

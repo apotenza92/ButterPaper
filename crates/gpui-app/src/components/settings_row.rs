@@ -2,7 +2,7 @@
 
 use gpui::{div, prelude::*, SharedString};
 
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
 pub fn settings_row(
@@ -30,8 +30,8 @@ pub fn settings_row(
                 .flex_1()
                 .min_w_0()
                 .gap(sizes::GAP_SM)
-                .child(div().text_sm().child(title))
-                .child(div().text_sm().text_color(theme.text_muted).child(description)),
+                .child(div().text_ui_body().child(title))
+                .child(div().text_ui_body().text_color(theme.text_muted).child(description)),
         )
         .child(
             div()

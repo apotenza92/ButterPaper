@@ -3,7 +3,7 @@
 use gpui::{div, prelude::*, ClickEvent, SharedString, Window};
 
 use crate::components::ButtonSize;
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
 /// Navigation item for sidebar menus.
@@ -34,7 +34,7 @@ where
         .items_center()
         .rounded(sizes::RADIUS_SM)
         .cursor_pointer()
-        .text_sm()
+        .text_ui_body()
         .when(selected, move |d| d.bg(element_selected))
         .when(!selected, move |d| d.hover(move |s| s.bg(element_hover)))
         .on_click(on_click)
@@ -64,10 +64,10 @@ where
         .gap(sizes::GAP_MD)
         .rounded(sizes::RADIUS_SM)
         .cursor_pointer()
-        .text_sm()
+        .text_ui_body()
         .when(selected, move |d| d.bg(element_selected))
         .when(!selected, move |d| d.hover(move |s| s.bg(element_hover)))
         .on_click(on_click)
-        .child(div().text_base().child(icon.into()))
+        .child(div().text_ui_icon().child(icon.into()))
         .child(label)
 }

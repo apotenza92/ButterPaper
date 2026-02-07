@@ -7,6 +7,7 @@ cd "$ROOT"
 TARGET_FILES=(
   "crates/gpui-app/src/app/editor.rs"
   "crates/gpui-app/src/components/context_menu.rs"
+  "crates/gpui-app/src/components/chrome.rs"
   "crates/gpui-app/src/components/dropdown.rs"
   "crates/gpui-app/src/components/nav_item.rs"
   "crates/gpui-app/src/components/popover_menu.rs"

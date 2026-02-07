@@ -77,11 +77,11 @@ impl ButtonSize {
 
     pub fn icon_size_px(self) -> f32 {
         match self {
-            ButtonSize::Large => 18.0,
-            ButtonSize::Medium => 16.0,
-            ButtonSize::Default => 14.0,
-            ButtonSize::Compact => 12.0,
-            ButtonSize::None => 10.0,
+            ButtonSize::Large => 20.0,
+            ButtonSize::Medium => 18.0,
+            ButtonSize::Default => 16.0,
+            ButtonSize::Compact => 14.0,
+            ButtonSize::None => 12.0,
         }
     }
 }

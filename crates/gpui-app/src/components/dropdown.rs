@@ -7,7 +7,7 @@ use gpui::{deferred, div, prelude::*, px, SharedString};
 use super::{icon, Icon};
 use crate::components::ButtonSize;
 use crate::ui::color;
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
 /// A single option in a dropdown menu.
@@ -131,7 +131,7 @@ where
             })
             .child(
                 div()
-                    .text_sm()
+                    .text_ui_body()
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
@@ -139,7 +139,7 @@ where
                     .text_ellipsis()
                     .child(current_label),
             )
-            .child(div().ml(sizes::GAP_SM).child(icon(Icon::ChevronDown, 10.0, text_muted)))
+            .child(div().ml(sizes::GAP_SM).child(icon(Icon::ChevronDown, 12.0, text_muted)))
             .when(is_open, |d| {
                 let options = self.options.clone();
                 let on_select = self.on_select.clone();
@@ -179,7 +179,7 @@ where
                                             .mx(sizes::PADDING_SM)
                                             .rounded(sizes::RADIUS_SM)
                                             .cursor_pointer()
-                                            .text_sm()
+                                            .text_ui_body()
                                             .hover(move |s| s.bg(hover))
                                             .on_click(move |_, _, cx| {
                                                 on_select(&value, cx);

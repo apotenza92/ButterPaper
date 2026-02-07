@@ -2,7 +2,7 @@
 
 use gpui::{div, prelude::*};
 
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
 /// Setting item with title, description, and control.
@@ -44,8 +44,8 @@ pub fn setting_item(
                 .flex_1()
                 .min_w_0()
                 .gap(sizes::GAP_SM)
-                .child(div().text_sm().child(title.into()))
-                .child(div().text_sm().text_color(text_muted).child(description.into())),
+                .child(div().text_ui_body().child(title.into()))
+                .child(div().text_ui_body().text_color(text_muted).child(description.into())),
         )
         // Control column - fixed width
         .child(div().flex_shrink_0().w(sizes::DROPDOWN_WIDTH).child(control))
@@ -69,6 +69,6 @@ pub fn setting_item_compact(
         .py(sizes::PADDING_MD)
         .border_b_1()
         .border_color(border)
-        .child(div().text_sm().child(title.into()))
+        .child(div().text_ui_body().child(title.into()))
         .child(div().flex_shrink_0().child(control))
 }

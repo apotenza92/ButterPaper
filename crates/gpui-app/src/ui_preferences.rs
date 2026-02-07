@@ -1,17 +1,15 @@
-//! Persistence for app-level UI preferences (appearance/theme/density).
+//! Persistence for app-level UI preferences (appearance/theme).
 
 use std::path::PathBuf;
 
 use gpui::App;
 
-use crate::styles::UiDensity;
 use crate::theme::{AppearanceMode, ThemeSettings};
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct UiPreferences {
     pub appearance_mode: AppearanceMode,
     pub theme_settings: ThemeSettings,
-    pub ui_density: UiDensity,
 }
 
 fn config_dir() -> Option<PathBuf> {
@@ -55,7 +53,6 @@ pub fn collect_ui_preferences(cx: &App) -> UiPreferences {
     UiPreferences {
         appearance_mode: cx.try_global::<AppearanceMode>().copied().unwrap_or_default(),
         theme_settings: cx.try_global::<ThemeSettings>().cloned().unwrap_or_default(),
-        ui_density: cx.try_global::<UiDensity>().copied().unwrap_or_default(),
     }
 }
 
@@ -67,20 +64,29 @@ pub fn save_ui_preferences_from_app(cx: &App) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::UiPreferences;
-    use crate::styles::UiDensity;
     use crate::theme::AppearanceMode;
 
     #[test]
     fn ui_preferences_json_roundtrip() {
-        let prefs = UiPreferences {
-            appearance_mode: AppearanceMode::Dark,
-            ui_density: UiDensity::Comfortable,
-            ..UiPreferences::default()
-        };
+        let prefs =
+            UiPreferences { appearance_mode: AppearanceMode::Dark, ..UiPreferences::default() };
 
         let json = serde_json::to_string(&prefs).expect("serialize prefs");
         let decoded: UiPreferences = serde_json::from_str(&json).expect("deserialize prefs");
         assert_eq!(decoded.appearance_mode, AppearanceMode::Dark);
-        assert_eq!(decoded.ui_density, UiDensity::Comfortable);
+    }
+
+    #[test]
+    fn legacy_density_field_is_ignored_on_load() {
+        let legacy = r#"{
+            "appearance_mode":"Dark",
+            "theme_settings":{"light_theme":"One Light","dark_theme":"One Dark"},
+            "ui_density":"Comfortable"
+        }"#;
+        let decoded: UiPreferences =
+            serde_json::from_str(legacy).expect("deserialize legacy prefs");
+        assert_eq!(decoded.appearance_mode, AppearanceMode::Dark);
+        assert_eq!(decoded.theme_settings.light_theme, "One Light");
+        assert_eq!(decoded.theme_settings.dark_theme, "One Dark");
     }
 }

@@ -3,10 +3,7 @@
 use gpui::{App, Menu, MenuItem};
 
 use crate::settings;
-use crate::{
-    About, FirstPage, FitPage, FitWidth, LastPage, NextPage, Open, PrevPage, Quit, ResetZoom,
-    ZoomIn, ZoomOut,
-};
+use crate::{About, Open, Quit};
 
 /// Set up the application menu bar.
 pub fn set_menus(cx: &mut App) {
@@ -22,20 +19,5 @@ pub fn set_menus(cx: &mut App) {
             ],
         },
         Menu { name: "File".into(), items: vec![MenuItem::action("Open...", Open)] },
-        Menu {
-            name: "View".into(),
-            items: vec![
-                MenuItem::action("Zoom In", ZoomIn),
-                MenuItem::action("Zoom Out", ZoomOut),
-                MenuItem::action("Actual Size", ResetZoom),
-                MenuItem::action("Fit Width", FitWidth),
-                MenuItem::action("Fit Page", FitPage),
-                MenuItem::separator(),
-                MenuItem::action("First Page", FirstPage),
-                MenuItem::action("Next Page", NextPage),
-                MenuItem::action("Previous Page", PrevPage),
-                MenuItem::action("Last Page", LastPage),
-            ],
-        },
     ]);
 }

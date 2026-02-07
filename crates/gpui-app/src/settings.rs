@@ -7,9 +7,8 @@ use crate::components::{
     checkbox, nav_item, segmented_control, settings_group, settings_row, Dropdown, DropdownOption,
     SegmentOption,
 };
-use crate::styles::{DynamicSpacing, UiDensity};
 use crate::theme::{theme_registry, ThemeSettings};
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::ui_preferences::save_ui_preferences_from_app;
 use crate::workspace::{load_preferences, save_preferences, TabPreferences};
 use crate::{current_theme, AppearanceMode, CloseWindow, Theme};
@@ -204,8 +203,8 @@ impl SettingsView {
             .bg(theme.surface)
             .border_r_1()
             .border_color(theme.border)
-            .p(DynamicSpacing::Base12.px(cx))
-            .gap(DynamicSpacing::Base02.px(cx))
+            .p(sizes::SPACE_3)
+            .gap(sizes::SPACE_1)
             .children(
                 SettingsPage::all()
                     .iter()
@@ -265,35 +264,6 @@ impl SettingsView {
         )
     }
 
-    fn render_ui_density_control(&self, density: UiDensity, theme: &Theme) -> impl IntoElement {
-        let selected = match density {
-            UiDensity::Compact => "Compact",
-            UiDensity::Default => "Default",
-            UiDensity::Comfortable => "Comfortable",
-        };
-
-        segmented_control(
-            "settings.appearance.ui-density",
-            vec![
-                SegmentOption::simple("Compact"),
-                SegmentOption::simple("Default"),
-                SegmentOption::simple("Comfortable"),
-            ],
-            selected,
-            theme,
-            |label, cx| {
-                let density = match label {
-                    "Compact" => UiDensity::Compact,
-                    "Comfortable" => UiDensity::Comfortable,
-                    _ => UiDensity::Default,
-                };
-                cx.set_global(density);
-                let _ = save_ui_preferences_from_app(cx);
-                cx.refresh_windows();
-            },
-        )
-    }
-
     fn render_content_group(
         &self,
         content: Vec<gpui::AnyElement>,
@@ -315,7 +285,6 @@ impl SettingsView {
     fn render_content(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let current_mode = cx.try_global::<AppearanceMode>().copied().unwrap_or_default();
         let theme_settings = cx.try_global::<ThemeSettings>().cloned().unwrap_or_default();
-        let ui_density = cx.try_global::<UiDensity>().copied().unwrap_or_default();
 
         div()
             .id("settings-content")
@@ -326,7 +295,7 @@ impl SettingsView {
             .min_w_0()
             .overflow_hidden() // Prevent any content from escaping
             .bg(theme.elevated_surface)
-            .pt(DynamicSpacing::Base12.px(cx))
+            .pt(sizes::SPACE_3)
             .overflow_y_scroll()
             .child(
                 div()
@@ -334,24 +303,18 @@ impl SettingsView {
                     .flex_col()
                     .w_full()
                     .max_w(sizes::SETTINGS_CONTENT_MAX_WIDTH)
-                    .px(DynamicSpacing::Base24.px(cx))
-                    .pb(DynamicSpacing::Base24.px(cx))
+                    .px(sizes::SPACE_6)
+                    .pb(sizes::SPACE_6)
                     .child(
                         div()
-                            .text_xl()
+                            .text_ui_title()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .mb(DynamicSpacing::Base16.px(cx))
+                            .mb(sizes::SPACE_4)
                             .child(self.current_page.label()),
                     )
                     .child(match self.current_page {
                         SettingsPage::Appearance => self
-                            .render_appearance_content(
-                                theme,
-                                current_mode,
-                                theme_settings,
-                                ui_density,
-                                cx,
-                            )
+                            .render_appearance_content(theme, current_mode, theme_settings, cx)
                             .into_any_element(),
                         SettingsPage::Behavior => {
                             self.render_behavior_content(theme, cx).into_any_element()
@@ -365,7 +328,6 @@ impl SettingsView {
         theme: &Theme,
         current_mode: AppearanceMode,
         theme_settings: ThemeSettings,
-        ui_density: UiDensity,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let registry = theme_registry();
@@ -380,13 +342,6 @@ impl SettingsView {
                     "Appearance",
                     "Choose whether to use light or dark theme, or follow system settings.",
                     self.render_appearance_mode_control(current_mode, theme),
-                    theme,
-                )
-                .into_any_element(),
-                self.render_content_row(
-                    "UI Density",
-                    "Adjust the compactness of controls and spacing across the interface.",
-                    self.render_ui_density_control(ui_density, theme),
                     theme,
                 )
                 .into_any_element(),

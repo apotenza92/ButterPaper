@@ -28,6 +28,14 @@ impl AssetSource for Assets {
             "icons/panel_left.svg" => Some(include_bytes!("../assets/icons/panel_left.svg")),
             "icons/plus.svg" => Some(include_bytes!("../assets/icons/plus.svg")),
             "icons/settings.svg" => Some(include_bytes!("../assets/icons/settings.svg")),
+            "icons/view_continuous.svg" => {
+                Some(include_bytes!("../assets/icons/view_continuous.svg"))
+            }
+            "icons/view_single_page.svg" => {
+                Some(include_bytes!("../assets/icons/view_single_page.svg"))
+            }
+            "icons/zoom_in.svg" => Some(include_bytes!("../assets/icons/zoom_in.svg")),
+            "icons/zoom_out.svg" => Some(include_bytes!("../assets/icons/zoom_out.svg")),
             _ => None,
         };
 
@@ -53,6 +61,10 @@ impl AssetSource for Assets {
                 "icons/panel_left.svg".into(),
                 "icons/plus.svg".into(),
                 "icons/settings.svg".into(),
+                "icons/view_continuous.svg".into(),
+                "icons/view_single_page.svg".into(),
+                "icons/zoom_in.svg".into(),
+                "icons/zoom_out.svg".into(),
             ]);
         }
 

@@ -8,7 +8,7 @@ use gpui::{
 };
 
 #[allow(unused_imports)]
-pub use crate::styles::{rems_from_px, ui_density, DynamicSpacing, TextSize, UiDensity};
+pub use crate::styles::{rems_from_px, DynamicSpacing, TextSize};
 
 /// Standard UI sizing constants
 pub mod sizes {
@@ -34,15 +34,23 @@ pub mod sizes {
     pub const TITLEBAR_HEIGHT: Pixels = px(32.0);
 
     /// Tab bar height - content area below titlebar
-    pub const TAB_BAR_HEIGHT: Pixels = px(32.0);
+    pub const TAB_BAR_HEIGHT: Pixels = px(41.0);
     /// Tab height within tab bar
-    pub const TAB_HEIGHT: Pixels = px(28.0);
+    pub const TAB_HEIGHT: Pixels = px(32.0);
     /// In-window app menu row height.
-    pub const MENU_ROW_HEIGHT: Pixels = px(28.0);
+    pub const MENU_ROW_HEIGHT: Pixels = px(29.0);
     /// Canvas toolbar height above the PDF viewport.
-    pub const CANVAS_TOOLBAR_HEIGHT: Pixels = px(32.0);
+    pub const CANVAS_TOOLBAR_HEIGHT: Pixels = px(40.0);
     /// Left tool rail width.
-    pub const TOOL_RAIL_WIDTH: Pixels = px(36.0);
+    pub const TOOL_RAIL_WIDTH: Pixels = px(41.0);
+    /// Horizontal inset for toolbar content.
+    pub const TOOLBAR_INSET_X: Pixels = px(4.0);
+    /// Spacing between left/center/right toolbar zones.
+    pub const TOOLBAR_ZONE_GAP: Pixels = px(4.0);
+    /// Spacing between controls inside a toolbar cluster.
+    pub const TOOLBAR_CLUSTER_INNER_GAP: Pixels = px(4.0);
+    /// Top inset used by left tool rail controls.
+    pub const TOOL_RAIL_TOP_INSET: Pixels = px(4.0);
 
     /// Zed-style button ladder heights.
     pub const CONTROL_HEIGHT_NONE: Pixels = px(16.0);
@@ -78,14 +86,17 @@ pub mod sizes {
     pub const SLIDER_TRACK_WIDTH: Pixels = px(140.0);
     pub const SLIDER_TRACK_HEIGHT: Pixels = px(8.0);
     pub const SLIDER_VALUE_MIN_WIDTH: Pixels = px(44.0);
-    pub const SLIDER_ICON_SIZE: f32 = 12.0;
+    pub const SLIDER_ICON_SIZE: f32 = 14.0;
 
     /// Dropdown metrics
     pub const DROPDOWN_MAX_HEIGHT: Pixels = px(240.0);
 
     /// Editor toolbar metrics
-    pub const ZOOM_COMBO_MIN_WIDTH: Pixels = px(86.0);
+    pub const TOOLBAR_CONTROL_SIZE: Pixels = TAB_HEIGHT;
+    /// Min width for zoom combo: supports 5 chars of zoom text (e.g. `1600%`) plus chevron.
+    pub const ZOOM_COMBO_MIN_WIDTH: Pixels = px(72.0);
     pub const PAGE_LABEL_MIN_WIDTH: Pixels = px(68.0);
+    pub const PAGE_LABEL_HORIZONTAL_PADDING: Pixels = px(4.0);
     pub const TOOLBAR_SEPARATOR_WIDTH: Pixels = px(1.0);
     pub const TOOLBAR_SEPARATOR_HEIGHT: Pixels = px(16.0);
 
@@ -174,12 +185,36 @@ impl<T: StatefulInteractiveElement + Styled> StatefulInteractiveExt for T {}
 
 /// Standard text sizes following Zed conventions
 pub mod text {
-    pub const SIZE_XS: &str = "text_xs";
-    pub const SIZE_SM: &str = "text_sm";
-    pub const SIZE_BASE: &str = "text_base";
-    pub const SIZE_LG: &str = "text_lg";
-    pub const SIZE_XL: &str = "text_xl";
+    pub const UI_META: &str = "text_xs";
+    pub const UI_BODY: &str = "text_sm";
+    pub const UI_ICON_LABEL: &str = "text_base";
+    pub const UI_TITLE: &str = "text_xl";
 }
+
+/// Semantic typography helpers for app UI surfaces.
+pub trait TypographyExt: Styled + Sized {
+    /// Body text used by controls, menu labels, and standard UI copy.
+    fn text_ui_body(self) -> Self {
+        self.text_sm()
+    }
+
+    /// Secondary/meta text used by compact labels and shortcuts.
+    fn text_ui_meta(self) -> Self {
+        self.text_xs()
+    }
+
+    /// Icon-like textual glyph sizing in compact UI rows.
+    fn text_ui_icon(self) -> Self {
+        self.text_base()
+    }
+
+    /// Prominent section titles.
+    fn text_ui_title(self) -> Self {
+        self.text_xl()
+    }
+}
+
+impl<T: Styled + Sized> TypographyExt for T {}
 
 /// Shared color helpers for standardized control styling.
 pub mod color {

@@ -4,7 +4,7 @@ use gpui::{div, prelude::*, ClickEvent, SharedString, Window};
 
 use crate::components::button_like::subtle_border;
 use crate::components::ButtonSize;
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
 #[derive(Clone, Debug)]
@@ -62,7 +62,7 @@ where
                 .items_center()
                 .justify_center()
                 .rounded(sizes::RADIUS_SM)
-                .text_sm()
+                .text_ui_body()
                 .cursor_pointer()
                 .bg(if is_selected { theme.elevated_surface } else { theme.surface })
                 .text_color(if is_selected { theme.text } else { theme.text_muted })

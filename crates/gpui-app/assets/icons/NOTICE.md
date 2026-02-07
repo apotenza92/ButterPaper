@@ -8,9 +8,13 @@ Mapping used by ButterPaper:
 - chevron_right.svg <- chevron-right.svg
 - arrow_left.svg <- arrow-left.svg
 - arrow_right.svg <- arrow-right.svg
+- fit_page.svg <- expand.svg
+- fit_width.svg <- move-horizontal.svg
 - dirty.svg <- dot.svg
 - settings.svg <- settings.svg
 - check.svg <- check.svg
 - chevron_down.svg <- chevron-down.svg
 - plus.svg <- plus.svg
 - minus.svg <- minus.svg
+- zoom_in.svg <- zoom-in.svg
+- zoom_out.svg <- zoom-out.svg

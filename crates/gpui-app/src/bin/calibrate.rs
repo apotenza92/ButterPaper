@@ -13,6 +13,7 @@
 //! No additional title bar offset needed because GPUI coords include it.
 
 use butterpaper_gpui::ui;
+use butterpaper_gpui::ui::TypographyExt;
 use gpui::{
     div, point, prelude::*, px, rgb, size, App, Application, Bounds, Context, MouseMoveEvent,
     TitlebarOptions, Window, WindowBounds, WindowOptions,
@@ -100,13 +101,13 @@ impl Render for CalibrationWindow {
                     .bg(rgb(0x313244))
                     .child(
                         div()
-                            .text_xs()
+                            .text_ui_meta()
                             .text_color(rgb(0x6c7086))
                             .child("Click markers to verify • Labels show GPUI coords"),
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_ui_meta()
                             .text_color(rgb(0x6c7086))
                             .child(format!("Clicks: {}", self.clicks.len())),
                     ),
@@ -134,7 +135,7 @@ fn marker(x: i32, y: i32, gpui_label: &str) -> impl IntoElement {
                 .border_color(rgb(0xffffff)),
         )
         // Label
-        .child(div().text_xs().text_color(rgb(0x9399b2)).child(gpui_label.to_string()))
+        .child(div().text_ui_meta().text_color(rgb(0x9399b2)).child(gpui_label.to_string()))
 }
 
 fn main() {

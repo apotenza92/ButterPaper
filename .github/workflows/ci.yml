@@ -47,5 +47,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Run headless visual suite
-        run: cargo test -p app-shell --test headless_ui --all-features
+      - name: Capture visual candidates
+        run: ./scripts/capture_editor_toolbar_visuals.sh
+
+      - name: Compare visual baselines
+        run: ./scripts/compare_visuals.sh
+
+      - name: Upload visual candidates on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-candidates-${{ matrix.os }}
+          path: tests/visual/candidates

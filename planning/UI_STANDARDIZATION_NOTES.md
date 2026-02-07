@@ -33,6 +33,32 @@
 - Standardized interactive control dimensions in editor and component surfaces using shared size tokens/constants (tab/menu/slider/toggle/radio/dropdown/context-menu).
 - Added CI hard gate `scripts/check_control_sizes.sh` and wired it into `.github/workflows/ci.yml` to block new ad-hoc control sizing drift.
 - Added sizing contract tests for button/input/text-button and spacing/rem helpers.
+- Added a shared `open_editor_window(...)` window factory in `crates/gpui-app/src/main.rs` and wired `Application::on_reopen(...)` so macOS dock re-open creates a new editor window when none are open, matching native lifecycle expectations.
+- Restored in-window app menu row on macOS and expanded both native + in-window menus to include `ButterPaper` and `File`, so macOS and in-app affordances now expose the same core menu entry points.
+- Standardized in-window menu row spacing (`gap=0`, uniform horizontal padding) and added horizontal hover menu switching (when any menu is open) so moving across menu labels opens adjacent menus without re-clicking.
+- Reworked tab-strip overflow behavior in `crates/gpui-app/src/app/editor.rs` + `crates/gpui-app/src/components/tab.rs`:
+  - removed tab-title truncation so tabs grow to fit full titles,
+  - replaced manual offset scrolling with native GPUI horizontal overflow tracking,
+  - mapped wheel-driven scrolling through native horizontal overflow behavior,
+  - kept `+` inline after the last tab until overflow, then pinned it at the right edge,
+  - auto-revealed the active tab on open/switch/close/navigation,
+  - preserved double-click-to-new-tab in available empty tab-strip space.
+- Added shared editor chrome primitives in `crates/gpui-app/src/components/chrome.rs`:
+  - `chrome_icon_button(...)` for compact icon actions with selected/disabled states.
+  - `toolbar_group(...)` for pill-style grouped toolbar controls.
+- Rebuilt the canvas toolbar in `crates/gpui-app/src/app/editor.rs` to grouped capsules (nav/fit/zoom), removed manual separator lines, and added persistent active fit-mode visual state based on viewport zoom mode.
+- Added `PdfViewport::zoom_mode()` in `crates/gpui-app/src/viewport.rs` so toolbar rendering can reflect current fit mode deterministically.
+- Removed UI density variants (`Compact/Default/Comfortable`) from runtime/settings/persistence:
+  - dropped density globals from startup (`crates/gpui-app/src/main.rs`),
+  - removed UI Density control from settings (`crates/gpui-app/src/settings.rs`),
+  - removed persisted density field from preferences (`crates/gpui-app/src/ui_preferences.rs`),
+  - simplified spacing model to fixed values in `crates/gpui-app/src/styles/spacing.rs`.
+- Added editor visual regression scripts and CI plumbing:
+  - `scripts/capture_editor_toolbar_visuals.sh`
+  - `scripts/compare_visuals.sh`
+  - `scripts/promote_visual_baselines.sh`
+  - CI visual job now captures and compares committed baselines and uploads candidate artifacts on failure.
+- Standardized typography usage across app/components with semantic helpers in `crates/gpui-app/src/ui.rs` (`TypographyExt`), replacing direct `text_xs/text_sm/text_base/text_xl` calls in UI surfaces (menu, toolbar, settings, context menu, sidebar, tabs, controls) to keep scale changes centralized.
 
 ### Why
 - Reduce style drift between controls.

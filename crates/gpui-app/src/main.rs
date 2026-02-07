@@ -19,7 +19,6 @@ mod window;
 mod workspace;
 
 pub use element_registry::{ElementInfo, ElementType};
-pub use styles::UiDensity;
 pub use theme::{current_theme, AppearanceMode, Theme, ThemeSettings};
 
 use butterpaper_render::PdfDocument;
@@ -27,6 +26,7 @@ use gpui::{
     actions, point, prelude::*, px, size, App, Application, Bounds, Focusable, KeyBinding,
     TitlebarOptions, WindowBounds, WindowOptions,
 };
+use std::path::PathBuf;
 
 use app::{set_menus, PdfEditor};
 use assets::Assets;
@@ -55,6 +55,55 @@ actions!(
         CloseTab
     ]
 );
+
+fn open_editor_window(cx: &mut App, initial_files: Vec<PathBuf>) {
+    let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
+
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("ButterPaper".into()),
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(12.0), px(9.0))),
+            }),
+            focus: true,
+            show: true,
+            is_movable: true,
+            window_min_size: Some(size(px(600.0), px(400.0))),
+            ..Default::default()
+        },
+        move |window, cx| {
+            // Observe system appearance changes to trigger re-render
+            window
+                .observe_window_appearance(|window, _cx| {
+                    window.refresh();
+                })
+                .detach();
+
+            let editor = cx.new(|cx| {
+                let mut editor = PdfEditor::new(cx);
+
+                // Open initial files if provided via CLI (each as a separate tab)
+                for path in initial_files {
+                    if path.exists() {
+                        editor.open_file(path, cx);
+                    } else {
+                        eprintln!("File not found: {:?}", path);
+                    }
+                }
+
+                editor
+            });
+
+            // Focus the editor immediately so keyboard shortcuts work right away
+            editor.focus_handle(cx).focus(window);
+
+            editor
+        },
+    )
+    .unwrap();
+}
 
 fn main() {
     // Pre-initialize Pdfium library early (shared instance for all documents)
@@ -107,11 +156,17 @@ fn main() {
     let initial_files = cli.files;
     let open_settings = cli.open_settings;
 
-    Application::new().with_assets(Assets).run(move |cx: &mut App| {
+    let app = Application::new().with_assets(Assets);
+    app.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            open_editor_window(cx, Vec::new());
+            cx.activate(true);
+        }
+    });
+
+    app.run(move |cx: &mut App| {
         #[cfg(target_os = "macos")]
         macos::set_app_icon();
-
-        let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
 
         // Bind keyboard shortcuts - global
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
@@ -147,11 +202,10 @@ fn main() {
             KeyBinding::new("cmd-alt-left", PrevTab, Some("PdfEditor")),
         ]);
 
-        // Initialize persisted appearance/theme/density preferences.
+        // Initialize persisted appearance/theme preferences.
         let ui_preferences = load_ui_preferences();
         cx.set_global(ui_preferences.appearance_mode);
         cx.set_global(ui_preferences.theme_settings);
-        cx.set_global(ui_preferences.ui_density);
         #[cfg(target_os = "macos")]
         macos::set_app_appearance(ui_preferences.appearance_mode);
 
@@ -177,50 +231,7 @@ fn main() {
             settings::open_settings_window(cx);
         }
 
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("ButterPaper".into()),
-                    appears_transparent: true,
-                    traffic_light_position: Some(point(px(12.0), px(9.0))),
-                }),
-                focus: true,
-                show: true,
-                is_movable: true,
-                window_min_size: Some(size(px(600.0), px(400.0))),
-                ..Default::default()
-            },
-            |window, cx| {
-                // Observe system appearance changes to trigger re-render
-                window
-                    .observe_window_appearance(|window, _cx| {
-                        window.refresh();
-                    })
-                    .detach();
-
-                let editor = cx.new(|cx| {
-                    let mut editor = PdfEditor::new(cx);
-
-                    // Open initial files if provided via CLI (each as a separate tab)
-                    for path in initial_files {
-                        if path.exists() {
-                            editor.open_file(path, cx);
-                        } else {
-                            eprintln!("File not found: {:?}", path);
-                        }
-                    }
-
-                    editor
-                });
-
-                // Focus the editor immediately so keyboard shortcuts work right away
-                editor.focus_handle(cx).focus(window);
-
-                editor
-            },
-        )
-        .unwrap();
+        open_editor_window(cx, initial_files.clone());
 
         cx.activate(true);
     });

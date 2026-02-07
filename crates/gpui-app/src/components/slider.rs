@@ -4,7 +4,7 @@ use gpui::{div, prelude::*, px, ClickEvent, SharedString, Window};
 
 use crate::components::button_like::subtle_border;
 use crate::components::{icon, Icon};
-use crate::ui::sizes;
+use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
 fn clamp_step(value: f32, min: f32, max: f32, step: f32) -> f32 {
@@ -139,7 +139,7 @@ where
         .child(
             div()
                 .min_w(sizes::SLIDER_VALUE_MIN_WIDTH)
-                .text_sm()
+                .text_ui_body()
                 .text_color(theme.text_muted)
                 .child(format!("{value:.0}")),
         )

@@ -22,6 +22,10 @@ pub enum IconName {
     ChevronDown,
     Plus,
     Minus,
+    ZoomIn,
+    ZoomOut,
+    ViewContinuous,
+    ViewSinglePage,
 }
 
 impl IconName {
@@ -44,6 +48,10 @@ impl IconName {
             IconName::ChevronDown => "icons/chevron_down.svg",
             IconName::Plus => "icons/plus.svg",
             IconName::Minus => "icons/minus.svg",
+            IconName::ZoomIn => "icons/zoom_in.svg",
+            IconName::ZoomOut => "icons/zoom_out.svg",
+            IconName::ViewContinuous => "icons/view_continuous.svg",
+            IconName::ViewSinglePage => "icons/view_single_page.svg",
         }
     }
 }

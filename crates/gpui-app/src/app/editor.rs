@@ -1,20 +1,21 @@
 //! ButterPaper main component with tabbed document management.
 
 use gpui::{
-    div, prelude::*, px, App, ClickEvent, Context, ExternalPaths, FocusHandle, Focusable,
-    KeyDownEvent, MouseButton, Rgba, ScrollDelta, ScrollWheelEvent, SharedString, Window,
+    div, prelude::*, px, App, Context, ExternalPaths, FocusHandle, Focusable, KeyDownEvent,
+    MouseButton, MouseMoveEvent, ScrollHandle, Window,
 };
 use std::path::PathBuf;
 
 use super::document::DocumentTab;
 use crate::components::tab_bar::TabId as UiTabId;
 use crate::components::{
-    context_menu, icon, icon_button, popover_menu, tab_item, text_button_with_shortcut, ButtonSize,
-    ContextMenuItem, Icon, TabItemData,
+    chrome_control_shell, chrome_icon_button, context_menu, icon, popover_menu, tab_item,
+    text_button_with_shortcut, ButtonSize, ContextMenuItem, Icon, TabItemData,
 };
+use crate::settings;
 use crate::sidebar::{ThumbnailSidebar, SIDEBAR_WIDTH};
-use crate::styles::DynamicSpacing;
-use crate::viewport::PdfViewport;
+use crate::ui::TypographyExt;
+use crate::viewport::{PdfViewport, ViewMode, ZoomMode};
 use crate::workspace::{load_preferences, TabPreferences};
 use crate::{current_theme, ui, Theme};
 use crate::{
@@ -24,33 +25,20 @@ use crate::{
 
 const MIN_ZOOM_PERCENT: u32 = 25;
 const MAX_ZOOM_PERCENT: u32 = 400;
+const TAB_BAR_OVERFLOW_EPSILON: f32 = 0.5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuKind {
+    ButterPaper,
     File,
-    View,
-    Go,
-    Window,
-    Help,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuCommand {
-    Open,
-    NewTab,
-    CloseTab,
-    ZoomIn,
-    ZoomOut,
-    ResetZoom,
-    FitWidth,
-    FitPage,
-    FirstPage,
-    PrevPage,
-    NextPage,
-    LastPage,
-    NextTab,
-    PrevTab,
     About,
+    OpenSettings,
+    Quit,
+    Open,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -59,11 +47,20 @@ struct ActiveViewportInfo {
     page_count: u16,
     current_page: u16,
     zoom_level: u32,
+    zoom_mode: ZoomMode,
+    view_mode: ViewMode,
 }
 
 impl Default for ActiveViewportInfo {
     fn default() -> Self {
-        Self { has_document: false, page_count: 0, current_page: 0, zoom_level: 100 }
+        Self {
+            has_document: false,
+            page_count: 0,
+            current_page: 0,
+            zoom_level: 100,
+            zoom_mode: ZoomMode::Percent,
+            view_mode: ViewMode::Continuous,
+        }
     }
 }
 
@@ -72,9 +69,18 @@ pub struct PdfEditor {
     active_tab_index: usize,
     focus_handle: FocusHandle,
     zoom_input_focus_handle: FocusHandle,
+    page_input_focus_handle: FocusHandle,
     preferences: TabPreferences,
-    /// Horizontal scroll offset for the tab bar (in pixels)
-    tab_scroll_offset: f32,
+    /// Tracks native horizontal scrolling for the tab strip.
+    tab_scroll_handle: ScrollHandle,
+    /// Whether tab content currently overflows the visible tab-strip viewport.
+    tab_bar_overflowing: bool,
+    /// Whether overflow state should be recomputed next frame.
+    tab_bar_needs_measure: bool,
+    /// Guard to avoid scheduling duplicate next-frame overflow checks.
+    tab_bar_measure_scheduled: bool,
+    /// Last observed tab-row width (in pixels); used to trigger re-measure on resize.
+    tab_bar_last_row_width: f32,
     /// Whether the thumbnail sidebar is visible for the active tab.
     thumbnail_sidebar_visible: bool,
     /// Which in-window menu is currently open.
@@ -83,8 +89,16 @@ pub struct PdfEditor {
     zoom_input_text: String,
     /// Whether the zoom field is in edit mode.
     zoom_input_editing: bool,
+    /// Whether the current zoom text should behave like a selected value.
+    zoom_input_select_all: bool,
     /// Whether the zoom presets dropdown is open.
     zoom_preset_open: bool,
+    /// Current text shown in the page input field (1-based display value).
+    page_input_text: String,
+    /// Whether the page field is in edit mode.
+    page_input_editing: bool,
+    /// Whether the current page text should behave like a selected value.
+    page_input_select_all: bool,
 }
 
 fn next_active_tab_index_after_close(
@@ -124,15 +138,35 @@ fn parse_zoom_input_percent(input: &str) -> Option<u32> {
     numeric.parse::<u32>().ok().map(clamp_zoom_percent)
 }
 
+fn parse_page_input_index(input: &str, page_count: u16) -> Option<u16> {
+    if page_count == 0 {
+        return None;
+    }
+
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let entered = trimmed.parse::<u16>().ok()?;
+    if entered == 0 {
+        return Some(0);
+    }
+
+    Some(entered.saturating_sub(1).min(page_count.saturating_sub(1)))
+}
+
 fn compute_canvas_metrics(
     viewport_width: f32,
     viewport_height: f32,
     show_sidebar: bool,
+    show_in_window_menu: bool,
 ) -> (f32, f32) {
     let sidebar = if show_sidebar { SIDEBAR_WIDTH } else { 0.0 };
     let canvas_width = (viewport_width - ui::sizes::TOOL_RAIL_WIDTH.0 - sidebar).max(1.0);
+    let menu_height = if show_in_window_menu { ui::sizes::MENU_ROW_HEIGHT.0 } else { 0.0 };
     let chrome_height = ui::sizes::TITLE_BAR_HEIGHT.0
-        + ui::sizes::MENU_ROW_HEIGHT.0
+        + menu_height
         + ui::sizes::TAB_BAR_HEIGHT.0
         + ui::sizes::CANVAS_TOOLBAR_HEIGHT.0;
     let canvas_height = (viewport_height - chrome_height).max(1.0);
@@ -141,98 +175,24 @@ fn compute_canvas_metrics(
 
 fn map_menu_command(value: &str) -> Option<MenuCommand> {
     match value {
+        "app.about" => Some(MenuCommand::About),
+        "app.settings" => Some(MenuCommand::OpenSettings),
+        "app.quit" => Some(MenuCommand::Quit),
         "file.open" => Some(MenuCommand::Open),
-        "file.new_tab" => Some(MenuCommand::NewTab),
-        "file.close_tab" => Some(MenuCommand::CloseTab),
-        "view.zoom_in" => Some(MenuCommand::ZoomIn),
-        "view.zoom_out" => Some(MenuCommand::ZoomOut),
-        "view.reset_zoom" => Some(MenuCommand::ResetZoom),
-        "view.fit_width" => Some(MenuCommand::FitWidth),
-        "view.fit_page" => Some(MenuCommand::FitPage),
-        "go.first" => Some(MenuCommand::FirstPage),
-        "go.prev" => Some(MenuCommand::PrevPage),
-        "go.next" => Some(MenuCommand::NextPage),
-        "go.last" => Some(MenuCommand::LastPage),
-        "window.next_tab" => Some(MenuCommand::NextTab),
-        "window.prev_tab" => Some(MenuCommand::PrevTab),
-        "help.about" => Some(MenuCommand::About),
         _ => None,
     }
 }
 
-fn flat_icon_button<F>(
-    id: impl Into<SharedString>,
-    icon_type: Icon,
-    enabled: bool,
-    selected: bool,
-    theme: &Theme,
-    on_click: F,
-) -> impl IntoElement
-where
-    F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    let transparent = Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
-    let selected_bg = if selected {
-        Rgba {
-            r: theme.element_selected.r,
-            g: theme.element_selected.g,
-            b: theme.element_selected.b,
-            a: theme.element_selected.a * 0.78,
-        }
+fn hover_open_menu(current: Option<MenuKind>, hovered: MenuKind) -> Option<MenuKind> {
+    if current.is_some() {
+        Some(hovered)
     } else {
-        transparent
-    };
-    let hover_bg = if selected {
-        selected_bg
-    } else {
-        Rgba {
-            r: theme.element_hover.r,
-            g: theme.element_hover.g,
-            b: theme.element_hover.b,
-            a: theme.element_hover.a * 0.8,
-        }
-    };
-    let active_bg = Rgba {
-        r: theme.element_selected.r,
-        g: theme.element_selected.g,
-        b: theme.element_selected.b,
-        a: theme.element_selected.a * 0.84,
-    };
-    let icon_color = if !enabled {
-        Rgba {
-            r: theme.text_muted.r,
-            g: theme.text_muted.g,
-            b: theme.text_muted.b,
-            a: theme.text_muted.a * 0.65,
-        }
-    } else if selected {
-        theme.text
-    } else {
-        Rgba {
-            r: theme.text_muted.r,
-            g: theme.text_muted.g,
-            b: theme.text_muted.b,
-            a: theme.text_muted.a * 0.96,
-        }
-    };
+        None
+    }
+}
 
-    div()
-        .id(id.into())
-        .w(px(32.0))
-        .h(px(32.0))
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .justify_center()
-        .rounded(px(5.0))
-        .bg(selected_bg)
-        .when(enabled, move |d| {
-            d.cursor_pointer()
-                .hover(move |s| s.bg(hover_bg))
-                .active(move |s| s.bg(active_bg))
-                .on_click(on_click)
-        })
-        .child(icon(icon_type, 15.0, icon_color))
+fn tab_bar_is_overflowing(max_offset_width: f32) -> bool {
+    max_offset_width > TAB_BAR_OVERFLOW_EPSILON
 }
 
 impl PdfEditor {
@@ -242,13 +202,22 @@ impl PdfEditor {
             active_tab_index: 0,
             focus_handle: cx.focus_handle(),
             zoom_input_focus_handle: cx.focus_handle(),
+            page_input_focus_handle: cx.focus_handle(),
             preferences: load_preferences(),
-            tab_scroll_offset: 0.0,
+            tab_scroll_handle: ScrollHandle::new(),
+            tab_bar_overflowing: false,
+            tab_bar_needs_measure: true,
+            tab_bar_measure_scheduled: false,
+            tab_bar_last_row_width: 0.0,
             thumbnail_sidebar_visible: true,
             open_menu: None,
             zoom_input_text: "100%".to_string(),
             zoom_input_editing: false,
+            zoom_input_select_all: false,
             zoom_preset_open: false,
+            page_input_text: "0".to_string(),
+            page_input_editing: false,
+            page_input_select_all: false,
         }
     }
 
@@ -295,16 +264,6 @@ impl PdfEditor {
         self.tabs.len() - 1
     }
 
-    fn create_welcome_tab(&mut self, cx: &mut Context<Self>) -> usize {
-        self.create_tab(None, cx)
-    }
-
-    fn new_tab(&mut self, cx: &mut Context<Self>) {
-        let idx = self.create_welcome_tab(cx);
-        self.active_tab_index = idx;
-        cx.notify();
-    }
-
     fn active_tab(&self) -> Option<&DocumentTab> {
         self.tabs.get(self.active_tab_index)
     }
@@ -320,6 +279,8 @@ impl PdfEditor {
             page_count: viewport.page_count(),
             current_page: viewport.current_page(),
             zoom_level: viewport.zoom_level,
+            zoom_mode: viewport.zoom_mode(),
+            view_mode: viewport.view_mode(),
         }
     }
 
@@ -332,28 +293,27 @@ impl PdfEditor {
         self.zoom_input_text = format!("{}%", zoom);
     }
 
+    fn sync_page_input_from_active(&mut self, cx: &App) {
+        if self.page_input_editing {
+            return;
+        }
+
+        let info = self.active_viewport_info(cx);
+        self.page_input_text =
+            if info.page_count > 0 { (info.current_page + 1).to_string() } else { "0".to_string() };
+    }
+
     pub fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         // Check if file is already open in a tab
         if let Some(idx) = self.tabs.iter().position(|t| t.path.as_ref() == Some(&path)) {
             self.active_tab_index = idx;
+            self.reveal_active_tab();
             cx.notify();
             return;
         }
 
-        // If current tab is a welcome tab, reuse it instead of creating a new one
-        let tab_index = if self.active_tab().map(|t| t.is_welcome()).unwrap_or(false) {
-            let tab = &mut self.tabs[self.active_tab_index];
-            tab.path = Some(path.clone());
-            tab.title = path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Untitled".to_string());
-            self.active_tab_index
-        } else {
-            let idx = self.create_tab(Some(path.clone()), cx);
-            self.active_tab_index = idx;
-            idx
-        };
+        let tab_index = self.create_tab(Some(path.clone()), cx);
+        self.active_tab_index = tab_index;
 
         let tab = &self.tabs[tab_index];
         tab.viewport.update(cx, |viewport, cx| {
@@ -367,9 +327,28 @@ impl PdfEditor {
             sidebar.set_document(doc, cx);
         });
 
+        if let Ok(mode) = std::env::var("BUTTERPAPER_VISUAL_FIT_MODE") {
+            let mode = mode.to_ascii_lowercase();
+            if mode == "page" || mode == "fit-page" {
+                tab.viewport.update(cx, |viewport, cx| {
+                    viewport.fit_page(cx);
+                });
+            } else if mode == "width" || mode == "fit-width" {
+                tab.viewport.update(cx, |viewport, cx| {
+                    viewport.fit_width(cx);
+                });
+            }
+        }
+
         self.zoom_input_editing = false;
+        self.zoom_input_select_all = false;
         self.zoom_preset_open = false;
         self.sync_zoom_input_from_active(cx);
+        self.page_input_editing = false;
+        self.page_input_select_all = false;
+        self.sync_page_input_from_active(cx);
+        self.mark_tab_bar_layout_dirty();
+        self.reveal_active_tab();
         cx.notify();
     }
 
@@ -383,43 +362,116 @@ impl PdfEditor {
         }
     }
 
-    fn handle_tab_scroll(&mut self, delta: ScrollDelta, cx: &mut Context<Self>) {
-        let scroll_amount: f32 = match delta {
-            ScrollDelta::Lines(lines) => {
-                let horizontal = lines.x * 30.0;
-                let vertical_as_horizontal = lines.y * 30.0;
-                if horizontal.abs() > vertical_as_horizontal.abs() {
-                    horizontal
-                } else {
-                    vertical_as_horizontal
-                }
-            }
-            ScrollDelta::Pixels(pixels) => {
-                let px_x: f32 = pixels.x.into();
-                let px_y: f32 = pixels.y.into();
-                if px_x.abs() > px_y.abs() {
-                    px_x
-                } else {
-                    px_y
-                }
-            }
+    fn mark_tab_bar_layout_dirty(&mut self) {
+        self.tab_bar_needs_measure = true;
+    }
+
+    fn update_tab_bar_overflow_state(&mut self) -> bool {
+        let overflowing = tab_bar_is_overflowing(self.tab_bar_overflow_width());
+        let changed = overflowing != self.tab_bar_overflowing;
+        self.tab_bar_overflowing = overflowing;
+        changed
+    }
+
+    fn estimated_tab_content_width(&self) -> f32 {
+        let tab_padding = ui::sizes::SPACE_2.0 * 2.0;
+        let tab_gap = ui::sizes::SPACE_1.0;
+        let close_button = ui::sizes::TAB_CLOSE_SIZE.0;
+        let dirty_icon_budget = 12.0;
+        let inline_new_tab_budget = 40.0;
+
+        let mut width = 0.0;
+        for tab in &self.tabs {
+            let title_width = tab.title.chars().count() as f32 * 7.0;
+            let estimated = title_width + tab_padding + tab_gap + close_button + dirty_icon_budget;
+            width += ui::sizes::TAB_MIN_WIDTH.0.max(estimated);
+        }
+
+        if !self.tab_bar_overflowing {
+            width += inline_new_tab_budget;
+        }
+
+        width
+    }
+
+    fn tab_bar_overflow_width(&self) -> f32 {
+        let measured = self.tab_bar_overflow_width_from_layout();
+        if measured > 0.0 {
+            return measured;
+        }
+        (self.estimated_tab_content_width() - self.tab_bar_last_row_width).max(0.0)
+    }
+
+    fn tab_bar_overflow_width_from_layout(&self) -> f32 {
+        if self.tabs.is_empty() {
+            return 0.0;
+        }
+
+        let Some(first) = self.tab_scroll_handle.bounds_for_item(0) else {
+            return 0.0;
+        };
+        let Some(last) = self.tab_scroll_handle.bounds_for_item(self.tabs.len().saturating_sub(1))
+        else {
+            return 0.0;
         };
 
-        self.tab_scroll_offset = (self.tab_scroll_offset - scroll_amount).max(0.0);
-        cx.notify();
+        let content_width = (last.right() - first.left()).0;
+        let viewport_width = self.tab_scroll_handle.bounds().size.width.0;
+        (content_width - viewport_width).max(0.0)
+    }
+
+    fn schedule_tab_bar_measure(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tab_bar_needs_measure {
+            return;
+        }
+
+        self.tab_bar_needs_measure = false;
+        if self.update_tab_bar_overflow_state() {
+            cx.notify();
+        }
+
+        if self.tab_bar_measure_scheduled {
+            return;
+        }
+        self.tab_bar_measure_scheduled = true;
+        cx.on_next_frame(window, |this, _window, cx| {
+            this.tab_bar_measure_scheduled = false;
+            if this.update_tab_bar_overflow_state() {
+                cx.notify();
+            }
+        });
+    }
+
+    fn reveal_active_tab(&mut self) {
+        if self.tabs.is_empty() {
+            return;
+        }
+        self.tab_scroll_handle.scroll_to_item(self.active_tab_index);
+    }
+
+    fn sync_tab_row_width_and_mark_dirty(&mut self, width: f32) {
+        if (self.tab_bar_last_row_width - width).abs() > 0.5 {
+            self.tab_bar_last_row_width = width;
+            self.mark_tab_bar_layout_dirty();
+        }
     }
 
     fn select_tab(&mut self, tab_id: UiTabId, cx: &mut Context<Self>) {
         if let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) {
             self.active_tab_index = idx;
             self.zoom_input_editing = false;
+            self.zoom_input_select_all = false;
             self.zoom_preset_open = false;
             self.sync_zoom_input_from_active(cx);
+            self.page_input_editing = false;
+            self.page_input_select_all = false;
+            self.sync_page_input_from_active(cx);
+            self.reveal_active_tab();
             cx.notify();
         }
     }
 
-    fn close_tab(&mut self, tab_id: UiTabId, _window: &mut Window, cx: &mut Context<Self>) {
+    fn close_tab(&mut self, tab_id: UiTabId, cx: &mut Context<Self>) {
         if let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) {
             self.tabs.remove(idx);
 
@@ -432,8 +484,14 @@ impl PdfEditor {
             }
 
             self.zoom_input_editing = false;
+            self.zoom_input_select_all = false;
             self.zoom_preset_open = false;
             self.sync_zoom_input_from_active(cx);
+            self.page_input_editing = false;
+            self.page_input_select_all = false;
+            self.sync_page_input_from_active(cx);
+            self.mark_tab_bar_layout_dirty();
+            self.reveal_active_tab();
             cx.notify();
         }
     }
@@ -442,6 +500,8 @@ impl PdfEditor {
         if !self.tabs.is_empty() {
             self.active_tab_index = (self.active_tab_index + 1) % self.tabs.len();
             self.sync_zoom_input_from_active(cx);
+            self.sync_page_input_from_active(cx);
+            self.reveal_active_tab();
             cx.notify();
         }
     }
@@ -454,17 +514,29 @@ impl PdfEditor {
                 self.active_tab_index -= 1;
             }
             self.sync_zoom_input_from_active(cx);
+            self.sync_page_input_from_active(cx);
+            self.reveal_active_tab();
             cx.notify();
         }
     }
 
     fn show_tab_bar(&self) -> bool {
+        if self.tabs.is_empty() {
+            return true;
+        }
+
+        if self.active_tab().map(|tab| tab.is_welcome()).unwrap_or(false) {
+            return true;
+        }
+
         self.preferences.show_tab_bar || self.tabs.len() > 1
     }
 
     fn close_transient_ui(&mut self) {
         self.open_menu = None;
         self.zoom_preset_open = false;
+        self.page_input_editing = false;
+        self.page_input_select_all = false;
     }
 
     fn toggle_menu(&mut self, kind: MenuKind, cx: &mut Context<Self>) {
@@ -480,6 +552,7 @@ impl PdfEditor {
     fn apply_zoom_input(&mut self, cx: &mut Context<Self>) {
         let Some(value) = parse_zoom_input_percent(&self.zoom_input_text) else {
             self.zoom_input_editing = false;
+            self.zoom_input_select_all = false;
             self.sync_zoom_input_from_active(cx);
             cx.notify();
             return;
@@ -493,14 +566,66 @@ impl PdfEditor {
         }
 
         self.zoom_input_editing = false;
+        self.zoom_input_select_all = false;
         self.zoom_input_text = format!("{}%", value);
         cx.notify();
     }
 
     fn cancel_zoom_input_edit(&mut self, cx: &mut Context<Self>) {
         self.zoom_input_editing = false;
+        self.zoom_input_select_all = false;
         self.sync_zoom_input_from_active(cx);
         cx.notify();
+    }
+
+    fn apply_page_input(&mut self, cx: &mut Context<Self>) {
+        let page_count = self.active_viewport_info(cx).page_count;
+        let Some(page_index) = parse_page_input_index(&self.page_input_text, page_count) else {
+            self.page_input_editing = false;
+            self.page_input_select_all = false;
+            self.sync_page_input_from_active(cx);
+            cx.notify();
+            return;
+        };
+
+        if let Some(tab) = self.active_tab() {
+            let viewport = tab.viewport.clone();
+            viewport.update(cx, |viewport, cx| {
+                viewport.go_to_page(page_index, cx);
+            });
+        }
+
+        self.page_input_editing = false;
+        self.page_input_select_all = false;
+        self.sync_page_input_from_active(cx);
+        cx.notify();
+    }
+
+    fn cancel_page_input_edit(&mut self, cx: &mut Context<Self>) {
+        self.page_input_editing = false;
+        self.page_input_select_all = false;
+        self.sync_page_input_from_active(cx);
+        cx.notify();
+    }
+
+    fn open_page_input_for_edit(&mut self) {
+        self.page_input_editing = true;
+        self.page_input_select_all = true;
+        self.open_menu = None;
+        self.zoom_preset_open = false;
+    }
+
+    fn open_zoom_combo_for_edit(&mut self) {
+        self.zoom_input_editing = true;
+        self.zoom_input_select_all = true;
+        self.open_menu = None;
+        self.zoom_preset_open = true;
+    }
+
+    fn finalize_zoom_preset_selection(&mut self, cx: &mut Context<Self>) {
+        self.zoom_preset_open = false;
+        self.zoom_input_select_all = false;
+        self.sync_zoom_input_from_active(cx);
     }
 
     fn handle_zoom_input_key(
@@ -526,7 +651,12 @@ impl PdfEditor {
             }
             "backspace" => {
                 self.zoom_input_editing = true;
-                self.zoom_input_text.pop();
+                if self.zoom_input_select_all {
+                    self.zoom_input_text.clear();
+                    self.zoom_input_select_all = false;
+                } else {
+                    self.zoom_input_text.pop();
+                }
                 cx.notify();
                 cx.stop_propagation();
                 return;
@@ -541,7 +671,10 @@ impl PdfEditor {
 
             if ch.is_ascii_digit() {
                 self.zoom_input_editing = true;
-                if self.zoom_input_text.ends_with('%') {
+                if self.zoom_input_select_all {
+                    self.zoom_input_text.clear();
+                    self.zoom_input_select_all = false;
+                } else if self.zoom_input_text.ends_with('%') {
                     self.zoom_input_text.pop();
                 }
                 if self.zoom_input_text.len() < 4 {
@@ -551,8 +684,67 @@ impl PdfEditor {
                 cx.stop_propagation();
             } else if ch == '%' {
                 self.zoom_input_editing = true;
+                if self.zoom_input_select_all {
+                    self.zoom_input_text.clear();
+                    self.zoom_input_select_all = false;
+                }
                 if !self.zoom_input_text.ends_with('%') {
                     self.zoom_input_text.push('%');
+                }
+                cx.notify();
+                cx.stop_propagation();
+            }
+        }
+    }
+
+    fn handle_page_input_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = event.keystroke.key.as_str();
+
+        match key {
+            "enter" => {
+                self.apply_page_input(cx);
+                window.focus(&self.focus_handle);
+                cx.stop_propagation();
+                return;
+            }
+            "escape" => {
+                self.cancel_page_input_edit(cx);
+                window.focus(&self.focus_handle);
+                cx.stop_propagation();
+                return;
+            }
+            "backspace" => {
+                self.page_input_editing = true;
+                if self.page_input_select_all {
+                    self.page_input_text.clear();
+                    self.page_input_select_all = false;
+                } else {
+                    self.page_input_text.pop();
+                }
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+            _ => {}
+        }
+
+        if let Some(input) = event.keystroke.key_char.as_ref() {
+            let Some(ch) = input.chars().next() else {
+                return;
+            };
+            if ch.is_ascii_digit() {
+                self.page_input_editing = true;
+                if self.page_input_select_all {
+                    self.page_input_text.clear();
+                    self.page_input_select_all = false;
+                }
+                if self.page_input_text.len() < 5 {
+                    self.page_input_text.push(ch);
                 }
                 cx.notify();
                 cx.stop_propagation();
@@ -567,23 +759,10 @@ impl PdfEditor {
         cx: &mut Context<Self>,
     ) {
         match command {
+            MenuCommand::About => println!("ButterPaper - GPUI Edition"),
+            MenuCommand::OpenSettings => settings::open_settings_window(cx),
+            MenuCommand::Quit => cx.quit(),
             MenuCommand::Open => self.handle_open(&Open, window, cx),
-            MenuCommand::NewTab => self.new_tab(cx),
-            MenuCommand::CloseTab => self.handle_close_tab(&CloseTab, window, cx),
-            MenuCommand::ZoomIn => self.handle_zoom_in(&ZoomIn, window, cx),
-            MenuCommand::ZoomOut => self.handle_zoom_out(&ZoomOut, window, cx),
-            MenuCommand::ResetZoom => self.handle_reset_zoom(&ResetZoom, window, cx),
-            MenuCommand::FitWidth => self.handle_fit_width(&FitWidth, window, cx),
-            MenuCommand::FitPage => self.handle_fit_page(&FitPage, window, cx),
-            MenuCommand::FirstPage => self.handle_first_page(&FirstPage, window, cx),
-            MenuCommand::PrevPage => self.handle_prev_page(&PrevPage, window, cx),
-            MenuCommand::NextPage => self.handle_next_page(&NextPage, window, cx),
-            MenuCommand::LastPage => self.handle_last_page(&LastPage, window, cx),
-            MenuCommand::NextTab => self.handle_next_tab(&NextTab, window, cx),
-            MenuCommand::PrevTab => self.handle_prev_tab(&PrevTab, window, cx),
-            MenuCommand::About => {
-                println!("ButterPaper - GPUI Edition");
-            }
         }
     }
 
@@ -718,10 +897,321 @@ impl PdfEditor {
     }
 
     fn handle_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = window;
         if let Some(tab) = self.active_tab() {
             let tab_id = tab.id;
-            self.close_tab(tab_id, window, cx);
+            self.close_tab(tab_id, cx);
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_canvas_toolbar(
+        &self,
+        can_first_prev: bool,
+        can_next_last: bool,
+        can_zoom: bool,
+        fit_page_selected: bool,
+        fit_width_selected: bool,
+        page_view_mode: ViewMode,
+        page_control: gpui::AnyElement,
+        zoom_combo: gpui::AnyElement,
+        theme: &Theme,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("pdf-canvas-toolbar")
+            .h(ui::sizes::CANVAS_TOOLBAR_HEIGHT)
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(ui::sizes::TOOLBAR_ZONE_GAP)
+            .px(ui::sizes::TOOLBAR_INSET_X)
+            .bg(theme.surface)
+            .border_b_1()
+            .border_color(ui::color::subtle_border(theme.border))
+            .child(
+                div()
+                    .id("toolbar-left-zone")
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .justify_start()
+                    .child(
+                        div()
+                            .id("toolbar-left-cluster")
+                            .h(ui::sizes::TOOLBAR_CONTROL_SIZE)
+                            .flex()
+                            .items_center()
+                            .gap(ui::sizes::TOOLBAR_CLUSTER_INNER_GAP)
+                            .child(chrome_icon_button(
+                                "toolbar-zoom-out",
+                                Icon::ZoomOut,
+                                "Zoom out",
+                                can_zoom,
+                                false,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.zoom_out(cx);
+                                                    });
+                                                    editor.sync_zoom_input_from_active(cx);
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            ))
+                            .child(zoom_combo)
+                            .child(chrome_icon_button(
+                                "toolbar-zoom-in",
+                                Icon::ZoomIn,
+                                "Zoom in",
+                                can_zoom,
+                                false,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.zoom_in(cx);
+                                                    });
+                                                    editor.sync_zoom_input_from_active(cx);
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .id("toolbar-separator-zoom-fit")
+                                    .px(ui::sizes::SPACE_1)
+                                    .text_ui_body()
+                                    .text_color(theme.text_muted)
+                                    .child("|"),
+                            )
+                            .child(chrome_icon_button(
+                                "toolbar-fit-page",
+                                Icon::FitPage,
+                                "Fit page",
+                                can_zoom,
+                                fit_page_selected,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.fit_page(cx);
+                                                    });
+                                                    editor.sync_zoom_input_from_active(cx);
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            ))
+                            .child(chrome_icon_button(
+                                "toolbar-fit-width",
+                                Icon::FitWidth,
+                                "Fit width",
+                                can_zoom,
+                                fit_width_selected,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.fit_width(cx);
+                                                    });
+                                                    editor.sync_zoom_input_from_active(cx);
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .id("toolbar-separator-fit-view")
+                                    .px(ui::sizes::SPACE_1)
+                                    .text_ui_body()
+                                    .text_color(theme.text_muted)
+                                    .child("|"),
+                            )
+                            .child(chrome_icon_button(
+                                "toolbar-view-single-page",
+                                Icon::ViewSinglePage,
+                                "Single page view",
+                                can_zoom,
+                                page_view_mode == ViewMode::SinglePage,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.set_view_mode(
+                                                            ViewMode::SinglePage,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            ))
+                            .child(chrome_icon_button(
+                                "toolbar-view-continuous",
+                                Icon::ViewContinuous,
+                                "Continuous view",
+                                can_zoom,
+                                page_view_mode == ViewMode::Continuous,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.set_view_mode(
+                                                            ViewMode::Continuous,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .id("toolbar-right-zone")
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .justify_end()
+                    .child(
+                        div()
+                            .id("toolbar-right-cluster")
+                            .h(ui::sizes::TOOLBAR_CONTROL_SIZE)
+                            .flex()
+                            .items_center()
+                            .gap(ui::sizes::TOOLBAR_CLUSTER_INNER_GAP)
+                            .child(chrome_icon_button(
+                                "toolbar-first-page",
+                                Icon::PageFirst,
+                                "First page",
+                                can_first_prev,
+                                false,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.first_page(cx);
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            ))
+                            .child(chrome_icon_button(
+                                "toolbar-prev-page",
+                                Icon::ChevronLeft,
+                                "Previous page",
+                                can_first_prev,
+                                false,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.prev_page(cx);
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            ))
+                            .child(page_control)
+                            .child(chrome_icon_button(
+                                "toolbar-next-page",
+                                Icon::ChevronRight,
+                                "Next page",
+                                can_next_last,
+                                false,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.next_page(cx);
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            ))
+                            .child(chrome_icon_button(
+                                "toolbar-last-page",
+                                Icon::PageLast,
+                                "Last page",
+                                can_next_last,
+                                false,
+                                theme,
+                                {
+                                    let entity = cx.entity().downgrade();
+                                    move |_, _, cx| {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                if let Some(tab) = editor.active_tab() {
+                                                    tab.viewport.update(cx, |viewport, cx| {
+                                                        viewport.last_page(cx);
+                                                    });
+                                                }
+                                            });
+                                        }
+                                    }
+                                },
+                            )),
+                    ),
+            )
     }
 
     fn render_tab_items(
@@ -744,7 +1234,7 @@ impl PdfEditor {
                 let entity_for_close = entity.clone();
 
                 tab_item(
-                    TabItemData::new(tab_id, title, is_active, is_dirty),
+                    TabItemData::new(tab_id, title, is_active, is_dirty, !doc_tab.is_welcome()),
                     theme,
                     move |_, _, cx| {
                         if let Some(editor) = entity_for_select.upgrade() {
@@ -756,7 +1246,8 @@ impl PdfEditor {
                     move |_, window, cx| {
                         if let Some(editor) = entity_for_close.upgrade() {
                             editor.update(cx, |editor, cx| {
-                                editor.close_tab(tab_id, window, cx);
+                                let _ = window;
+                                editor.close_tab(tab_id, cx);
                             });
                         }
                     },
@@ -783,9 +1274,14 @@ impl PdfEditor {
             .h_full()
             .px(ui::sizes::SPACE_2)
             .flex()
+            .justify_center()
             .items_center()
-            .text_sm()
+            .text_ui_body()
             .text_color(if is_open { theme.text } else { theme.text_muted })
+            .when(is_open, {
+                let hover = theme.element_hover;
+                move |d| d.bg(hover)
+            })
             .cursor_pointer()
             .rounded_sm()
             .hover({
@@ -799,6 +1295,13 @@ impl PdfEditor {
                     });
                 }
             })
+            .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _window, cx| {
+                let next = hover_open_menu(this.open_menu, kind);
+                if this.open_menu != next {
+                    this.open_menu = next;
+                    cx.notify();
+                }
+            }))
             .child(label);
 
         let menu = context_menu(format!("{id}-menu"), items, theme, move |value, window, cx| {
@@ -812,23 +1315,19 @@ impl PdfEditor {
             }
         });
 
-        div()
-            .on_mouse_down_out(cx.listener(move |this, _event, _window, cx| {
-                if this.open_menu == Some(kind) {
-                    this.open_menu = None;
-                    cx.notify();
-                }
-            }))
-            .child(popover_menu(trigger, menu, is_open))
+        div().child(popover_menu(trigger, menu, is_open, px(-7.0)))
     }
 }
 
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
+    use gpui::{point, px, size, AppContext as _, ScrollDelta, ScrollWheelEvent, TestAppContext};
+
     use super::{
-        compute_canvas_metrics, map_menu_command, next_active_tab_index_after_close,
-        parse_zoom_input_percent, MenuCommand,
+        compute_canvas_metrics, hover_open_menu, map_menu_command,
+        next_active_tab_index_after_close, parse_page_input_index, parse_zoom_input_percent,
+        tab_bar_is_overflowing, MenuCommand, MenuKind, TAB_BAR_OVERFLOW_EPSILON,
     };
 
     #[test]
@@ -874,19 +1373,209 @@ mod tests {
     }
 
     #[test]
+    fn parse_page_input_converts_to_zero_based_index() {
+        assert_eq!(parse_page_input_index("1", 10), Some(0));
+        assert_eq!(parse_page_input_index("4", 10), Some(3));
+        assert_eq!(parse_page_input_index(" 9 ", 10), Some(8));
+    }
+
+    #[test]
+    fn parse_page_input_clamps_and_rejects_invalid() {
+        assert_eq!(parse_page_input_index("0", 10), Some(0));
+        assert_eq!(parse_page_input_index("99", 10), Some(9));
+        assert_eq!(parse_page_input_index("", 10), None);
+        assert_eq!(parse_page_input_index("abc", 10), None);
+        assert_eq!(parse_page_input_index("1", 0), None);
+    }
+
+    #[test]
     fn canvas_metrics_account_for_sidebar() {
-        let (w_open, h_open) = compute_canvas_metrics(1200.0, 900.0, true);
-        let (w_closed, h_closed) = compute_canvas_metrics(1200.0, 900.0, false);
+        let (w_open, h_open) = compute_canvas_metrics(1200.0, 900.0, true, true);
+        let (w_closed, h_closed) = compute_canvas_metrics(1200.0, 900.0, false, true);
 
         assert!(w_closed > w_open);
         assert_eq!(h_open, h_closed);
     }
 
     #[test]
+    fn canvas_metrics_account_for_menu_visibility() {
+        let (_w_with_menu, h_with_menu) = compute_canvas_metrics(1200.0, 900.0, false, true);
+        let (_w_without_menu, h_without_menu) = compute_canvas_metrics(1200.0, 900.0, false, false);
+
+        assert!(h_without_menu > h_with_menu);
+    }
+
+    #[test]
     fn menu_command_mapping_is_stable() {
+        assert_eq!(map_menu_command("app.about"), Some(MenuCommand::About));
+        assert_eq!(map_menu_command("app.settings"), Some(MenuCommand::OpenSettings));
+        assert_eq!(map_menu_command("app.quit"), Some(MenuCommand::Quit));
         assert_eq!(map_menu_command("file.open"), Some(MenuCommand::Open));
-        assert_eq!(map_menu_command("view.fit_page"), Some(MenuCommand::FitPage));
+        assert_eq!(map_menu_command("view.fit_page"), None);
         assert_eq!(map_menu_command("unknown"), None);
+    }
+
+    #[test]
+    fn hover_switches_menu_only_when_one_is_open() {
+        assert_eq!(hover_open_menu(None, MenuKind::File), None);
+        assert_eq!(
+            hover_open_menu(Some(MenuKind::File), MenuKind::ButterPaper),
+            Some(MenuKind::ButterPaper)
+        );
+    }
+
+    #[test]
+    fn tab_bar_overflow_threshold_is_stable() {
+        assert!(!tab_bar_is_overflowing(TAB_BAR_OVERFLOW_EPSILON));
+        assert!(tab_bar_is_overflowing(TAB_BAR_OVERFLOW_EPSILON + 0.01));
+    }
+
+    #[test]
+    fn tab_bar_overflow_state_transitions_follow_max_offset() {
+        let mut overflowing = false;
+
+        let next = tab_bar_is_overflowing(14.0);
+        assert_ne!(overflowing, next);
+        overflowing = next;
+        assert!(overflowing);
+
+        let next = tab_bar_is_overflowing(0.0);
+        assert_ne!(overflowing, next);
+        overflowing = next;
+        assert!(!overflowing);
+    }
+
+    #[gpui::test]
+    fn zoom_combo_open_sets_edit_and_select_all_state(cx: &mut TestAppContext) {
+        let (editor, cx) = cx.add_window_view(|_, cx| super::PdfEditor::new(cx));
+
+        cx.update(|_, app| {
+            editor.update(app, |editor, _cx| {
+                editor.zoom_input_editing = false;
+                editor.zoom_input_select_all = false;
+                editor.zoom_preset_open = false;
+                editor.open_zoom_combo_for_edit();
+            });
+        });
+
+        let (editing, select_all, preset_open) = cx.read_entity(&editor, |editor, _| {
+            (editor.zoom_input_editing, editor.zoom_input_select_all, editor.zoom_preset_open)
+        });
+        assert!(editing);
+        assert!(select_all);
+        assert!(preset_open);
+    }
+
+    #[gpui::test]
+    fn finalizing_zoom_preset_clears_selection_state(cx: &mut TestAppContext) {
+        let (editor, cx) = cx.add_window_view(|_, cx| super::PdfEditor::new(cx));
+
+        cx.update(|_, app| {
+            editor.update(app, |editor, cx| {
+                editor.zoom_input_editing = true;
+                editor.zoom_input_select_all = true;
+                editor.zoom_preset_open = true;
+                editor.finalize_zoom_preset_selection(cx);
+            });
+        });
+
+        let (select_all, preset_open) = cx.read_entity(&editor, |editor, _| {
+            (editor.zoom_input_select_all, editor.zoom_preset_open)
+        });
+        assert!(!select_all);
+        assert!(!preset_open);
+    }
+
+    fn seed_long_tabs(
+        editor: &mut super::PdfEditor,
+        cx: &mut gpui::Context<super::PdfEditor>,
+        n: usize,
+    ) {
+        for index in 0..n {
+            let tab_index = editor.create_tab(None, cx);
+            editor.tabs[tab_index].title = format!(
+                "Very long document title {} - this should never truncate in the tab bar",
+                index
+            );
+            editor.active_tab_index = tab_index;
+        }
+        editor.mark_tab_bar_layout_dirty();
+        editor.reveal_active_tab();
+        cx.notify();
+    }
+
+    #[gpui::test]
+    fn tab_bar_overflow_mode_switches_with_tab_count(cx: &mut TestAppContext) {
+        let (editor, cx) = cx.add_window_view(|_, cx| super::PdfEditor::new(cx));
+        cx.simulate_resize(size(px(520.0), px(700.0)));
+
+        cx.update(|_, app| {
+            editor.update(app, |editor, cx| {
+                let tab_index = editor.create_tab(None, cx);
+                editor.tabs[tab_index].title = "Short".to_string();
+                editor.active_tab_index = tab_index;
+                editor.mark_tab_bar_layout_dirty();
+                editor.reveal_active_tab();
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+
+        let not_overflowing = cx.read_entity(&editor, |editor, _| !editor.tab_bar_overflowing);
+        assert!(not_overflowing);
+
+        cx.update(|_, app| {
+            editor.update(app, |editor, cx| seed_long_tabs(editor, cx, 18));
+        });
+        cx.run_until_parked();
+
+        let overflowing = cx.read_entity(&editor, |editor, _| editor.tab_bar_overflowing);
+        assert!(overflowing);
+    }
+
+    #[gpui::test]
+    fn vertical_wheel_scrolls_horizontally_in_tab_bar(cx: &mut TestAppContext) {
+        let (editor, cx) = cx.add_window_view(|_, cx| super::PdfEditor::new(cx));
+        cx.simulate_resize(size(px(520.0), px(700.0)));
+
+        cx.update(|_, app| {
+            editor.update(app, |editor, cx| seed_long_tabs(editor, cx, 24));
+        });
+        cx.run_until_parked();
+
+        let before = cx.read_entity(&editor, |editor, _| editor.tab_scroll_handle.offset().x.0);
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(120.0), px(72.0)),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-160.0))),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        let after = cx.read_entity(&editor, |editor, _| editor.tab_scroll_handle.offset().x.0);
+
+        assert_ne!(before, after);
+    }
+
+    #[gpui::test]
+    fn activating_far_tab_auto_reveals_it(cx: &mut TestAppContext) {
+        let (editor, cx) = cx.add_window_view(|_, cx| super::PdfEditor::new(cx));
+        cx.simulate_resize(size(px(520.0), px(700.0)));
+
+        cx.update(|_, app| {
+            editor.update(app, |editor, cx| seed_long_tabs(editor, cx, 20));
+        });
+        cx.run_until_parked();
+
+        cx.update(|_, app| {
+            editor.update(app, |editor, cx| {
+                editor.tab_scroll_handle.set_offset(point(px(0.0), px(0.0)));
+                let last_tab_id = editor.tabs.last().expect("seeded tabs").id;
+                editor.select_tab(last_tab_id, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let offset = cx.read_entity(&editor, |editor, _| editor.tab_scroll_handle.offset().x.0);
+        assert!(offset < 0.0);
     }
 }
 
@@ -900,11 +1589,22 @@ impl Render for PdfEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = current_theme(window, cx);
         let show_tab_bar = self.show_tab_bar();
+        let show_in_window_menu = true;
+        let active_is_welcome = self.active_tab().map(|tab| tab.is_welcome()).unwrap_or(false);
 
         let viewport_size = window.viewport_size();
-        let show_sidebar = self.thumbnail_sidebar_visible && self.active_tab().is_some();
-        let (canvas_width, canvas_height) =
-            compute_canvas_metrics(viewport_size.width.0, viewport_size.height.0, show_sidebar);
+        self.sync_tab_row_width_and_mark_dirty(viewport_size.width.0);
+        let show_sidebar =
+            self.thumbnail_sidebar_visible && self.active_tab().is_some() && !active_is_welcome;
+        let (canvas_width, canvas_height) = compute_canvas_metrics(
+            viewport_size.width.0,
+            viewport_size.height.0,
+            show_sidebar,
+            show_in_window_menu,
+        );
+        if show_tab_bar {
+            self.schedule_tab_bar_measure(window, cx);
+        }
 
         if let Some(tab) = self.active_tab() {
             let viewport = tab.viewport.clone();
@@ -917,11 +1617,17 @@ impl Render for PdfEditor {
         if !self.zoom_input_editing {
             self.zoom_input_text = format!("{}%", viewport_info.zoom_level);
         }
-
-        let page_label = if viewport_info.page_count > 0 {
-            format!("{} / {}", viewport_info.current_page + 1, viewport_info.page_count)
+        if !self.page_input_editing {
+            self.page_input_text = if viewport_info.page_count > 0 {
+                (viewport_info.current_page + 1).to_string()
+            } else {
+                "0".to_string()
+            };
+        }
+        let total_page_label = if viewport_info.page_count > 0 {
+            viewport_info.page_count.to_string()
         } else {
-            "0 / 0".to_string()
+            "0".to_string()
         };
 
         let can_navigate = viewport_info.has_document && viewport_info.page_count > 0;
@@ -932,57 +1638,20 @@ impl Render for PdfEditor {
         let can_first_prev = can_navigate && !is_first;
         let can_next_last = can_navigate && !is_last;
         let can_zoom = viewport_info.has_document;
+        let fit_page_selected = can_zoom && viewport_info.zoom_mode == ZoomMode::FitPage;
+        let fit_width_selected = can_zoom && viewport_info.zoom_mode == ZoomMode::FitWidth;
+        let page_view_mode = viewport_info.view_mode;
 
-        let toolbar_separator = Rgba {
-            r: theme.border.r,
-            g: theme.border.g,
-            b: theme.border.b,
-            a: theme.border.a * 0.2,
-        };
-        let toolbar_chrome_border = Rgba {
-            r: theme.border.r,
-            g: theme.border.g,
-            b: theme.border.b,
-            a: theme.border.a * 0.38,
-        };
-        let zoom_combo_border = Rgba {
-            r: theme.border.r,
-            g: theme.border.g,
-            b: theme.border.b,
-            a: theme.border.a * 0.3,
-        };
-        let zoom_combo_hover = Rgba {
-            r: theme.element_hover.r,
-            g: theme.element_hover.g,
-            b: theme.element_hover.b,
-            a: theme.element_hover.a * 0.8,
-        };
+        let toolbar_chrome_border = ui::color::subtle_border(theme.border);
+        let tab_row_bg = theme.surface;
+        let tab_row_border = ui::color::subtle_border(theme.border);
 
-        let file_items = vec![
-            ContextMenuItem::new("file.open", "Open…"),
-            ContextMenuItem::new("file.new_tab", "New Tab"),
-            ContextMenuItem::new("file.close_tab", "Close Tab")
-                .disabled(self.active_tab().is_none()),
+        let app_items = vec![
+            ContextMenuItem::new("app.about", "About ButterPaper"),
+            ContextMenuItem::new("app.settings", "Settings...").shortcut("⌘,"),
+            ContextMenuItem::new("app.quit", "Quit ButterPaper").shortcut("⌘Q"),
         ];
-        let view_items = vec![
-            ContextMenuItem::new("view.zoom_in", "Zoom In").disabled(!viewport_info.has_document),
-            ContextMenuItem::new("view.zoom_out", "Zoom Out").disabled(!viewport_info.has_document),
-            ContextMenuItem::new("view.reset_zoom", "100%").disabled(!viewport_info.has_document),
-            ContextMenuItem::new("view.fit_width", "Fit Width")
-                .disabled(!viewport_info.has_document),
-            ContextMenuItem::new("view.fit_page", "Fit Page").disabled(!viewport_info.has_document),
-        ];
-        let go_items = vec![
-            ContextMenuItem::new("go.first", "First Page").disabled(!can_first_prev),
-            ContextMenuItem::new("go.prev", "Previous Page").disabled(!can_first_prev),
-            ContextMenuItem::new("go.next", "Next Page").disabled(!can_next_last),
-            ContextMenuItem::new("go.last", "Last Page").disabled(!can_next_last),
-        ];
-        let window_items = vec![
-            ContextMenuItem::new("window.next_tab", "Next Tab").disabled(self.tabs.len() < 2),
-            ContextMenuItem::new("window.prev_tab", "Previous Tab").disabled(self.tabs.len() < 2),
-        ];
-        let help_items = vec![ContextMenuItem::new("help.about", "About ButterPaper")];
+        let file_items = vec![ContextMenuItem::new("file.open", "Open…").shortcut("⌘O")];
 
         let entity_for_zoom_preset = cx.entity().downgrade();
         let zoom_presets = vec![50_u32, 75, 100, 125, 150, 200, 300, 400]
@@ -995,74 +1664,87 @@ impl Render for PdfEditor {
 
         let zoom_combo_trigger = {
             let entity_for_click = cx.entity().downgrade();
-            let zoom_focus = self.zoom_input_focus_handle.clone();
+            let zoom_focus_for_input = self.zoom_input_focus_handle.clone();
             let entity_for_toggle = cx.entity().downgrade();
+            let zoom_focus_for_toggle = self.zoom_input_focus_handle.clone();
+            let zoom_input_selected = self.zoom_input_editing && self.zoom_input_select_all;
 
-            div()
-                .id("zoom-combo")
-                .h(ui::sizes::CONTROL_HEIGHT_DEFAULT)
-                .min_w(ui::sizes::ZOOM_COMBO_MIN_WIDTH)
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .bg(theme.background)
-                .border_1()
-                .border_color(zoom_combo_border)
-                .rounded(px(6.0))
-                .when(can_zoom, |d| d.cursor_pointer().hover(move |s| s.bg(zoom_combo_hover)))
-                .child(
-                    div()
-                        .id("zoom-combo-input")
-                        .track_focus(&self.zoom_input_focus_handle)
-                        .h_full()
-                        .flex()
-                        .items_center()
-                        .px(ui::sizes::SPACE_2)
-                        .text_xs()
-                        .text_color(if can_zoom { theme.text } else { theme.text_muted })
-                        .child(self.zoom_input_text.clone())
-                        .on_click(move |_, window, cx| {
-                            if let Some(editor) = entity_for_click.upgrade() {
-                                editor.update(cx, |editor, cx| {
-                                    if !can_zoom {
-                                        return;
-                                    }
-                                    editor.zoom_input_editing = true;
-                                    editor.open_menu = None;
-                                    cx.notify();
-                                    window.focus(&zoom_focus);
-                                });
-                            }
-                        })
-                        .on_key_down(cx.listener(Self::handle_zoom_input_key)),
-                )
-                .child(
-                    div()
-                        .id("zoom-combo-toggle")
-                        .h_full()
-                        .px(ui::sizes::SPACE_1)
-                        .flex()
-                        .items_center()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .border_l_1()
-                        .border_color(zoom_combo_border)
-                        .child(icon(Icon::ChevronDown, 10.0, theme.text_muted))
-                        .when(can_zoom, move |d| d.hover(move |s| s.bg(zoom_combo_hover)))
-                        .on_click(move |_, _, cx| {
-                            if let Some(editor) = entity_for_toggle.upgrade() {
-                                editor.update(cx, |editor, cx| {
-                                    if !can_zoom {
-                                        return;
-                                    }
-                                    editor.open_menu = None;
-                                    editor.zoom_preset_open = !editor.zoom_preset_open;
-                                    cx.notify();
-                                });
-                            }
-                        }),
-                )
+            chrome_control_shell(
+                "zoom-combo",
+                can_zoom,
+                false,
+                Some(ui::sizes::ZOOM_COMBO_MIN_WIDTH),
+                &theme,
+                div()
+                    .h_full()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .id("zoom-combo-input")
+                            .track_focus(&self.zoom_input_focus_handle)
+                            .h_full()
+                            .flex()
+                            .flex_1()
+                            .justify_center()
+                            .items_center()
+                            .px(ui::sizes::SPACE_1)
+                            .text_ui_body()
+                            .text_center()
+                            .text_color(if can_zoom { theme.text } else { theme.text_muted })
+                            .child(
+                                div()
+                                    .id("zoom-combo-value")
+                                    .h(ui::sizes::CONTROL_HEIGHT_COMPACT)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .px(ui::sizes::SPACE_1)
+                                    .rounded(ui::sizes::RADIUS_SM)
+                                    .when(zoom_input_selected, |d| d.bg(theme.element_selected))
+                                    .child(self.zoom_input_text.clone()),
+                            )
+                            .on_click(move |_, window, cx| {
+                                if let Some(editor) = entity_for_click.upgrade() {
+                                    editor.update(cx, |editor, cx| {
+                                        if !can_zoom {
+                                            return;
+                                        }
+                                        editor.open_zoom_combo_for_edit();
+                                        cx.notify();
+                                        window.focus(&zoom_focus_for_input);
+                                    });
+                                }
+                            })
+                            .on_key_down(cx.listener(Self::handle_zoom_input_key)),
+                    )
+                    .child(
+                        div()
+                            .id("zoom-combo-toggle")
+                            .h_full()
+                            .px(ui::sizes::SPACE_1)
+                            .flex()
+                            .items_center()
+                            .text_ui_body()
+                            .text_color(theme.text_muted)
+                            .child(icon(Icon::ChevronDown, 12.0, theme.text_muted))
+                            .on_click(move |_, window, cx| {
+                                if let Some(editor) = entity_for_toggle.upgrade() {
+                                    editor.update(cx, |editor, cx| {
+                                        if !can_zoom {
+                                            return;
+                                        }
+                                        editor.open_zoom_combo_for_edit();
+                                        cx.notify();
+                                        window.focus(&zoom_focus_for_toggle);
+                                    });
+                                }
+                            }),
+                    ),
+            )
         };
 
         let zoom_combo_menu =
@@ -1079,8 +1761,7 @@ impl Render for PdfEditor {
                                 }
                             }
                         }
-                        editor.zoom_preset_open = false;
-                        editor.sync_zoom_input_from_active(cx);
+                        editor.finalize_zoom_preset_selection(cx);
                         cx.notify();
                     });
                 }
@@ -1094,18 +1775,100 @@ impl Render for PdfEditor {
                     changed = true;
                 }
                 if this.zoom_input_editing {
-                    this.zoom_input_editing = false;
-                    this.sync_zoom_input_from_active(cx);
-                    changed = true;
+                    this.apply_zoom_input(cx);
+                    changed = false;
                 }
                 if changed {
                     cx.notify();
                 }
             }))
-            .child(popover_menu(zoom_combo_trigger, zoom_combo_menu, self.zoom_preset_open));
+            .child(popover_menu(
+                zoom_combo_trigger,
+                zoom_combo_menu,
+                self.zoom_preset_open,
+                px(0.0),
+            ))
+            .into_any_element();
+
+        let page_input_selected = self.page_input_editing && self.page_input_select_all;
+        let page_control = div()
+            .id("toolbar-page-control")
+            .h(ui::sizes::TOOLBAR_CONTROL_SIZE)
+            .px(ui::sizes::PAGE_LABEL_HORIZONTAL_PADDING)
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(ui::sizes::SPACE_1)
+            .on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
+                if this.page_input_editing {
+                    this.apply_page_input(cx);
+                }
+            }))
+            .child({
+                let entity_for_page_click = cx.entity().downgrade();
+                let page_focus_for_input = self.page_input_focus_handle.clone();
+                chrome_control_shell(
+                    "toolbar-page-input-shell",
+                    can_navigate,
+                    false,
+                    Some(ui::sizes::PAGE_LABEL_MIN_WIDTH),
+                    &theme,
+                    div()
+                        .id("toolbar-page-input")
+                        .track_focus(&self.page_input_focus_handle)
+                        .h_full()
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .px(ui::sizes::SPACE_1)
+                        .text_ui_body()
+                        .text_center()
+                        .text_color(if can_navigate { theme.text } else { theme.text_muted })
+                        .child(
+                            div()
+                                .id("toolbar-page-input-value")
+                                .h(ui::sizes::CONTROL_HEIGHT_COMPACT)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px(ui::sizes::SPACE_1)
+                                .rounded(ui::sizes::RADIUS_SM)
+                                .when(page_input_selected, |d| d.bg(theme.element_selected))
+                                .child(self.page_input_text.clone()),
+                        )
+                        .on_click(move |_, window, cx| {
+                            if let Some(editor) = entity_for_page_click.upgrade() {
+                                editor.update(cx, |editor, cx| {
+                                    if !can_navigate {
+                                        return;
+                                    }
+                                    editor.open_page_input_for_edit();
+                                    cx.notify();
+                                    window.focus(&page_focus_for_input);
+                                });
+                            }
+                        })
+                        .on_key_down(cx.listener(Self::handle_page_input_key)),
+                )
+            })
+            .child(
+                div()
+                    .id("toolbar-page-separator")
+                    .text_ui_body()
+                    .text_color(theme.text_muted)
+                    .child("/"),
+            )
+            .child(
+                div()
+                    .id("toolbar-page-total")
+                    .text_ui_body()
+                    .text_color(if can_navigate { theme.text } else { theme.text_muted })
+                    .child(total_page_label),
+            )
+            .into_any_element();
 
         let active_viewport = self.active_tab().map(|t| t.viewport.clone());
-
         div()
             .id("butterpaper")
             .key_context("PdfEditor")
@@ -1129,6 +1892,12 @@ impl Render for PdfEditor {
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
+                    if this.page_input_editing {
+                        this.cancel_page_input_edit(cx);
+                        window.focus(&this.focus_handle);
+                        cx.stop_propagation();
+                        return;
+                    }
                     if this.zoom_input_editing {
                         this.cancel_zoom_input_edit(cx);
                         window.focus(&this.focus_handle);
@@ -1148,60 +1917,45 @@ impl Render for PdfEditor {
             .text_color(theme.text)
             .size_full()
             .child(ui::title_bar("ButterPaper", theme.text, theme.border))
-            .child(
-                div()
-                    .id("app-menu-row")
-                    .h(ui::sizes::MENU_ROW_HEIGHT)
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(ui::sizes::SPACE_1)
-                    .px(ui::sizes::SPACE_2)
-                    .bg(theme.surface)
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(self.render_menu_entry(
-                        "menu-file",
-                        "File",
-                        MenuKind::File,
-                        file_items,
-                        &theme,
-                        cx,
-                    ))
-                    .child(self.render_menu_entry(
-                        "menu-view",
-                        "View",
-                        MenuKind::View,
-                        view_items,
-                        &theme,
-                        cx,
-                    ))
-                    .child(self.render_menu_entry(
-                        "menu-go",
-                        "Go",
-                        MenuKind::Go,
-                        go_items,
-                        &theme,
-                        cx,
-                    ))
-                    .child(self.render_menu_entry(
-                        "menu-window",
-                        "Window",
-                        MenuKind::Window,
-                        window_items,
-                        &theme,
-                        cx,
-                    ))
-                    .child(self.render_menu_entry(
-                        "menu-help",
-                        "Help",
-                        MenuKind::Help,
-                        help_items,
-                        &theme,
-                        cx,
-                    )),
-            )
+            .when(show_in_window_menu, |d| {
+                d.child(
+                    div()
+                        .id("app-menu-row")
+                        .on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
+                            if this.open_menu.is_some() {
+                                this.open_menu = None;
+                                cx.notify();
+                            }
+                        }))
+                        .h(ui::sizes::MENU_ROW_HEIGHT)
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(ui::sizes::SPACE_0)
+                        .pl(ui::sizes::SPACE_1)
+                        .pr(ui::sizes::SPACE_1)
+                        .bg(theme.surface)
+                        .border_b_1()
+                        .border_color(theme.border)
+                        .child(self.render_menu_entry(
+                            "menu-app",
+                            "ButterPaper",
+                            MenuKind::ButterPaper,
+                            app_items,
+                            &theme,
+                            cx,
+                        ))
+                        .child(self.render_menu_entry(
+                            "menu-file",
+                            "File",
+                            MenuKind::File,
+                            file_items,
+                            &theme,
+                            cx,
+                        )),
+                )
+            })
             .child(
                 div()
                     .id("app-tab-row")
@@ -1210,34 +1964,86 @@ impl Render for PdfEditor {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .bg(theme.surface)
+                    .bg(tab_row_bg)
                     .border_b_1()
-                    .border_color(theme.border)
+                    .border_color(tab_row_border)
                     .when(show_tab_bar, |d| {
-                        let scroll_offset = self.tab_scroll_offset;
                         let tab_items = self.render_tab_items(&theme, cx);
+                        let tab_bar_overflowing = self.tab_bar_overflowing;
+                        let tab_scroll_handle = self.tab_scroll_handle.clone();
+                        let render_new_tab_button = {
+                            let entity = cx.entity().downgrade();
+                            move || {
+                                let entity_for_click = entity.clone();
+                                div()
+                                    .id("new-tab")
+                                    .h(ui::sizes::TAB_HEIGHT)
+                                    .px(ui::sizes::SPACE_0)
+                                    .flex()
+                                    .items_center()
+                                    .flex_shrink_0()
+                                    .child(chrome_icon_button(
+                                        "new-tab-button",
+                                        Icon::Plus,
+                                        "Open file",
+                                        true,
+                                        false,
+                                        &theme,
+                                        move |_, window, cx| {
+                                            if let Some(editor) = entity_for_click.upgrade() {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.handle_open(&Open, window, cx);
+                                                });
+                                            }
+                                        },
+                                    ))
+                            }
+                        };
                         d.child(
                             div()
                                 .id("tabs-scroll")
                                 .flex()
                                 .flex_row()
-                                .h_full()
+                                .flex_nowrap()
+                                .h(ui::sizes::TAB_HEIGHT)
                                 .min_w_0()
                                 .flex_1()
-                                .overflow_hidden()
-                                .on_scroll_wheel(cx.listener(
-                                    |this, event: &ScrollWheelEvent, _window, cx| {
-                                        this.handle_tab_scroll(event.delta, cx);
-                                    },
-                                ))
-                                .child(
+                                .items_center()
+                                .px(ui::sizes::SPACE_1)
+                                .overflow_x_scroll()
+                                .track_scroll(&tab_scroll_handle)
+                                .children(tab_items)
+                                .when(!tab_bar_overflowing, |d| {
+                                    d.child(
+                                        div()
+                                            .id("new-tab-inline")
+                                            .h(ui::sizes::TAB_HEIGHT)
+                                            .flex_shrink_0()
+                                            .child(render_new_tab_button()),
+                                    )
+                                })
+                                .child({
+                                    let entity = cx.entity().downgrade();
                                     div()
-                                        .flex()
-                                        .flex_row()
-                                        .h_full()
-                                        .ml(px(-scroll_offset))
-                                        .children(tab_items),
-                                ),
+                                        .id("tab-bar-empty")
+                                        .h(ui::sizes::TAB_HEIGHT)
+                                        .when(!tab_bar_overflowing, |d| {
+                                            d.flex_1().on_mouse_down(
+                                                MouseButton::Left,
+                                                move |event, window, cx| {
+                                                    if event.click_count == 2 {
+                                                        if let Some(editor) = entity.upgrade() {
+                                                            editor.update(cx, |editor, cx| {
+                                                                editor
+                                                                    .handle_open(&Open, window, cx);
+                                                            });
+                                                        }
+                                                    }
+                                                },
+                                            )
+                                        })
+                                        .when(tab_bar_overflowing, |d| d.w(px(0.0)).flex_shrink_0())
+                                }),
                         )
                     })
                     .when(!show_tab_bar, {
@@ -1249,50 +2055,45 @@ impl Render for PdfEditor {
                                     .flex()
                                     .items_center()
                                     .px(ui::sizes::SPACE_3)
-                                    .text_sm()
+                                    .text_ui_body()
                                     .text_color(theme.text)
                                     .child(title),
                             )
                         }
                     })
-                    .child({
+                    .when(show_tab_bar && self.tab_bar_overflowing, |d| {
                         let entity = cx.entity().downgrade();
-                        div().id("tab-bar-empty").flex_1().h_full().on_mouse_down(
-                            MouseButton::Left,
-                            move |event, _window, cx| {
-                                if event.click_count == 2 {
-                                    if let Some(editor) = entity.upgrade() {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.new_tab(cx);
-                                        });
-                                    }
-                                }
-                            },
+                        d.child(
+                            div()
+                                .id("new-tab-pinned")
+                                .h(ui::sizes::TAB_HEIGHT)
+                                .ml(ui::sizes::SPACE_1)
+                                .flex()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .id("new-tab")
+                                        .h(ui::sizes::TAB_HEIGHT)
+                                        .px(ui::sizes::SPACE_0)
+                                        .flex()
+                                        .items_center()
+                                        .child(chrome_icon_button(
+                                            "new-tab-button",
+                                            Icon::Plus,
+                                            "Open file",
+                                            true,
+                                            false,
+                                            &theme,
+                                            move |_, window, cx| {
+                                                if let Some(editor) = entity.upgrade() {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.handle_open(&Open, window, cx);
+                                                    });
+                                                }
+                                            },
+                                        )),
+                                ),
                         )
-                    })
-                    .child({
-                        let entity = cx.entity().downgrade();
-                        div()
-                            .id("new-tab")
-                            .h_full()
-                            .px(DynamicSpacing::Base02.px(cx))
-                            .flex()
-                            .items_center()
-                            .border_l_1()
-                            .border_color(theme.border)
-                            .child(icon_button(
-                                "new-tab-button",
-                                Icon::Plus,
-                                ButtonSize::Default,
-                                &theme,
-                                move |_, _, cx| {
-                                    if let Some(editor) = entity.upgrade() {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.new_tab(cx);
-                                        });
-                                    }
-                                },
-                            ))
                     }),
             )
             .child(
@@ -1310,17 +2111,18 @@ impl Render for PdfEditor {
                             .flex()
                             .flex_col()
                             .items_center()
-                            .pt(ui::sizes::SPACE_3)
+                            .pt(ui::sizes::TOOL_RAIL_TOP_INSET)
                             .bg(theme.surface)
                             .border_r_1()
                             .border_color(toolbar_chrome_border)
                             .child({
                                 let entity = cx.entity().downgrade();
-                                flat_icon_button(
+                                chrome_icon_button(
                                     "tool-rail-toggle-thumbnails",
                                     Icon::PanelLeft,
-                                    true,
-                                    self.thumbnail_sidebar_visible,
+                                    "Toggle thumbnails",
+                                    !active_is_welcome,
+                                    show_sidebar,
                                     &theme,
                                     move |_, _, cx| {
                                         if let Some(editor) = entity.upgrade() {
@@ -1345,243 +2147,18 @@ impl Render for PdfEditor {
                             .flex_1()
                             .min_w_0()
                             .overflow_hidden()
-                            .child(
-                                div()
-                                    .id("pdf-canvas-toolbar")
-                                    .h(ui::sizes::CANVAS_TOOLBAR_HEIGHT)
-                                    .w_full()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(ui::sizes::SPACE_1)
-                                    .px(ui::sizes::SPACE_2)
-                                    .bg(theme.surface)
-                                    .border_b_1()
-                                    .border_color(toolbar_chrome_border)
-                                    .child(flat_icon_button(
-                                        "toolbar-first-page",
-                                        Icon::PageFirst,
-                                        can_first_prev,
-                                        false,
-                                        &theme,
-                                        {
-                                            let entity = cx.entity().downgrade();
-                                            move |_, _, cx| {
-                                                if let Some(editor) = entity.upgrade() {
-                                                    editor.update(cx, |editor, cx| {
-                                                        if let Some(tab) = editor.active_tab() {
-                                                            tab.viewport.update(
-                                                                cx,
-                                                                |viewport, cx| {
-                                                                    viewport.first_page(cx);
-                                                                },
-                                                            );
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        },
-                                    ))
-                                    .child(flat_icon_button(
-                                        "toolbar-prev-page",
-                                        Icon::ChevronLeft,
-                                        can_first_prev,
-                                        false,
-                                        &theme,
-                                        {
-                                            let entity = cx.entity().downgrade();
-                                            move |_, _, cx| {
-                                                if let Some(editor) = entity.upgrade() {
-                                                    editor.update(cx, |editor, cx| {
-                                                        if let Some(tab) = editor.active_tab() {
-                                                            tab.viewport.update(
-                                                                cx,
-                                                                |viewport, cx| {
-                                                                    viewport.prev_page(cx);
-                                                                },
-                                                            );
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        },
-                                    ))
-                                    .child(
-                                        div()
-                                            .min_w(ui::sizes::PAGE_LABEL_MIN_WIDTH)
-                                            .text_xs()
-                                            .text_color(if can_navigate {
-                                                theme.text
-                                            } else {
-                                                theme.text_muted
-                                            })
-                                            .child(page_label),
-                                    )
-                                    .child(flat_icon_button(
-                                        "toolbar-next-page",
-                                        Icon::ChevronRight,
-                                        can_next_last,
-                                        false,
-                                        &theme,
-                                        {
-                                            let entity = cx.entity().downgrade();
-                                            move |_, _, cx| {
-                                                if let Some(editor) = entity.upgrade() {
-                                                    editor.update(cx, |editor, cx| {
-                                                        if let Some(tab) = editor.active_tab() {
-                                                            tab.viewport.update(
-                                                                cx,
-                                                                |viewport, cx| {
-                                                                    viewport.next_page(cx);
-                                                                },
-                                                            );
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        },
-                                    ))
-                                    .child(flat_icon_button(
-                                        "toolbar-last-page",
-                                        Icon::PageLast,
-                                        can_next_last,
-                                        false,
-                                        &theme,
-                                        {
-                                            let entity = cx.entity().downgrade();
-                                            move |_, _, cx| {
-                                                if let Some(editor) = entity.upgrade() {
-                                                    editor.update(cx, |editor, cx| {
-                                                        if let Some(tab) = editor.active_tab() {
-                                                            tab.viewport.update(
-                                                                cx,
-                                                                |viewport, cx| {
-                                                                    viewport.last_page(cx);
-                                                                },
-                                                            );
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        },
-                                    ))
-                                    .child(
-                                        div()
-                                            .w(ui::sizes::TOOLBAR_SEPARATOR_WIDTH)
-                                            .h(px(12.0))
-                                            .mx(px(2.0))
-                                            .bg(toolbar_separator),
-                                    )
-                                    .child(flat_icon_button(
-                                        "toolbar-fit-page",
-                                        Icon::FitPage,
-                                        can_zoom,
-                                        false,
-                                        &theme,
-                                        {
-                                            let entity = cx.entity().downgrade();
-                                            move |_, _, cx| {
-                                                if let Some(editor) = entity.upgrade() {
-                                                    editor.update(cx, |editor, cx| {
-                                                        if let Some(tab) = editor.active_tab() {
-                                                            tab.viewport.update(
-                                                                cx,
-                                                                |viewport, cx| {
-                                                                    viewport.fit_page(cx);
-                                                                },
-                                                            );
-                                                            editor.sync_zoom_input_from_active(cx);
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        },
-                                    ))
-                                    .child(flat_icon_button(
-                                        "toolbar-fit-width",
-                                        Icon::FitWidth,
-                                        can_zoom,
-                                        false,
-                                        &theme,
-                                        {
-                                            let entity = cx.entity().downgrade();
-                                            move |_, _, cx| {
-                                                if let Some(editor) = entity.upgrade() {
-                                                    editor.update(cx, |editor, cx| {
-                                                        if let Some(tab) = editor.active_tab() {
-                                                            tab.viewport.update(
-                                                                cx,
-                                                                |viewport, cx| {
-                                                                    viewport.fit_width(cx);
-                                                                },
-                                                            );
-                                                            editor.sync_zoom_input_from_active(cx);
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        },
-                                    ))
-                                    .child(
-                                        div()
-                                            .w(ui::sizes::TOOLBAR_SEPARATOR_WIDTH)
-                                            .h(px(12.0))
-                                            .mx(px(2.0))
-                                            .bg(toolbar_separator),
-                                    )
-                                    .child(flat_icon_button(
-                                        "toolbar-zoom-out",
-                                        Icon::Minus,
-                                        can_zoom,
-                                        false,
-                                        &theme,
-                                        {
-                                            let entity = cx.entity().downgrade();
-                                            move |_, _, cx| {
-                                                if let Some(editor) = entity.upgrade() {
-                                                    editor.update(cx, |editor, cx| {
-                                                        if let Some(tab) = editor.active_tab() {
-                                                            tab.viewport.update(
-                                                                cx,
-                                                                |viewport, cx| {
-                                                                    viewport.zoom_out(cx);
-                                                                },
-                                                            );
-                                                            editor.sync_zoom_input_from_active(cx);
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        },
-                                    ))
-                                    .child(zoom_combo)
-                                    .child(flat_icon_button(
-                                        "toolbar-zoom-in",
-                                        Icon::Plus,
-                                        can_zoom,
-                                        false,
-                                        &theme,
-                                        {
-                                            let entity = cx.entity().downgrade();
-                                            move |_, _, cx| {
-                                                if let Some(editor) = entity.upgrade() {
-                                                    editor.update(cx, |editor, cx| {
-                                                        if let Some(tab) = editor.active_tab() {
-                                                            tab.viewport.update(
-                                                                cx,
-                                                                |viewport, cx| {
-                                                                    viewport.zoom_in(cx);
-                                                                },
-                                                            );
-                                                            editor.sync_zoom_input_from_active(cx);
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        },
-                                    ))
-                                    .child(div().ml_auto()),
-                            )
+                            .child(self.render_canvas_toolbar(
+                                can_first_prev,
+                                can_next_last,
+                                can_zoom,
+                                fit_page_selected,
+                                fit_width_selected,
+                                page_view_mode,
+                                page_control,
+                                zoom_combo,
+                                &theme,
+                                cx,
+                            ))
                             .child(
                                 div()
                                     .flex_1()
