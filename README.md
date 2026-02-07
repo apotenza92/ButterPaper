@@ -1,39 +1,30 @@
 # ButterPaper
 
-<img src="crates/gpui-app/assets/butterpaper-icon.svg" alt="ButterPaper icon" width="160" />
+ButterPaper is being rebuilt as a Rust-native desktop PDF app.
 
-ButterPaper brings the classic tracing-paper workflow to PDFs. Layer ideas, mark up drawings, and iterate without losing the original intent.
+## Stack
 
-## Why Butter Paper
+- UI: `gpui`
+- Core: Rust workspace crates (`render`, `gpui-app`)
+- Testing: GPUI app tests (`#[gpui::test]`) + workspace checks
 
-Butter paper was the thin, translucent paper architects and drafties used long before digital tools. It was made for tracing and layering ideas over drawings without touching the originals. ButterPaper brings that same workflow into a fast, clean, open-source app.
-
-## Build
-
-```bash
-./scripts/build-gpui.sh
-```
-
-Or with cargo:
+## Workspace commands
 
 ```bash
-cargo build --release -p butterpaper-gpui
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
 ```
 
 ## Run
 
 ```bash
-./target/release/butterpaper path/to/file.pdf
+./scripts/setup_pdfium.sh
+cargo run -p butterpaper -- path/to/file.pdf
 ```
 
-## macOS bundle
+If PDF loading still fails, point directly at your runtime library:
 
 ```bash
-./scripts/build-app.sh
-open ./target/release/bundle/osx/ButterPaper.app
+BUTTERPAPER_PDFIUM_LIB=/absolute/path/to/libpdfium.dylib cargo run -p butterpaper -- path/to/file.pdf
 ```
-
-## Requirements
-
-- `libpdfium.dylib` must be in the same directory as the binary
-- The build script copies it to `target/release/`

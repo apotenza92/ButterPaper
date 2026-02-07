@@ -42,14 +42,7 @@ impl FontInfo {
         let is_italic =
             name.to_lowercase().contains("italic") || name.to_lowercase().contains("oblique");
 
-        Self {
-            name,
-            is_standard: false,
-            is_embedded: false,
-            weight: None,
-            is_italic,
-            is_bold,
-        }
+        Self { name, is_standard: false, is_embedded: false, weight: None, is_italic, is_bold }
     }
 
     /// Check if this is one of the 14 standard PDF fonts
@@ -152,12 +145,7 @@ pub fn extract_fonts_from_page(page: &PdfPage) -> Result<Vec<TextSpanWithFont>, 
         // Check if font is embedded (returns Result<bool>)
         font_info.is_embedded = font.is_embedded().unwrap_or(false);
 
-        spans.push(TextSpanWithFont {
-            text,
-            bbox,
-            font_size,
-            font: font_info,
-        });
+        spans.push(TextSpanWithFont { text, bbox, font_size, font: font_info });
     }
 
     Ok(spans)
@@ -229,11 +217,8 @@ pub fn find_font_in_region(
     }
 
     // Return the font with the highest count
-    let (font, size, _) = font_counts
-        .into_iter()
-        .max_by_key(|(_, (_, _, count))| *count)
-        .map(|(_, v)| v)
-        .unwrap();
+    let (font, size, _) =
+        font_counts.into_iter().max_by_key(|(_, (_, _, count))| *count).map(|(_, v)| v).unwrap();
 
     Ok(Some((font, size)))
 }
@@ -307,11 +292,7 @@ mod tests {
         for name in standard_fonts {
             let mut font = FontInfo::new(name.to_string());
             font.check_is_standard();
-            assert!(
-                font.is_standard,
-                "Font {} should be recognized as standard",
-                name
-            );
+            assert!(font.is_standard, "Font {} should be recognized as standard", name);
         }
     }
 }

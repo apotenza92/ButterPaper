@@ -1,30 +1,37 @@
 mod app;
+mod assets;
 mod cache;
 mod cli;
 mod components;
 mod element_registry;
+mod icons;
 #[cfg(target_os = "macos")]
 mod macos;
 mod settings;
 mod sidebar;
+mod styles;
 mod theme;
 mod theme_updater;
 mod ui;
+mod ui_preferences;
 mod viewport;
 mod window;
 mod workspace;
 
 pub use element_registry::{ElementInfo, ElementType};
+pub use styles::UiDensity;
 pub use theme::{current_theme, AppearanceMode, Theme, ThemeSettings};
 
+use butterpaper_render::PdfDocument;
 use gpui::{
     actions, point, prelude::*, px, size, App, Application, Bounds, Focusable, KeyBinding,
     TitlebarOptions, WindowBounds, WindowOptions,
 };
-use butterpaper_render::PdfDocument;
 
 use app::{set_menus, PdfEditor};
+use assets::Assets;
 use cli::parse_args;
+use ui_preferences::load_ui_preferences;
 use window::{focus_window, list_windows, schedule_screenshot};
 
 actions!(
@@ -37,6 +44,11 @@ actions!(
         ZoomOut,
         NextPage,
         PrevPage,
+        FirstPage,
+        LastPage,
+        FitPage,
+        FitWidth,
+        ResetZoom,
         CloseWindow,
         NextTab,
         PrevTab,
@@ -95,7 +107,7 @@ fn main() {
     let initial_files = cli.files;
     let open_settings = cli.open_settings;
 
-    Application::new().run(move |cx: &mut App| {
+    Application::new().with_assets(Assets).run(move |cx: &mut App| {
         #[cfg(target_os = "macos")]
         macos::set_app_icon();
 
@@ -112,12 +124,20 @@ fn main() {
             KeyBinding::new("cmd-=", ZoomIn, Some("PdfEditor")),
             KeyBinding::new("cmd-+", ZoomIn, Some("PdfEditor")),
             KeyBinding::new("cmd--", ZoomOut, Some("PdfEditor")),
+            KeyBinding::new("cmd-0", ResetZoom, Some("PdfEditor")),
+            KeyBinding::new("ctrl-0", ResetZoom, Some("PdfEditor")),
+            KeyBinding::new("cmd-8", FitWidth, Some("PdfEditor")),
+            KeyBinding::new("ctrl-8", FitWidth, Some("PdfEditor")),
+            KeyBinding::new("cmd-9", FitPage, Some("PdfEditor")),
+            KeyBinding::new("ctrl-9", FitPage, Some("PdfEditor")),
             KeyBinding::new("right", NextPage, Some("PdfEditor")),
             KeyBinding::new("left", PrevPage, Some("PdfEditor")),
             KeyBinding::new("pagedown", NextPage, Some("PdfEditor")),
             KeyBinding::new("pageup", PrevPage, Some("PdfEditor")),
             KeyBinding::new("down", NextPage, Some("PdfEditor")),
             KeyBinding::new("up", PrevPage, Some("PdfEditor")),
+            KeyBinding::new("home", FirstPage, Some("PdfEditor")),
+            KeyBinding::new("end", LastPage, Some("PdfEditor")),
             // Tab navigation
             KeyBinding::new("ctrl-tab", NextTab, Some("PdfEditor")),
             KeyBinding::new("ctrl-shift-tab", PrevTab, Some("PdfEditor")),
@@ -127,9 +147,13 @@ fn main() {
             KeyBinding::new("cmd-alt-left", PrevTab, Some("PdfEditor")),
         ]);
 
-        // Initialize default appearance mode and theme settings
-        cx.set_global(AppearanceMode::default());
-        cx.set_global(ThemeSettings::default());
+        // Initialize persisted appearance/theme/density preferences.
+        let ui_preferences = load_ui_preferences();
+        cx.set_global(ui_preferences.appearance_mode);
+        cx.set_global(ui_preferences.theme_settings);
+        cx.set_global(ui_preferences.ui_density);
+        #[cfg(target_os = "macos")]
+        macos::set_app_appearance(ui_preferences.appearance_mode);
 
         // Check for theme updates in background (once per 24 hours)
         theme_updater::spawn_update_check();

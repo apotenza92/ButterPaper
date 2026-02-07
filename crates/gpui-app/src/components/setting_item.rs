@@ -45,20 +45,10 @@ pub fn setting_item(
                 .min_w_0()
                 .gap(sizes::GAP_SM)
                 .child(div().text_sm().child(title.into()))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(text_muted)
-                        .child(description.into()),
-                ),
+                .child(div().text_sm().text_color(text_muted).child(description.into())),
         )
         // Control column - fixed width
-        .child(
-            div()
-                .flex_shrink_0()
-                .w(sizes::DROPDOWN_WIDTH)
-                .child(control),
-        )
+        .child(div().flex_shrink_0().w(sizes::DROPDOWN_WIDTH).child(control))
 }
 
 /// Compact setting item without description.

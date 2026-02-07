@@ -1,5 +1,6 @@
 [package]
-name = "butterpaper-gpui"
+name = "butterpaper"
+default-run = "butterpaper"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -44,4 +45,4 @@ block2 = "0.5"
 dispatch = "0.2"
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSAppearance", "NSImage", "NSResponder"] }
-objc2-foundation = "0.2"
+objc2-foundation = { version = "0.2", features = ["NSData"] }

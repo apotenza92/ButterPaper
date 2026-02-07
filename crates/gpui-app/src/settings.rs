@@ -3,14 +3,19 @@
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 
-use crate::components::checkbox;
+use crate::components::{
+    checkbox, nav_item, segmented_control, settings_group, settings_row, Dropdown, DropdownOption,
+    SegmentOption,
+};
+use crate::styles::{DynamicSpacing, UiDensity};
 use crate::theme::{theme_registry, ThemeSettings};
 use crate::ui::sizes;
+use crate::ui_preferences::save_ui_preferences_from_app;
 use crate::workspace::{load_preferences, save_preferences, TabPreferences};
 use crate::{current_theme, AppearanceMode, CloseWindow, Theme};
 use gpui::{
-    actions, deferred, div, point, prelude::*, px, size, App, Context, FocusHandle, Focusable,
-    KeyBinding, SharedString, Window, WindowBounds, WindowOptions,
+    actions, div, point, prelude::*, px, size, App, Context, FocusHandle, Focusable, KeyBinding,
+    SharedString, Window, WindowBounds, WindowOptions,
 };
 
 actions!(settings, [OpenSettings, CloseSettings]);
@@ -40,7 +45,6 @@ impl SettingsPage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpenDropdown {
     None,
-    AppearanceMode,
     LightTheme,
     DarkTheme,
 }
@@ -94,22 +98,6 @@ impl SettingsView {
             focus_handle: cx.focus_handle(),
             current_page: SettingsPage::default(),
             open_dropdown: OpenDropdown::None,
-            tab_preferences: load_preferences(),
-        }
-    }
-
-    /// Create with a specific dropdown already open (for screenshot testing)
-    pub fn new_with_open_dropdown(dropdown: &str, cx: &mut Context<Self>) -> Self {
-        let open_dropdown = match dropdown {
-            "appearance" => OpenDropdown::AppearanceMode,
-            "light" => OpenDropdown::LightTheme,
-            "dark" => OpenDropdown::DarkTheme,
-            _ => OpenDropdown::None,
-        };
-        Self {
-            focus_handle: cx.focus_handle(),
-            current_page: SettingsPage::default(),
-            open_dropdown,
             tab_preferences: load_preferences(),
         }
     }
@@ -216,8 +204,8 @@ impl SettingsView {
             .bg(theme.surface)
             .border_r_1()
             .border_color(theme.border)
-            .p(sizes::PADDING_LG)
-            .gap(px(2.0))
+            .p(DynamicSpacing::Base12.px(cx))
+            .gap(DynamicSpacing::Base02.px(cx))
             .children(
                 SettingsPage::all()
                     .iter()
@@ -232,32 +220,102 @@ impl SettingsView {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        div()
-            .id(page.label())
-            .h(sizes::CONTROL_HEIGHT)
-            .px(sizes::PADDING_MD)
-            .flex()
-            .items_center()
-            .rounded(sizes::RADIUS_SM)
-            .cursor_pointer()
-            .text_sm()
-            .when(selected, |d| d.bg(theme.element_selected))
-            .when(!selected, |d| d.hover(|s| s.bg(theme.element_hover)))
-            .on_click(cx.listener(move |this, _, _window, cx| {
+        nav_item(
+            page.label(),
+            selected,
+            theme,
+            cx.listener(move |this, _, _window, cx| {
                 this.select_page(page, cx);
-            }))
-            .child(page.label())
+            }),
+        )
+    }
+
+    fn render_appearance_mode_control(
+        &self,
+        current_mode: AppearanceMode,
+        theme: &Theme,
+    ) -> impl IntoElement {
+        let selected = match current_mode {
+            AppearanceMode::System => "System",
+            AppearanceMode::Light => "Light",
+            AppearanceMode::Dark => "Dark",
+        };
+
+        segmented_control(
+            "settings.appearance.mode",
+            vec![
+                SegmentOption::simple("System"),
+                SegmentOption::simple("Light"),
+                SegmentOption::simple("Dark"),
+            ],
+            selected,
+            theme,
+            |label, cx| {
+                let mode = match label {
+                    "Light" => AppearanceMode::Light,
+                    "Dark" => AppearanceMode::Dark,
+                    _ => AppearanceMode::System,
+                };
+                cx.set_global(mode);
+                #[cfg(target_os = "macos")]
+                crate::macos::set_app_appearance(mode);
+                let _ = save_ui_preferences_from_app(cx);
+                cx.refresh_windows();
+            },
+        )
+    }
+
+    fn render_ui_density_control(&self, density: UiDensity, theme: &Theme) -> impl IntoElement {
+        let selected = match density {
+            UiDensity::Compact => "Compact",
+            UiDensity::Default => "Default",
+            UiDensity::Comfortable => "Comfortable",
+        };
+
+        segmented_control(
+            "settings.appearance.ui-density",
+            vec![
+                SegmentOption::simple("Compact"),
+                SegmentOption::simple("Default"),
+                SegmentOption::simple("Comfortable"),
+            ],
+            selected,
+            theme,
+            |label, cx| {
+                let density = match label {
+                    "Compact" => UiDensity::Compact,
+                    "Comfortable" => UiDensity::Comfortable,
+                    _ => UiDensity::Default,
+                };
+                cx.set_global(density);
+                let _ = save_ui_preferences_from_app(cx);
+                cx.refresh_windows();
+            },
+        )
+    }
+
+    fn render_content_group(
+        &self,
+        content: Vec<gpui::AnyElement>,
+        theme: &Theme,
+    ) -> impl IntoElement {
+        settings_group(None::<SharedString>, content, theme)
+    }
+
+    fn render_content_row(
+        &self,
+        title: &'static str,
+        description: &'static str,
+        control: impl IntoElement,
+        theme: &Theme,
+    ) -> impl IntoElement {
+        settings_row(title, description, control, theme)
     }
 
     fn render_content(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let current_mode = cx
-            .try_global::<AppearanceMode>()
-            .copied()
-            .unwrap_or_default();
-        let theme_settings = cx
-            .try_global::<ThemeSettings>()
-            .cloned()
-            .unwrap_or_default();
+        let current_mode = cx.try_global::<AppearanceMode>().copied().unwrap_or_default();
+        let theme_settings = cx.try_global::<ThemeSettings>().cloned().unwrap_or_default();
+        let ui_density = cx.try_global::<UiDensity>().copied().unwrap_or_default();
 
         div()
             .id("settings-content")
@@ -268,7 +326,7 @@ impl SettingsView {
             .min_w_0()
             .overflow_hidden() // Prevent any content from escaping
             .bg(theme.elevated_surface)
-            .pt(sizes::PADDING_LG)
+            .pt(DynamicSpacing::Base12.px(cx))
             .overflow_y_scroll()
             .child(
                 div()
@@ -276,18 +334,24 @@ impl SettingsView {
                     .flex_col()
                     .w_full()
                     .max_w(sizes::SETTINGS_CONTENT_MAX_WIDTH)
-                    .px(sizes::PADDING_3XL)
-                    .pb(sizes::PADDING_3XL)
+                    .px(DynamicSpacing::Base24.px(cx))
+                    .pb(DynamicSpacing::Base24.px(cx))
                     .child(
                         div()
                             .text_xl()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .mb(sizes::PADDING_2XL)
+                            .mb(DynamicSpacing::Base16.px(cx))
                             .child(self.current_page.label()),
                     )
                     .child(match self.current_page {
                         SettingsPage::Appearance => self
-                            .render_appearance_content(theme, current_mode, theme_settings, cx)
+                            .render_appearance_content(
+                                theme,
+                                current_mode,
+                                theme_settings,
+                                ui_density,
+                                cx,
+                            )
                             .into_any_element(),
                         SettingsPage::Behavior => {
                             self.render_behavior_content(theme, cx).into_any_element()
@@ -301,113 +365,82 @@ impl SettingsView {
         theme: &Theme,
         current_mode: AppearanceMode,
         theme_settings: ThemeSettings,
+        ui_density: UiDensity,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mode_label = match current_mode {
-            AppearanceMode::System => "System",
-            AppearanceMode::Light => "Light",
-            AppearanceMode::Dark => "Dark",
-        };
-
         let registry = theme_registry();
-        let light_themes: Vec<String> = registry
-            .light_themes()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let dark_themes: Vec<String> = registry
-            .dark_themes()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let light_themes: Vec<String> =
+            registry.light_themes().iter().map(|s| s.to_string()).collect();
+        let dark_themes: Vec<String> =
+            registry.dark_themes().iter().map(|s| s.to_string()).collect();
 
-        div()
-            .flex()
-            .flex_col()
-            // Appearance mode
-            .child(self.render_setting_row(
-                "Appearance",
-                "Choose whether to use light or dark theme, or follow system settings.",
-                self.render_dropdown(
-                    "settings.appearance",
-                    "Appearance Mode",
-                    mode_label,
-                    self.open_dropdown == OpenDropdown::AppearanceMode,
-                    vec![
-                        "System".to_string(),
-                        "Light".to_string(),
-                        "Dark".to_string(),
-                    ],
-                    mode_label,
-                    OpenDropdown::AppearanceMode,
-                    |label, cx| {
-                        let mode = match label {
-                            "Light" => AppearanceMode::Light,
-                            "Dark" => AppearanceMode::Dark,
-                            _ => AppearanceMode::System,
-                        };
-                        cx.set_global(mode);
-                        #[cfg(target_os = "macos")]
-                        crate::macos::set_app_appearance(mode);
-                        cx.refresh_windows();
-                    },
+        self.render_content_group(
+            vec![
+                self.render_content_row(
+                    "Appearance",
+                    "Choose whether to use light or dark theme, or follow system settings.",
+                    self.render_appearance_mode_control(current_mode, theme),
                     theme,
-                    cx,
-                ),
-                theme,
-            ))
-            // Light theme
-            .child(self.render_setting_row(
-                "Light Theme",
-                "Theme used when in light mode.",
-                self.render_dropdown(
-                    "settings.light_theme",
+                )
+                .into_any_element(),
+                self.render_content_row(
+                    "UI Density",
+                    "Adjust the compactness of controls and spacing across the interface.",
+                    self.render_ui_density_control(ui_density, theme),
+                    theme,
+                )
+                .into_any_element(),
+                self.render_content_row(
                     "Light Theme",
-                    &theme_settings.light_theme,
-                    self.open_dropdown == OpenDropdown::LightTheme,
-                    light_themes,
-                    &theme_settings.light_theme,
-                    OpenDropdown::LightTheme,
-                    |name, cx| {
-                        let mut settings = cx
-                            .try_global::<ThemeSettings>()
-                            .cloned()
-                            .unwrap_or_default();
-                        settings.light_theme = name.to_string();
-                        cx.set_global(settings);
-                        cx.refresh_windows();
-                    },
+                    "Theme used when in light mode.",
+                    self.render_dropdown(
+                        "settings.light_theme",
+                        "Light Theme",
+                        &theme_settings.light_theme,
+                        self.open_dropdown == OpenDropdown::LightTheme,
+                        light_themes,
+                        OpenDropdown::LightTheme,
+                        |name, cx| {
+                            let mut settings =
+                                cx.try_global::<ThemeSettings>().cloned().unwrap_or_default();
+                            settings.light_theme = name.to_string();
+                            cx.set_global(settings);
+                            let _ = save_ui_preferences_from_app(cx);
+                            cx.refresh_windows();
+                        },
+                        theme,
+                        cx,
+                    ),
                     theme,
-                    cx,
-                ),
-                theme,
-            ))
-            // Dark theme
-            .child(self.render_setting_row(
-                "Dark Theme",
-                "Theme used when in dark mode.",
-                self.render_dropdown(
-                    "settings.dark_theme",
+                )
+                .into_any_element(),
+                self.render_content_row(
                     "Dark Theme",
-                    &theme_settings.dark_theme,
-                    self.open_dropdown == OpenDropdown::DarkTheme,
-                    dark_themes,
-                    &theme_settings.dark_theme,
-                    OpenDropdown::DarkTheme,
-                    |name, cx| {
-                        let mut settings = cx
-                            .try_global::<ThemeSettings>()
-                            .cloned()
-                            .unwrap_or_default();
-                        settings.dark_theme = name.to_string();
-                        cx.set_global(settings);
-                        cx.refresh_windows();
-                    },
+                    "Theme used when in dark mode.",
+                    self.render_dropdown(
+                        "settings.dark_theme",
+                        "Dark Theme",
+                        &theme_settings.dark_theme,
+                        self.open_dropdown == OpenDropdown::DarkTheme,
+                        dark_themes,
+                        OpenDropdown::DarkTheme,
+                        |name, cx| {
+                            let mut settings =
+                                cx.try_global::<ThemeSettings>().cloned().unwrap_or_default();
+                            settings.dark_theme = name.to_string();
+                            cx.set_global(settings);
+                            let _ = save_ui_preferences_from_app(cx);
+                            cx.refresh_windows();
+                        },
+                        theme,
+                        cx,
+                    ),
                     theme,
-                    cx,
-                ),
-                theme,
-            ))
+                )
+                .into_any_element(),
+            ],
+            theme,
+        )
     }
 
     fn render_behavior_content(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -415,18 +448,12 @@ impl SettingsView {
         let show_tab_bar = self.tab_preferences.show_tab_bar;
         let allow_merge = self.tab_preferences.allow_merge;
 
-        div()
-            .flex()
-            .flex_col()
-            // Open PDFs in tabs
-            .child(self.render_setting_row(
-                "Open PDFs in tabs",
-                "New PDFs open as tabs in the current window instead of new windows.",
-                div()
-                    .flex()
-                    .justify_end()
-                    .w_full()
-                    .child(checkbox(
+        self.render_content_group(
+            vec![
+                self.render_content_row(
+                    "Open PDFs in tabs",
+                    "New PDFs open as tabs in the current window instead of new windows.",
+                    div().flex().justify_end().w_full().child(checkbox(
                         "prefer-tabs",
                         prefer_tabs,
                         theme,
@@ -434,17 +461,13 @@ impl SettingsView {
                             this.toggle_prefer_tabs(cx);
                         }),
                     )),
-                theme,
-            ))
-            // Show tab bar
-            .child(self.render_setting_row(
-                "Show tab bar",
-                "Always show the tab bar, even when only one document is open.",
-                div()
-                    .flex()
-                    .justify_end()
-                    .w_full()
-                    .child(checkbox(
+                    theme,
+                )
+                .into_any_element(),
+                self.render_content_row(
+                    "Show tab bar",
+                    "Always show the tab bar, even when only one document is open.",
+                    div().flex().justify_end().w_full().child(checkbox(
                         "show-tab-bar",
                         show_tab_bar,
                         theme,
@@ -452,17 +475,13 @@ impl SettingsView {
                             this.toggle_show_tab_bar(cx);
                         }),
                     )),
-                theme,
-            ))
-            // Allow window merging
-            .child(self.render_setting_row(
-                "Allow window merging",
-                "Drag tabs between windows to merge them together.",
-                div()
-                    .flex()
-                    .justify_end()
-                    .w_full()
-                    .child(checkbox(
+                    theme,
+                )
+                .into_any_element(),
+                self.render_content_row(
+                    "Allow window merging",
+                    "Drag tabs between windows to merge them together.",
+                    div().flex().justify_end().w_full().child(checkbox(
                         "allow-merge",
                         allow_merge,
                         theme,
@@ -470,49 +489,12 @@ impl SettingsView {
                             this.toggle_allow_merge(cx);
                         }),
                     )),
-                theme,
-            ))
-    }
-
-    fn render_setting_row(
-        &self,
-        title: &'static str,
-        description: &'static str,
-        control: impl IntoElement,
-        theme: &Theme,
-    ) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_row()
-            .w_full()
-            .items_center()
-            .gap(sizes::GAP_LG)
-            .py(sizes::PADDING_XL)
-            .border_b_1()
-            .border_color(theme.border)
-            // Label column - takes remaining space
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0() // Allow text to shrink/wrap
-                    .gap(sizes::GAP_SM)
-                    .child(div().text_sm().child(title))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.text_muted)
-                            .child(description),
-                    ),
-            )
-            // Control column - fixed width, right-aligned
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .w(sizes::DROPDOWN_WIDTH)
-                    .child(control),
-            )
+                    theme,
+                )
+                .into_any_element(),
+            ],
+            theme,
+        )
     }
 
     /// Render a dropdown menu that stays within window bounds
@@ -523,7 +505,6 @@ impl SettingsView {
         current_value: &str,
         is_open: bool,
         options: Vec<String>,
-        selected: &str,
         dropdown_id: OpenDropdown,
         on_select: F,
         theme: &Theme,
@@ -532,113 +513,38 @@ impl SettingsView {
     where
         F: Fn(&str, &mut App) + Clone + 'static,
     {
-        let surface = theme.surface;
-        let border = theme.border;
-        let hover = theme.element_hover;
-        let text_muted = theme.text_muted;
-        let accent = theme.accent;
-        let selected = selected.to_string();
-        let current = current_value.to_string();
-        let max_height = px(240.0);
-
-        // Silence unused warnings - element_id/element_name reserved for future dev mode
+        // Reserved for dev tooling hooks
         let _ = (element_id, element_name);
 
-        // The button itself - dropdown menu is a child so it anchors correctly
-        div()
-            .relative() // Enable absolute positioning for children
-            .w_full()
-            .h(sizes::CONTROL_HEIGHT)
-            // Button visual
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .pl(sizes::PADDING_LG)
-            .pr(px(10.0))
-            .bg(surface)
-            .border_1()
-            .border_color(border)
-            .rounded(sizes::RADIUS_SM)
-            .cursor_pointer()
-            .hover(|s| s.bg(hover))
-            .id(SharedString::from(format!("dropdown-{:?}", dropdown_id)))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.toggle_dropdown(dropdown_id, cx);
-            }))
-            .child(
-                div()
-                    .text_sm()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(current.clone()),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(text_muted)
-                    .ml(sizes::GAP_SM)
-                    .child("▼"),
-            )
-            // Dropdown menu - use absolute positioning below button
-            .when(is_open, |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top(sizes::CONTROL_HEIGHT + px(4.0)) // Position below button with 4px gap
-                        .child(
-                            deferred(
-                                div()
-                                    .occlude()
-                                    .min_w(sizes::DROPDOWN_WIDTH)
-                                    .max_h(max_height)
-                                    .overflow_hidden()
-                                    .bg(surface)
-                                    .border_1()
-                                    .border_color(border)
-                                    .rounded(sizes::RADIUS_MD)
-                                    .shadow_lg()
-                                    .py(sizes::PADDING_SM)
-                                    .children(options.iter().map(|label| {
-                                        let is_selected = label == &selected;
-                                        let on_select = on_select.clone();
-                                        let label_owned = label.clone();
+        let options = options
+            .into_iter()
+            .map(|label| DropdownOption::new(label.clone(), label))
+            .collect::<Vec<_>>();
+        let owner = cx.entity().downgrade();
 
-                                        div()
-                                            .id(SharedString::from(format!("opt-{}", label)))
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .justify_between()
-                                            .h(sizes::CONTROL_HEIGHT)
-                                            .px(sizes::PADDING_LG)
-                                            .mx(sizes::PADDING_SM)
-                                            .rounded(sizes::RADIUS_SM)
-                                            .cursor_pointer()
-                                            .text_sm()
-                                            .hover(|s| s.bg(hover))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                on_select(&label_owned, cx);
-                                                this.close_dropdown(cx);
-                                            }))
-                                            .child(label.clone())
-                                            .when(is_selected, |d| {
-                                                d.child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(accent)
-                                                        .child("✓"),
-                                                )
-                                            })
-                                    })),
-                            )
-                            .with_priority(1),
-                        ),
-                )
-            })
+        Dropdown::new(
+            SharedString::from(format!("dropdown-{:?}", dropdown_id)),
+            move |value, cx| {
+                on_select(value, cx);
+                if let Some(settings) = owner.upgrade() {
+                    settings.update(cx, |this, cx| {
+                        this.close_dropdown(cx);
+                    });
+                }
+            },
+        )
+        .options(options)
+        .selected(current_value.to_string())
+        .on_toggle({
+            let owner = cx.entity().downgrade();
+            move |cx| {
+                if let Some(settings) = owner.upgrade() {
+                    settings.update(cx, |this, cx| {
+                        this.toggle_dropdown(dropdown_id, cx);
+                    });
+                }
+            }
+        })
+        .render(is_open, theme)
     }
 }

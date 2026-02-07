@@ -5,6 +5,7 @@
 use pdfium_render::prelude::*;
 use std::cell::OnceCell;
 use std::path::Path;
+use std::{env, fs};
 
 thread_local! {
     /// Thread-local Pdfium instance, leaked for 'static lifetime.
@@ -50,10 +51,8 @@ pub fn detect_needs_ocr(text: &str) -> bool {
     }
 
     // Count words (sequences of alphanumeric characters)
-    let word_count = text
-        .split_whitespace()
-        .filter(|word| word.chars().any(|c| c.is_alphanumeric()))
-        .count();
+    let word_count =
+        text.split_whitespace().filter(|word| word.chars().any(|c| c.is_alphanumeric())).count();
 
     if word_count < MIN_WORD_COUNT_THRESHOLD {
         return true;
@@ -105,33 +104,171 @@ pub struct PdfDocument {
 }
 
 impl PdfDocument {
+    #[cfg(target_os = "windows")]
+    fn platform_library_filename() -> &'static str {
+        "pdfium.dll"
+    }
+
+    #[cfg(target_os = "macos")]
+    fn platform_library_filename() -> &'static str {
+        "libpdfium.dylib"
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    fn platform_library_filename() -> &'static str {
+        "libpdfium.so"
+    }
+
+    fn push_pdfium_path_candidate(candidates: &mut Vec<std::path::PathBuf>, raw: &str) {
+        let trimmed = raw.trim();
+
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let path = Path::new(trimmed);
+        let is_library_file = path
+            .file_name()
+            .map(|name| {
+                name.to_string_lossy().eq_ignore_ascii_case(Self::platform_library_filename())
+            })
+            .unwrap_or(false);
+
+        if is_library_file {
+            candidates.push(path.to_path_buf());
+        } else {
+            candidates.push(path.join(Self::platform_library_filename()));
+        }
+    }
+
+    fn workspace_root_from_executable() -> Option<std::path::PathBuf> {
+        let exe = env::current_exe().ok()?;
+        let mut dir = exe.parent()?.to_path_buf();
+
+        loop {
+            if dir.join("Cargo.toml").exists() {
+                return Some(dir);
+            }
+
+            let is_target_dir = dir.file_name().map(|name| name == "target").unwrap_or(false);
+            if is_target_dir {
+                let parent = dir.parent()?.to_path_buf();
+                if parent.join("Cargo.toml").exists() {
+                    return Some(parent);
+                }
+            }
+
+            if !dir.pop() {
+                break;
+            }
+        }
+
+        None
+    }
+
+    fn candidate_pdfium_library_paths() -> Vec<std::path::PathBuf> {
+        let mut candidates = Vec::new();
+
+        // Explicit override: absolute path to library or directory containing it.
+        if let Ok(value) = env::var("BUTTERPAPER_PDFIUM_LIB") {
+            Self::push_pdfium_path_candidate(&mut candidates, &value);
+        }
+
+        // Supported by pdfium-render during linking, but also useful at runtime.
+        if let Ok(value) = env::var("PDFIUM_DYNAMIC_LIB_PATH") {
+            Self::push_pdfium_path_candidate(&mut candidates, &value);
+        }
+
+        // macOS dynamic loader fallback path.
+        if let Ok(value) = env::var("DYLD_LIBRARY_PATH") {
+            for entry in env::split_paths(&value) {
+                candidates.push(entry.join(Self::platform_library_filename()));
+            }
+        }
+
+        // Linux dynamic loader fallback path.
+        if let Ok(value) = env::var("LD_LIBRARY_PATH") {
+            for entry in env::split_paths(&value) {
+                candidates.push(entry.join(Self::platform_library_filename()));
+            }
+        }
+
+        if let Ok(exe_path) = env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                candidates.push(Pdfium::pdfium_platform_library_name_at_path(exe_dir));
+
+                #[cfg(target_os = "macos")]
+                {
+                    candidates.push(
+                        exe_dir.join("../Frameworks").join(Self::platform_library_filename()),
+                    );
+                }
+            }
+        }
+
+        if let Ok(cwd) = env::current_dir() {
+            candidates.push(Pdfium::pdfium_platform_library_name_at_path(&cwd));
+        }
+
+        if let Some(workspace_root) = Self::workspace_root_from_executable() {
+            let third_party_root = workspace_root.join("third_party").join("pdfium");
+            candidates.push(third_party_root.join(Self::platform_library_filename()));
+
+            // Common platform folders used by setup scripts.
+            candidates.push(
+                third_party_root
+                    .join(format!("{}-{}", env::consts::OS, env::consts::ARCH))
+                    .join(Self::platform_library_filename()),
+            );
+
+            candidates.push(
+                third_party_root
+                    .join(format!("{}-{}", env::consts::OS, env::consts::ARCH))
+                    .join("lib")
+                    .join(Self::platform_library_filename()),
+            );
+
+            // Last resort: discover nested library files under third_party/pdfium.
+            if let Ok(entries) = fs::read_dir(&third_party_root) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+
+                    candidates.push(path.join(Self::platform_library_filename()));
+                    candidates.push(path.join("lib").join(Self::platform_library_filename()));
+                }
+            }
+        }
+
+        candidates
+    }
+
     /// Initialize PDFium library (helper function)
     ///
     /// Search order:
-    /// 1. Executable's directory (for app bundles: .app/Contents/MacOS/)
-    /// 2. Current working directory
-    /// 3. System library paths
+    /// 1. Explicit env vars (`BUTTERPAPER_PDFIUM_LIB`, `PDFIUM_DYNAMIC_LIB_PATH`)
+    /// 2. Executable directory / app bundle locations
+    /// 3. Workspace-local `third_party/pdfium` locations
+    /// 4. Current working directory
+    /// 5. System library paths
     fn init_pdfium() -> PdfResult<Pdfium> {
-        // Get the executable's directory for app bundle support
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-
-        // Try executable directory first (app bundle support)
-        if let Some(ref dir) = exe_dir {
-            if let Ok(bindings) =
-                Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dir))
-            {
+        for candidate in Self::candidate_pdfium_library_paths() {
+            if let Ok(bindings) = Pdfium::bind_to_library(&candidate) {
                 return Ok(Pdfium::new(bindings));
             }
         }
 
-        // Fall back to current directory and system library
-        Ok(Pdfium::new(
-            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-                .or_else(|_| Pdfium::bind_to_system_library())
-                .map_err(|e| PdfError::InitializationError(e.to_string()))?,
-        ))
+        Pdfium::bind_to_system_library().map(Pdfium::new).map_err(|system_err| {
+            let hint = format!(
+                "Unable to locate {}. Set BUTTERPAPER_PDFIUM_LIB to the library path \
+or run scripts/setup_pdfium.sh to install a local runtime copy.",
+                Self::platform_library_filename()
+            );
+
+            PdfError::InitializationError(format!("{hint}\nSystem loader error: {system_err}"))
+        })
     }
 
     /// Get or initialize the thread-local Pdfium instance.
@@ -228,10 +365,7 @@ impl PdfDocument {
     /// # Returns
     /// A page reference or an error if the index is invalid
     pub fn get_page(&self, index: u16) -> PdfResult<PdfPage<'_>> {
-        self.document
-            .pages()
-            .get(index)
-            .map_err(|_| PdfError::InvalidPageIndex(index))
+        self.document.pages().get(index).map_err(|_| PdfError::InvalidPageIndex(index))
     }
 
     /// Get the document's metadata
@@ -239,21 +373,11 @@ impl PdfDocument {
         let meta = self.document.metadata();
 
         PdfMetadata {
-            title: meta
-                .get(PdfDocumentMetadataTagType::Title)
-                .map(|v| v.value().to_string()),
-            author: meta
-                .get(PdfDocumentMetadataTagType::Author)
-                .map(|v| v.value().to_string()),
-            subject: meta
-                .get(PdfDocumentMetadataTagType::Subject)
-                .map(|v| v.value().to_string()),
-            creator: meta
-                .get(PdfDocumentMetadataTagType::Creator)
-                .map(|v| v.value().to_string()),
-            producer: meta
-                .get(PdfDocumentMetadataTagType::Producer)
-                .map(|v| v.value().to_string()),
+            title: meta.get(PdfDocumentMetadataTagType::Title).map(|v| v.value().to_string()),
+            author: meta.get(PdfDocumentMetadataTagType::Author).map(|v| v.value().to_string()),
+            subject: meta.get(PdfDocumentMetadataTagType::Subject).map(|v| v.value().to_string()),
+            creator: meta.get(PdfDocumentMetadataTagType::Creator).map(|v| v.value().to_string()),
+            producer: meta.get(PdfDocumentMetadataTagType::Producer).map(|v| v.value().to_string()),
         }
     }
 
@@ -307,13 +431,11 @@ impl PdfDocument {
     pub fn render_page_rgba(&self, page_index: u16, width: u32, height: u32) -> PdfResult<Vec<u8>> {
         let page = self.get_page(page_index)?;
 
-        let config = PdfRenderConfig::new()
-            .set_target_width(width as i32)
-            .set_target_height(height as i32);
+        let config =
+            PdfRenderConfig::new().set_target_width(width as i32).set_target_height(height as i32);
 
-        let bitmap = page
-            .render_with_config(&config)
-            .map_err(|e| PdfError::RenderError(e.to_string()))?;
+        let bitmap =
+            page.render_with_config(&config).map_err(|e| PdfError::RenderError(e.to_string()))?;
 
         Ok(bitmap.as_rgba_bytes().to_vec())
     }
@@ -338,9 +460,7 @@ impl PdfDocument {
         let page_width = page.width().value;
         let page_height = page.height().value;
 
-        let scale = (max_width as f32 / page_width)
-            .min(max_height as f32 / page_height)
-            .max(0.1);
+        let scale = (max_width as f32 / page_width).min(max_height as f32 / page_height).max(0.1);
 
         let render_width = (page_width * scale) as u32;
         let render_height = (page_height * scale) as u32;
@@ -402,12 +522,9 @@ impl PdfDocument {
 
             if is_whitespace || is_newline {
                 // End current span if we have content
-                if let (false, Some(start_x), Some(min_y), Some(max_y)) = (
-                    current_text.is_empty(),
-                    span_start_x,
-                    span_min_y,
-                    span_max_y,
-                ) {
+                if let (false, Some(start_x), Some(min_y), Some(max_y)) =
+                    (current_text.is_empty(), span_start_x, span_min_y, span_max_y)
+                {
                     spans.push(TextSpanInfo {
                         text: current_text.clone(),
                         x: start_x,
@@ -441,12 +558,9 @@ impl PdfDocument {
         }
 
         // Don't forget the last span
-        if let (false, Some(start_x), Some(min_y), Some(max_y)) = (
-            current_text.is_empty(),
-            span_start_x,
-            span_min_y,
-            span_max_y,
-        ) {
+        if let (false, Some(start_x), Some(min_y), Some(max_y)) =
+            (current_text.is_empty(), span_start_x, span_min_y, span_max_y)
+        {
             spans.push(TextSpanInfo {
                 text: current_text,
                 x: start_x,
@@ -467,9 +581,7 @@ impl PdfDocument {
     /// # Returns
     /// Ok(()) on success, or a SaveError on failure
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), SaveError> {
-        self.document
-            .save_to_file(path.as_ref())
-            .map_err(|e| SaveError::SaveFailed(e.to_string()))
+        self.document.save_to_file(path.as_ref()).map_err(|e| SaveError::SaveFailed(e.to_string()))
     }
 
     /// Save the PDF document to bytes
@@ -477,9 +589,7 @@ impl PdfDocument {
     /// # Returns
     /// The PDF data as a Vec<u8> on success, or a SaveError on failure
     pub fn save_to_bytes(&self) -> Result<Vec<u8>, SaveError> {
-        self.document
-            .save_to_bytes()
-            .map_err(|e| SaveError::SaveFailed(e.to_string()))
+        self.document.save_to_bytes().map_err(|e| SaveError::SaveFailed(e.to_string()))
     }
 }
 
@@ -582,9 +692,7 @@ mod tests {
         assert!(detect_needs_ocr("This is a short sentence."));
 
         // 9 words - should need OCR
-        assert!(detect_needs_ocr(
-            "one two three four five six seven eight nine"
-        ));
+        assert!(detect_needs_ocr("one two three four five six seven eight nine"));
     }
 
     #[test]
@@ -678,9 +786,8 @@ mod tests {
     fn test_executable_path_detection() {
         // Verify that we can get the executable's directory
         // This is used to find libpdfium.dylib in app bundles
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+        let exe_dir =
+            std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf()));
 
         // Should always be able to get the executable directory
         assert!(exe_dir.is_some(), "Failed to get executable directory");
@@ -696,9 +803,8 @@ mod tests {
     #[test]
     fn test_pdfium_library_name_generation() {
         // Test that the library name is generated correctly for the platform
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+        let exe_dir =
+            std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf()));
 
         if let Some(dir) = exe_dir {
             let lib_path = Pdfium::pdfium_platform_library_name_at_path(&dir);
@@ -751,5 +857,27 @@ mod tests {
         let debug_str = format!("{:?}", err);
         assert!(debug_str.contains("SaveFailed"));
         assert!(debug_str.contains("test error"));
+    }
+
+    #[test]
+    fn test_push_pdfium_path_candidate_from_directory() {
+        let mut candidates = Vec::new();
+        PdfDocument::push_pdfium_path_candidate(&mut candidates, "/tmp/pdfium");
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].to_string_lossy().contains(PdfDocument::platform_library_filename()));
+    }
+
+    #[test]
+    fn test_push_pdfium_path_candidate_from_file() {
+        let mut candidates = Vec::new();
+
+        #[cfg(target_os = "windows")]
+        let path = r"C:\pdfium\pdfium.dll";
+        #[cfg(not(target_os = "windows"))]
+        let path = "/tmp/libpdfium.dylib";
+
+        PdfDocument::push_pdfium_path_candidate(&mut candidates, path);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0], Path::new(path));
     }
 }

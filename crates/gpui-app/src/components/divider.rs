@@ -17,12 +17,7 @@ use crate::Theme;
 pub fn divider(theme: &Theme) -> impl IntoElement {
     let border = theme.border;
 
-    div()
-        .w_full()
-        .h_0()
-        .my(sizes::PADDING_MD)
-        .border_t_1()
-        .border_color(border)
+    div().w_full().h_0().my(sizes::PADDING_MD).border_t_1().border_color(border)
 }
 
 /// Divider with no vertical margin (just the line).

@@ -5,6 +5,8 @@
 use gpui::{deferred, div, prelude::*, px, SharedString};
 
 use super::{icon, Icon};
+use crate::components::ButtonSize;
+use crate::ui::color;
 use crate::ui::sizes;
 use crate::Theme;
 
@@ -17,19 +19,13 @@ pub struct DropdownOption {
 
 impl DropdownOption {
     pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            value: value.into(),
-            label: label.into(),
-        }
+        Self { value: value.into(), label: label.into() }
     }
 
     /// Create option where value equals label.
     pub fn simple(label: impl Into<String>) -> Self {
         let label = label.into();
-        Self {
-            value: label.clone(),
-            label,
-        }
+        Self { value: label.clone(), label }
     }
 }
 
@@ -92,12 +88,13 @@ where
     }
 
     pub fn render(self, is_open: bool, theme: &Theme) -> impl IntoElement {
-        let surface = theme.surface;
+        let surface = theme.elevated_surface;
         let border = theme.border;
         let hover = theme.element_hover;
         let text_muted = theme.text_muted;
         let accent = theme.accent;
-        let max_height = px(240.0);
+        let max_height = sizes::DROPDOWN_MAX_HEIGHT;
+        let subtle_border = color::subtle_border(border);
 
         let selected = self.selected.clone();
         let current_label = self
@@ -113,17 +110,17 @@ where
         div()
             .relative()
             .w_full()
-            .h(sizes::CONTROL_HEIGHT)
+            .h(ButtonSize::Medium.height_px())
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
             .pl(sizes::PADDING_LG)
-            .pr(px(10.0))
+            .pr(sizes::SPACE_2)
             .bg(surface)
             .border_1()
-            .border_color(border)
-            .rounded(sizes::RADIUS_SM)
+            .border_color(subtle_border)
+            .rounded(sizes::RADIUS_MD)
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .id(id.clone())
@@ -142,11 +139,7 @@ where
                     .text_ellipsis()
                     .child(current_label),
             )
-            .child(
-                div()
-                    .ml(sizes::GAP_SM)
-                    .child(icon(Icon::ChevronDown, 10.0, text_muted)),
-            )
+            .child(div().ml(sizes::GAP_SM).child(icon(Icon::ChevronDown, 10.0, text_muted)))
             .when(is_open, |d| {
                 let options = self.options.clone();
                 let on_select = self.on_select.clone();
@@ -156,7 +149,7 @@ where
                     div()
                         .absolute()
                         .left_0()
-                        .top(sizes::CONTROL_HEIGHT + px(4.0))
+                        .top(ButtonSize::Medium.height_px() + sizes::SPACE_1)
                         .child(
                             deferred(
                                 div()
@@ -166,7 +159,7 @@ where
                                     .overflow_hidden()
                                     .bg(surface)
                                     .border_1()
-                                    .border_color(border)
+                                    .border_color(subtle_border)
                                     .rounded(sizes::RADIUS_MD)
                                     .shadow_lg()
                                     .py(sizes::PADDING_SM)
@@ -181,7 +174,7 @@ where
                                             .flex_row()
                                             .items_center()
                                             .justify_between()
-                                            .h(sizes::CONTROL_HEIGHT)
+                                            .h(ButtonSize::Medium.height_px())
                                             .px(sizes::PADDING_LG)
                                             .mx(sizes::PADDING_SM)
                                             .rounded(sizes::RADIUS_SM)

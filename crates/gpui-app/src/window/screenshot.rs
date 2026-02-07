@@ -14,12 +14,7 @@ pub fn schedule_screenshot(
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
 
-        match capture_window(
-            window_id,
-            window_title.as_deref(),
-            mouse_action.as_ref(),
-            &path,
-        ) {
+        match capture_window(window_id, window_title.as_deref(), mouse_action.as_ref(), &path) {
             Ok(()) => {
                 eprintln!("Screenshot saved to: {}", path.display());
                 std::process::exit(0);
@@ -49,9 +44,7 @@ pub fn capture_window(
         windows.iter().find(|w| w.id().unwrap_or(0) == id)
     } else if let Some(title) = window_title {
         // Find by title (partial match)
-        windows
-            .iter()
-            .find(|w| w.title().unwrap_or_default().contains(title))
+        windows.iter().find(|w| w.title().unwrap_or_default().contains(title))
     } else {
         // No filter - show available windows and error
         let available: Vec<String> = windows
@@ -97,13 +90,9 @@ pub fn capture_window(
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
 
-    let image = window
-        .capture_image()
-        .map_err(|e| format!("Failed to capture window: {}", e))?;
+    let image = window.capture_image().map_err(|e| format!("Failed to capture window: {}", e))?;
 
-    image
-        .save(path)
-        .map_err(|e| format!("Failed to save screenshot: {}", e))?;
+    image.save(path).map_err(|e| format!("Failed to save screenshot: {}", e))?;
 
     Ok(())
 }

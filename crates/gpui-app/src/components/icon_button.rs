@@ -3,48 +3,15 @@
 //! Provides a standardized icon button following Zed's design patterns with
 //! consistent sizing, proper hit areas, and hover/active states.
 //!
-//! # Size Reference (matching Zed button sizes)
-//! - Sm: 24px button, 14px icon - for tab close buttons, dense UIs
-//! - Md: 28px button, 16px icon - default, general purpose
-//! - Lg: 32px button, 18px icon - navigation, toolbars, prominent actions
+use gpui::{div, prelude::*, ClickEvent, SharedString, Window};
 
-use gpui::{div, prelude::*, px, ClickEvent, Pixels, SharedString, Window};
-
+use crate::components::button_like::{
+    disabled_text, subtle_border, variant_colors, ButtonLikeColors, ButtonLikeExt,
+    ButtonLikeVariant, ButtonSize,
+};
 use crate::components::icon::{icon, Icon};
-use crate::ui::{sizes, StatefulInteractiveExt};
+use crate::ui::sizes;
 use crate::Theme;
-
-/// Size variants for icon buttons, matching standard Zed button sizes.
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub enum IconButtonSize {
-    /// Small: 24x24px button with 14px icon
-    Sm,
-    /// Medium: 28x28px button with 16px icon (default)
-    #[default]
-    Md,
-    /// Large: 32x32px button with 18px icon
-    Lg,
-}
-
-impl IconButtonSize {
-    /// Returns the button container size (square).
-    pub fn button_size(self) -> Pixels {
-        match self {
-            IconButtonSize::Sm => px(24.0),
-            IconButtonSize::Md => px(28.0),
-            IconButtonSize::Lg => px(32.0),
-        }
-    }
-
-    /// Returns the icon size for this button size.
-    pub fn icon_size(self) -> f32 {
-        match self {
-            IconButtonSize::Sm => 14.0,
-            IconButtonSize::Md => 16.0,
-            IconButtonSize::Lg => 18.0,
-        }
-    }
-}
 
 /// Create an icon button with the specified icon, size, and click handler.
 ///
@@ -60,7 +27,7 @@ impl IconButtonSize {
 /// icon_button(
 ///     "close-tab-1",
 ///     Icon::Close,
-///     IconButtonSize::Sm,
+///     ButtonSize::Default,
 ///     theme,
 ///     |_, _, _| println!("clicked"),
 /// )
@@ -68,18 +35,17 @@ impl IconButtonSize {
 pub fn icon_button<F>(
     id: impl Into<SharedString>,
     icon_type: Icon,
-    size: IconButtonSize,
+    size: ButtonSize,
     theme: &Theme,
     on_click: F,
 ) -> impl IntoElement
 where
     F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let button_size = size.button_size();
-    let icon_size = size.icon_size();
-    let text_color = theme.text_muted;
-    let hover_bg = theme.element_hover;
-    let active_bg = theme.element_selected;
+    let button_size = size.height_px();
+    let icon_size = size.icon_size_px();
+    let mut colors = variant_colors(ButtonLikeVariant::Neutral, theme);
+    colors.text = theme.text;
 
     div()
         .id(id.into())
@@ -89,12 +55,10 @@ where
         .flex_shrink_0()
         .items_center()
         .justify_center()
-        .rounded(sizes::RADIUS_SM)
+        .button_like(colors, sizes::RADIUS_MD)
         .cursor_pointer()
-        .text_color(text_color)
-        .interactive_bg(hover_bg, active_bg)
         .on_click(on_click)
-        .child(icon(icon_type, icon_size, text_color))
+        .child(icon(icon_type, icon_size, colors.text))
 }
 
 /// Create an icon button that can be conditionally enabled/disabled.
@@ -106,7 +70,7 @@ where
 /// icon_button_conditional(
 ///     "nav-back",
 ///     Icon::ArrowLeft,
-///     IconButtonSize::Lg,
+///     ButtonSize::Large,
 ///     can_go_back,
 ///     theme,
 ///     |_, _, _| go_back(),
@@ -115,7 +79,7 @@ where
 pub fn icon_button_conditional<F>(
     id: impl Into<SharedString>,
     icon_type: Icon,
-    size: IconButtonSize,
+    size: ButtonSize,
     enabled: bool,
     theme: &Theme,
     on_click: F,
@@ -123,14 +87,20 @@ pub fn icon_button_conditional<F>(
 where
     F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let button_size = size.button_size();
-    let icon_size = size.icon_size();
-    let text_enabled = theme.text;
-    let text_disabled = theme.text_muted;
-    let hover_bg = theme.element_hover;
-    let active_bg = theme.element_selected;
-
-    let text_color = if enabled { text_enabled } else { text_disabled };
+    let button_size = size.height_px();
+    let icon_size = size.icon_size_px();
+    let text_color = if enabled { theme.text } else { disabled_text(theme) };
+    let mut colors = ButtonLikeColors {
+        background: theme.elevated_surface,
+        text: text_color,
+        border: subtle_border(theme),
+        hover: theme.element_hover,
+        active: theme.element_selected,
+    };
+    if !enabled {
+        colors.hover = colors.background;
+        colors.active = colors.background;
+    }
 
     div()
         .id(id.into())
@@ -140,12 +110,7 @@ where
         .flex_shrink_0()
         .items_center()
         .justify_center()
-        .rounded(sizes::RADIUS_SM)
-        .text_color(text_color)
-        .when(enabled, move |d| {
-            d.cursor_pointer()
-                .interactive_bg(hover_bg, active_bg)
-                .on_click(on_click)
-        })
+        .button_like(colors, sizes::RADIUS_MD)
+        .when(enabled, move |d| d.cursor_pointer().on_click(on_click))
         .child(icon(icon_type, icon_size, text_color))
 }

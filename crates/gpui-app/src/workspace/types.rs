@@ -84,12 +84,7 @@ impl Tab {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "Untitled".to_string());
 
-        Self {
-            id: TabId::new(),
-            path,
-            title,
-            is_dirty: false,
-        }
+        Self { id: TabId::new(), path, title, is_dirty: false }
     }
 
     /// Set a custom title for the tab.
@@ -115,20 +110,12 @@ pub struct TabBar {
 impl TabBar {
     /// Create a new empty tab bar.
     pub fn new() -> Self {
-        Self {
-            id: TabBarId::new(),
-            tabs: Vec::new(),
-            active_tab_index: 0,
-        }
+        Self { id: TabBarId::new(), tabs: Vec::new(), active_tab_index: 0 }
     }
 
     /// Create a tab bar with an initial tab.
     pub fn with_tab(tab: Tab) -> Self {
-        Self {
-            id: TabBarId::new(),
-            tabs: vec![tab],
-            active_tab_index: 0,
-        }
+        Self { id: TabBarId::new(), tabs: vec![tab], active_tab_index: 0 }
     }
 
     /// Add a new tab and make it active.
@@ -225,12 +212,7 @@ pub struct EditorWindow {
 impl EditorWindow {
     /// Create a new empty window.
     pub fn new() -> Self {
-        Self {
-            id: WindowId::new(),
-            tab_bar: TabBar::new(),
-            is_focused: false,
-            bounds: None,
-        }
+        Self { id: WindowId::new(), tab_bar: TabBar::new(), is_focused: false, bounds: None }
     }
 
     /// Create a window with an initial tab.
@@ -304,11 +286,7 @@ pub struct TabPreferences {
 
 impl Default for TabPreferences {
     fn default() -> Self {
-        Self {
-            prefer_tabs: true,
-            allow_merge: true,
-            show_tab_bar: true,
-        }
+        Self { prefer_tabs: true, allow_merge: true, show_tab_bar: true }
     }
 }
 
@@ -350,8 +328,7 @@ impl Workspace {
 
     /// Get the active window mutably.
     pub fn active_window_mut(&mut self) -> Option<&mut EditorWindow> {
-        self.active_window_id
-            .and_then(|id| self.windows.get_mut(&id))
+        self.active_window_id.and_then(|id| self.windows.get_mut(&id))
     }
 
     /// Get a window by ID.

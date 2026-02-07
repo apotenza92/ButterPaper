@@ -76,8 +76,12 @@ pub fn parse_args() -> CliArgs {
         println!("  Cmd+O              Open file");
         println!("  Cmd++/Cmd+=        Zoom in");
         println!("  Cmd+-              Zoom out");
+        println!("  Cmd+0              Reset zoom to 100%");
+        println!("  Cmd+8              Fit width");
+        println!("  Cmd+9              Fit page");
         println!("  Arrow keys         Navigate pages");
         println!("  PageUp/Down        Navigate pages");
+        println!("  Home/End           First/last page");
         println!("  Cmd+Alt+Right      Next tab");
         println!("  Cmd+Alt+Left       Previous tab");
         println!("  Cmd+W              Close tab");

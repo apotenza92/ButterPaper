@@ -126,9 +126,7 @@ pub fn click_element(element_id: &str, window_title: Option<&str>) {
     };
 
     let target_title = window_title.unwrap_or(&info.window_title);
-    let window = windows
-        .iter()
-        .find(|w| w.title().unwrap_or_default().contains(target_title));
+    let window = windows.iter().find(|w| w.title().unwrap_or_default().contains(target_title));
 
     let window = match window {
         Some(w) => w,

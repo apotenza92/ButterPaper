@@ -81,14 +81,7 @@ impl From<&Workspace> for SavedLayout {
             .values()
             .map(|w| SavedWindow {
                 bounds: w.bounds,
-                tabs: w
-                    .tab_bar
-                    .tabs
-                    .iter()
-                    .map(|t| SavedTab {
-                        path: t.path.clone(),
-                    })
-                    .collect(),
+                tabs: w.tab_bar.tabs.iter().map(|t| SavedTab { path: t.path.clone() }).collect(),
                 active_tab_index: w.tab_bar.active_tab_index,
             })
             .collect();
@@ -97,10 +90,7 @@ impl From<&Workspace> for SavedLayout {
             .active_window_id
             .and_then(|id| workspace.windows.keys().position(|&k| k == id));
 
-        SavedLayout {
-            windows,
-            active_window_index,
-        }
+        SavedLayout { windows, active_window_index }
     }
 }
 
@@ -159,9 +149,8 @@ pub fn restore_workspace(layout: &SavedLayout) -> Workspace {
             tab_bar.tabs.push(tab);
         }
         // Restore active tab index, clamping to valid range
-        tab_bar.active_tab_index = saved_window
-            .active_tab_index
-            .min(tab_bar.tabs.len().saturating_sub(1));
+        tab_bar.active_tab_index =
+            saved_window.active_tab_index.min(tab_bar.tabs.len().saturating_sub(1));
 
         let mut window = EditorWindow::new();
         window.tab_bar = tab_bar;

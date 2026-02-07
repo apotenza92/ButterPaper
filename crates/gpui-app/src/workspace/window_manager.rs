@@ -60,10 +60,8 @@ pub fn merge_windows(workspace: &mut Workspace, source_id: WindowId, target_id: 
     }
 
     // Get source window tabs
-    let source_tabs = workspace
-        .get_window(source_id)
-        .map(|w| w.tab_bar.tabs.clone())
-        .unwrap_or_default();
+    let source_tabs =
+        workspace.get_window(source_id).map(|w| w.tab_bar.tabs.clone()).unwrap_or_default();
 
     // Add tabs to target
     if let Some(target) = workspace.get_window_mut(target_id) {
@@ -153,11 +151,7 @@ pub fn detach_tab_to_new_window(
     let window = EditorWindow::with_tab(tab);
     let new_window_id = workspace.add_window(window);
 
-    let close_source = if should_close {
-        Some(source_window_id)
-    } else {
-        None
-    };
+    let close_source = if should_close { Some(source_window_id) } else { None };
 
     (new_window_id, close_source)
 }

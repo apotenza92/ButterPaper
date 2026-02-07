@@ -4,22 +4,12 @@
 //! consistent styling for input-like containers. Actual input handling
 //! requires GPUI's text input primitives or custom implementation.
 
-use gpui::{div, prelude::*, px, SharedString};
+use gpui::{div, prelude::*, SharedString};
 
+use crate::components::button_like::ButtonSize;
+use crate::ui::color;
 use crate::ui::sizes;
 use crate::Theme;
-
-/// Input size variants
-#[derive(Clone, Copy, Default)]
-pub enum InputSize {
-    /// Small: 24px height
-    Sm,
-    /// Medium: 32px height (default)
-    #[default]
-    Md,
-    /// Large: 40px height
-    Lg,
-}
 
 /// Create a styled text input container.
 ///
@@ -28,16 +18,17 @@ pub enum InputSize {
 ///
 /// # Example
 /// ```ignore
-/// text_input("search-input", "Search...", InputSize::Md, theme)
+/// text_input("search-input", "Search...", ButtonSize::Medium, theme)
 /// ```
 pub fn text_input(
     id: impl Into<SharedString>,
     placeholder: impl Into<SharedString>,
-    size: InputSize,
+    size: ButtonSize,
     theme: &Theme,
 ) -> impl IntoElement {
     let placeholder = placeholder.into();
     let (height, px_val, text_size) = size_dimensions(size);
+    let subtle_border = color::subtle_border(theme.border);
 
     div()
         .id(id.into())
@@ -47,8 +38,8 @@ pub fn text_input(
         .items_center()
         .bg(theme.elevated_surface)
         .border_1()
-        .border_color(theme.border)
-        .rounded(sizes::RADIUS_SM)
+        .border_color(subtle_border)
+        .rounded(sizes::RADIUS_MD)
         .text_size(text_size)
         .text_color(theme.text_muted)
         .child(placeholder)
@@ -65,14 +56,28 @@ pub fn text_input_default(
     placeholder: impl Into<SharedString>,
     theme: &Theme,
 ) -> impl IntoElement {
-    text_input(id, placeholder, InputSize::Md, theme)
+    text_input(id, placeholder, ButtonSize::Medium, theme)
 }
 
 /// Get dimensions for an input size.
-fn size_dimensions(size: InputSize) -> (gpui::Pixels, gpui::Pixels, gpui::Pixels) {
-    match size {
-        InputSize::Sm => (px(24.0), sizes::SPACE_2, px(12.0)),
-        InputSize::Md => (px(32.0), sizes::SPACE_3, px(14.0)),
-        InputSize::Lg => (px(40.0), sizes::SPACE_4, px(14.0)),
+fn size_dimensions(size: ButtonSize) -> (gpui::Pixels, gpui::Pixels, gpui::Pixels) {
+    (size.height_px(), size.horizontal_padding_px(), size.text_size_px())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::size_dimensions;
+    use crate::components::ButtonSize;
+
+    #[test]
+    fn input_dimensions_match_shared_button_sizes() {
+        let (h, px_val, text) = size_dimensions(ButtonSize::Default);
+        let h: f32 = h.into();
+        let px_val: f32 = px_val.into();
+        let text: f32 = text.into();
+
+        assert_eq!(h, 22.0);
+        assert_eq!(px_val, 8.0);
+        assert_eq!(text, 14.0);
     }
 }

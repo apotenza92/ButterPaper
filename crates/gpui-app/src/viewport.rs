@@ -8,11 +8,11 @@
 
 use crate::cache::{create_render_image, CacheKey, PageCache};
 use crate::current_theme;
+use butterpaper_render::PdfDocument;
 use gpui::{
     div, img, prelude::*, px, FocusHandle, Focusable, ImageSource, MouseMoveEvent, Pixels, Point,
     ScrollDelta, ScrollWheelEvent,
 };
-use butterpaper_render::PdfDocument;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -24,6 +24,69 @@ const RENDER_BUFFER: f32 = 400.0;
 
 /// Maximum pages to render per frame (limits jank during fast scroll)
 const MAX_RENDERS_PER_FRAME: usize = 3;
+
+/// Minimum and maximum supported zoom percentages.
+const MIN_ZOOM_PERCENT: u32 = 25;
+const MAX_ZOOM_PERCENT: u32 = 400;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ZoomMode {
+    Percent,
+    FitWidth,
+    FitPage,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PageNavTarget {
+    First,
+    Prev,
+    Next,
+    Last,
+}
+
+fn clamp_zoom(zoom: u32) -> u32 {
+    zoom.clamp(MIN_ZOOM_PERCENT, MAX_ZOOM_PERCENT)
+}
+
+fn fit_width_percent(canvas_width: f32, page_width: f32) -> u32 {
+    if canvas_width <= 0.0 || page_width <= 0.0 {
+        return 100;
+    }
+
+    let usable_width = (canvas_width - PAGE_GAP * 2.0).max(1.0);
+    clamp_zoom(((usable_width / page_width) * 100.0).round() as u32)
+}
+
+fn fit_page_percent(
+    canvas_width: f32,
+    canvas_height: f32,
+    page_width: f32,
+    page_height: f32,
+) -> u32 {
+    if canvas_width <= 0.0 || canvas_height <= 0.0 || page_width <= 0.0 || page_height <= 0.0 {
+        return 100;
+    }
+
+    let usable_width = (canvas_width - PAGE_GAP * 2.0).max(1.0);
+    let usable_height = (canvas_height - PAGE_GAP * 2.0).max(1.0);
+    let width_ratio = usable_width / page_width;
+    let height_ratio = usable_height / page_height;
+    clamp_zoom((width_ratio.min(height_ratio) * 100.0).round() as u32)
+}
+
+fn resolve_page_nav_target(current_page: u16, page_count: u16, target: PageNavTarget) -> u16 {
+    if page_count == 0 {
+        return 0;
+    }
+
+    let max_index = page_count - 1;
+    match target {
+        PageNavTarget::First => 0,
+        PageNavTarget::Prev => current_page.saturating_sub(1),
+        PageNavTarget::Next => (current_page + 1).min(max_index),
+        PageNavTarget::Last => max_index,
+    }
+}
 
 /// Rendered page ready for display
 #[derive(Clone)]
@@ -49,8 +112,10 @@ struct PageLayout {
 pub struct PdfViewport {
     /// Loaded PDF document
     document: Option<Arc<PdfDocument>>,
-    /// Zoom level (percentage, e.g. 100 = 100%)
+    /// Effective zoom level (percentage, e.g. 100 = 100%)
     pub zoom_level: u32,
+    /// How zoom level should react to canvas size changes.
+    zoom_mode: ZoomMode,
     /// Scroll offset Y (for continuous scroll)
     scroll_y: f32,
     /// Page layouts (computed on load/zoom)
@@ -63,6 +128,10 @@ pub struct PdfViewport {
     display_pages: Vec<DisplayPage>,
     /// Viewport height (for visibility calculation)
     viewport_height: f32,
+    /// Canvas width used for fit calculations.
+    canvas_width: f32,
+    /// Canvas height used for fit calculations.
+    canvas_height: f32,
     /// Is dragging (for pan)
     is_dragging: bool,
     /// Last mouse position during drag
@@ -82,18 +151,21 @@ impl PdfViewport {
         Self {
             document: None,
             zoom_level: 100,
+            zoom_mode: ZoomMode::Percent,
             scroll_y: 0.0,
             page_layouts: Vec::new(),
             total_height: 0.0,
             cache: PageCache::new(),
             display_pages: Vec::new(),
             viewport_height: 768.0,
+            canvas_width: 1024.0,
+            canvas_height: 768.0,
             is_dragging: false,
             last_drag_pos: None,
             focus_handle: cx.focus_handle(),
             on_page_change: None,
             pending_renders: Vec::new(),
-            scale_factor: 1.0, // Will be updated from window.scale_factor() on first render
+            scale_factor: 1.0, // Updated from window.scale_factor() on first render
         }
     }
 
@@ -125,14 +197,58 @@ impl PdfViewport {
         self.cache.clear();
         self.pending_renders.clear();
         self.compute_layout();
+
+        match self.zoom_mode {
+            ZoomMode::FitWidth => {
+                self.apply_fit_width_zoom();
+            }
+            ZoomMode::FitPage => {
+                self.apply_fit_page_zoom();
+            }
+            ZoomMode::Percent => {}
+        }
+
         self.update_visible_pages();
         cx.notify();
     }
 
+    /// Set canvas metrics used by fit calculations and visibility.
+    pub fn set_canvas_metrics(&mut self, width: f32, height: f32, cx: &mut gpui::Context<Self>) {
+        let width = width.max(1.0);
+        let height = height.max(1.0);
+        let changed =
+            (self.canvas_width - width).abs() > 0.5 || (self.canvas_height - height).abs() > 0.5;
+
+        if !changed {
+            return;
+        }
+
+        self.canvas_width = width;
+        self.canvas_height = height;
+        self.viewport_height = height;
+
+        let zoom_changed = match self.zoom_mode {
+            ZoomMode::FitWidth => self.apply_fit_width_zoom(),
+            ZoomMode::FitPage => self.apply_fit_page_zoom(),
+            ZoomMode::Percent => false,
+        };
+
+        if !zoom_changed {
+            self.clamp_scroll();
+            self.update_visible_pages();
+        }
+
+        cx.notify();
+    }
+
     /// Get the document (for sharing with sidebar)
-    #[allow(dead_code)] // May be used for document info display
+    #[allow(dead_code)]
     pub fn document(&self) -> Option<Arc<PdfDocument>> {
         self.document.clone()
+    }
+
+    pub fn has_document(&self) -> bool {
+        self.document.is_some()
     }
 
     /// Get page count
@@ -152,7 +268,7 @@ impl PdfViewport {
     }
 
     /// Get current page (1-based for display)
-    #[allow(dead_code)] // Used by UI elements in development
+    #[allow(dead_code)]
     pub fn current_page_display(&self) -> u16 {
         self.current_page() + 1
     }
@@ -167,52 +283,135 @@ impl PdfViewport {
         }
     }
 
+    pub fn first_page(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.page_count() > 0 {
+            self.go_to_page(
+                resolve_page_nav_target(
+                    self.current_page(),
+                    self.page_count(),
+                    PageNavTarget::First,
+                ),
+                cx,
+            );
+        }
+    }
+
     /// Go to next page
     pub fn next_page(&mut self, cx: &mut gpui::Context<Self>) {
         let current = self.current_page();
-        if current + 1 < self.page_count() {
-            self.go_to_page(current + 1, cx);
+        let target = resolve_page_nav_target(current, self.page_count(), PageNavTarget::Next);
+        if target != current {
+            self.go_to_page(target, cx);
         }
     }
 
     /// Go to previous page
     pub fn prev_page(&mut self, cx: &mut gpui::Context<Self>) {
         let current = self.current_page();
-        if current > 0 {
-            self.go_to_page(current - 1, cx);
+        let target = resolve_page_nav_target(current, self.page_count(), PageNavTarget::Prev);
+        if target != current {
+            self.go_to_page(target, cx);
         }
     }
 
-    /// Set zoom level
+    pub fn last_page(&mut self, cx: &mut gpui::Context<Self>) {
+        let current = self.current_page();
+        let target = resolve_page_nav_target(current, self.page_count(), PageNavTarget::Last);
+        if target != current {
+            self.go_to_page(target, cx);
+        }
+    }
+
+    /// Set zoom level in percent mode.
     pub fn set_zoom(&mut self, zoom: u32, cx: &mut gpui::Context<Self>) {
-        let new_zoom = zoom.clamp(25, 400);
-        if new_zoom != self.zoom_level {
-            // Preserve relative scroll position
-            let scroll_ratio = if self.total_height > 0.0 {
-                self.scroll_y / self.total_height
-            } else {
-                0.0
-            };
+        self.zoom_mode = ZoomMode::Percent;
+        if self.set_zoom_internal(zoom) {
+            cx.notify();
+        }
+    }
 
-            self.zoom_level = new_zoom;
-            self.compute_layout();
+    pub fn reset_zoom(&mut self, cx: &mut gpui::Context<Self>) {
+        self.zoom_mode = ZoomMode::Percent;
+        if self.set_zoom_internal(100) {
+            cx.notify();
+        }
+    }
 
-            // Restore relative position
-            self.scroll_y = scroll_ratio * self.total_height;
-            self.clamp_scroll();
-            self.update_visible_pages();
+    pub fn fit_width(&mut self, cx: &mut gpui::Context<Self>) {
+        let mode_changed = self.zoom_mode != ZoomMode::FitWidth;
+        self.zoom_mode = ZoomMode::FitWidth;
+        let zoom_changed = self.apply_fit_width_zoom();
+        if mode_changed || zoom_changed {
+            cx.notify();
+        }
+    }
+
+    pub fn fit_page(&mut self, cx: &mut gpui::Context<Self>) {
+        let mode_changed = self.zoom_mode != ZoomMode::FitPage;
+        self.zoom_mode = ZoomMode::FitPage;
+        let zoom_changed = self.apply_fit_page_zoom();
+        if mode_changed || zoom_changed {
             cx.notify();
         }
     }
 
     /// Zoom in by 25%
     pub fn zoom_in(&mut self, cx: &mut gpui::Context<Self>) {
-        self.set_zoom(self.zoom_level + 25, cx);
+        self.zoom_mode = ZoomMode::Percent;
+        if self.set_zoom_internal(self.zoom_level + 25) {
+            cx.notify();
+        }
     }
 
     /// Zoom out by 25%
     pub fn zoom_out(&mut self, cx: &mut gpui::Context<Self>) {
-        self.set_zoom(self.zoom_level.saturating_sub(25), cx);
+        self.zoom_mode = ZoomMode::Percent;
+        if self.set_zoom_internal(self.zoom_level.saturating_sub(25)) {
+            cx.notify();
+        }
+    }
+
+    fn current_page_size_points(&self) -> Option<(f32, f32)> {
+        let doc = self.document.as_ref()?;
+        let page_index = self.current_page();
+        let page = doc.get_page(page_index).ok()?;
+        Some((page.width().value, page.height().value))
+    }
+
+    fn apply_fit_width_zoom(&mut self) -> bool {
+        let Some((page_width, _)) = self.current_page_size_points() else {
+            return false;
+        };
+        let fit = fit_width_percent(self.canvas_width, page_width);
+        self.set_zoom_internal(fit)
+    }
+
+    fn apply_fit_page_zoom(&mut self) -> bool {
+        let Some((page_width, page_height)) = self.current_page_size_points() else {
+            return false;
+        };
+        let fit = fit_page_percent(self.canvas_width, self.canvas_height, page_width, page_height);
+        self.set_zoom_internal(fit)
+    }
+
+    fn set_zoom_internal(&mut self, zoom: u32) -> bool {
+        let new_zoom = clamp_zoom(zoom);
+        if new_zoom == self.zoom_level {
+            return false;
+        }
+
+        // Preserve relative scroll position
+        let scroll_ratio =
+            if self.total_height > 0.0 { self.scroll_y / self.total_height } else { 0.0 };
+
+        self.zoom_level = new_zoom;
+        self.compute_layout();
+
+        // Restore relative position
+        self.scroll_y = scroll_ratio * self.total_height;
+        self.clamp_scroll();
+        self.update_visible_pages();
+        true
     }
 
     /// Compute page layouts
@@ -230,12 +429,7 @@ impl PdfViewport {
                 let width = page.width().value * zoom_factor;
                 let height = page.height().value * zoom_factor;
 
-                self.page_layouts.push(PageLayout {
-                    page_index,
-                    width,
-                    height,
-                    y_offset,
-                });
+                self.page_layouts.push(PageLayout { page_index, width, height, y_offset });
 
                 y_offset += height + PAGE_GAP;
             }
@@ -290,10 +484,7 @@ impl PdfViewport {
         }
 
         // Store remaining pages for deferred rendering
-        self.pending_renders = pages_to_render
-            .into_iter()
-            .skip(renders_this_frame)
-            .collect();
+        self.pending_renders = pages_to_render.into_iter().skip(renders_this_frame).collect();
 
         // Sort by y_offset for proper display order
         new_display.sort_by(|a, b| a.y_offset.partial_cmp(&b.y_offset).unwrap());
@@ -354,9 +545,8 @@ impl PdfViewport {
         let render_width = (layout.width * self.scale_factor) as u32;
         let render_height = (layout.height * self.scale_factor) as u32;
 
-        let rgba_pixels = doc
-            .render_page_rgba(layout.page_index, render_width, render_height)
-            .ok()?;
+        let rgba_pixels =
+            doc.render_page_rgba(layout.page_index, render_width, render_height).ok()?;
 
         let image = create_render_image(rgba_pixels, render_width, render_height)?;
 
@@ -365,8 +555,7 @@ impl PdfViewport {
         let display_height = layout.height as u32;
 
         let cache_key = CacheKey::new(layout.page_index, self.zoom_level);
-        self.cache
-            .insert(cache_key, image.clone(), display_width, display_height);
+        self.cache.insert(cache_key, image.clone(), display_width, display_height);
 
         Some(DisplayPage {
             page_index: layout.page_index,
@@ -397,6 +586,18 @@ impl PdfViewport {
         if new_page != old_page {
             if let Some(callback) = &self.on_page_change {
                 callback(new_page, cx);
+            }
+
+            if matches!(self.zoom_mode, ZoomMode::FitWidth | ZoomMode::FitPage) {
+                match self.zoom_mode {
+                    ZoomMode::FitWidth => {
+                        let _ = self.apply_fit_width_zoom();
+                    }
+                    ZoomMode::FitPage => {
+                        let _ = self.apply_fit_page_zoom();
+                    }
+                    ZoomMode::Percent => {}
+                }
             }
         }
 
@@ -524,7 +725,7 @@ impl Render for PdfViewport {
                             .flex()
                             .justify_center()
                             .child(
-                                div().shadow_lg().child(
+                                div().shadow_sm().child(
                                     img(ImageSource::Render(page.image.clone()))
                                         .w(px(page.width as f32))
                                         .h(px(page.height as f32)),
@@ -543,5 +744,32 @@ impl Render for PdfViewport {
                     .child("No PDF loaded. Use File > Open or ⌘O to open a PDF.")
                     .into_any_element()
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fit_page_percent, fit_width_percent, resolve_page_nav_target, PageNavTarget};
+
+    #[test]
+    fn fit_width_clamps_to_zoom_limits() {
+        assert_eq!(fit_width_percent(1000.0, 500.0), 192);
+        assert_eq!(fit_width_percent(10_000.0, 10.0), 400);
+        assert_eq!(fit_width_percent(10.0, 10_000.0), 25);
+    }
+
+    #[test]
+    fn fit_page_uses_smallest_ratio() {
+        let zoom = fit_page_percent(1000.0, 800.0, 400.0, 2000.0);
+        assert_eq!(zoom, 38);
+    }
+
+    #[test]
+    fn page_navigation_targets_are_bounded() {
+        assert_eq!(resolve_page_nav_target(0, 0, PageNavTarget::First), 0);
+        assert_eq!(resolve_page_nav_target(0, 1, PageNavTarget::Prev), 0);
+        assert_eq!(resolve_page_nav_target(0, 5, PageNavTarget::Next), 1);
+        assert_eq!(resolve_page_nav_target(4, 5, PageNavTarget::Next), 4);
+        assert_eq!(resolve_page_nav_target(2, 5, PageNavTarget::Last), 4);
     }
 }

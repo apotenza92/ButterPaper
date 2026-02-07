@@ -3174,7 +3174,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "butterpaper-gpui"
+name = "butterpaper"
 version = "0.1.0"
 dependencies = [
  "gpui",

@@ -19,10 +19,7 @@ pub fn list_windows() {
                 let height = w.height().unwrap_or(0);
                 // Skip windows with no title (usually system windows)
                 if !title.is_empty() {
-                    println!(
-                        "{:<8} {:<30} ({},{}) {}x{}  {}",
-                        id, app, x, y, width, height, title
-                    );
+                    println!("{:<8} {:<30} ({},{}) {}x{}  {}", id, app, x, y, width, height, title);
                 }
             }
         }
@@ -51,9 +48,7 @@ pub fn focus_window(window_id: Option<u32>, window_title: Option<&str>) {
     let window = if let Some(id) = window_id {
         windows.iter().find(|w| w.id().unwrap_or(0) == id)
     } else if let Some(title) = window_title {
-        windows
-            .iter()
-            .find(|w| w.title().unwrap_or_default().contains(title))
+        windows.iter().find(|w| w.title().unwrap_or_default().contains(title))
     } else {
         eprintln!("Specify --window-id or --window-title with --focus");
         std::process::exit(1);
@@ -89,11 +84,7 @@ pub fn focus_window(window_id: Option<u32>, window_title: Option<&str>) {
         app, title
     );
 
-    match std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .output()
-    {
+    match std::process::Command::new("osascript").arg("-e").arg(&script).output() {
         Ok(output) => {
             if output.status.success() {
                 eprintln!("Window raised successfully");
@@ -125,9 +116,7 @@ pub fn focus_window(window_id: Option<u32>, window_title: Option<&str>) {
     let window = if let Some(id) = window_id {
         windows.iter().find(|w| w.id().unwrap_or(0) == id)
     } else if let Some(title) = window_title {
-        windows
-            .iter()
-            .find(|w| w.title().unwrap_or_default().contains(title))
+        windows.iter().find(|w| w.title().unwrap_or_default().contains(title))
     } else {
         eprintln!("Specify --window-id or --window-title with --focus");
         std::process::exit(1);
@@ -150,11 +139,7 @@ pub fn focus_window(window_id: Option<u32>, window_title: Option<&str>) {
         title
     );
 
-    match std::process::Command::new("powershell")
-        .arg("-Command")
-        .arg(&script)
-        .output()
-    {
+    match std::process::Command::new("powershell").arg("-Command").arg(&script).output() {
         Ok(output) => {
             if output.status.success() {
                 eprintln!("Window raised successfully");
@@ -186,9 +171,7 @@ pub fn focus_window(window_id: Option<u32>, window_title: Option<&str>) {
     let window = if let Some(id) = window_id {
         windows.iter().find(|w| w.id().unwrap_or(0) == id)
     } else if let Some(title) = window_title {
-        windows
-            .iter()
-            .find(|w| w.title().unwrap_or_default().contains(title))
+        windows.iter().find(|w| w.title().unwrap_or_default().contains(title))
     } else {
         eprintln!("Specify --window-id or --window-title with --focus");
         std::process::exit(1);
@@ -208,10 +191,8 @@ pub fn focus_window(window_id: Option<u32>, window_title: Option<&str>) {
 
     // Use wmctrl or xdotool to bring window to front
     // Try xdotool first (more common)
-    let result = std::process::Command::new("xdotool")
-        .arg("windowactivate")
-        .arg(id.to_string())
-        .output();
+    let result =
+        std::process::Command::new("xdotool").arg("windowactivate").arg(id.to_string()).output();
 
     match result {
         Ok(output) if output.status.success() => {

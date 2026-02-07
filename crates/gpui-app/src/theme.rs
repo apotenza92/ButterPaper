@@ -10,13 +10,13 @@
 #![allow(dead_code)]
 
 use gpui::{App, Global, Rgba, SharedString, Window, WindowAppearance};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::theme_updater;
 
 /// User's preferred appearance mode
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppearanceMode {
     Light,
     Dark,
@@ -39,14 +39,8 @@ impl AppearanceMode {
 
 /// Get the current theme based on appearance mode and user's theme selection
 pub fn current_theme(window: &Window, cx: &App) -> Theme {
-    let mode = cx
-        .try_global::<AppearanceMode>()
-        .copied()
-        .unwrap_or_default();
-    let settings = cx
-        .try_global::<ThemeSettings>()
-        .cloned()
-        .unwrap_or_default();
+    let mode = cx.try_global::<AppearanceMode>().copied().unwrap_or_default();
+    let settings = cx.try_global::<ThemeSettings>().cloned().unwrap_or_default();
     let appearance = mode.resolve(window.appearance());
     let registry = theme_registry();
 
@@ -62,8 +56,6 @@ pub fn current_theme(window: &Window, cx: &App) -> Theme {
 
 /// Built-in theme JSON files (embedded as fallback)
 const ONE_THEME_JSON: &str = include_str!("../assets/themes/one.json");
-const AYU_THEME_JSON: &str = include_str!("../assets/themes/ayu.json");
-const GRUVBOX_THEME_JSON: &str = include_str!("../assets/themes/gruvbox.json");
 
 /// Theme family containing light and dark variants
 #[derive(Debug, Clone, Deserialize)]
@@ -150,20 +142,14 @@ pub struct ThemeRegistry {
 impl ThemeRegistry {
     /// Create a new registry with built-in themes
     pub fn new() -> Self {
-        let mut registry = Self {
-            families: Vec::new(),
-        };
+        let mut registry = Self { families: Vec::new() };
         registry.load_builtin_themes();
         registry
     }
 
     fn load_builtin_themes(&mut self) {
         // Theme sources: (name, cache_key, embedded_fallback)
-        let theme_sources = [
-            ("One", "one", ONE_THEME_JSON),
-            ("Ayu", "ayu", AYU_THEME_JSON),
-            ("Gruvbox", "gruvbox", GRUVBOX_THEME_JSON),
-        ];
+        let theme_sources = [("One", "one", ONE_THEME_JSON)];
 
         for (name, cache_key, embedded) in theme_sources {
             // Try cached version first (auto-updated from GitHub)
@@ -189,10 +175,7 @@ impl ThemeRegistry {
             .iter()
             .flat_map(|f| {
                 f.themes.iter().map(|t| {
-                    (
-                        SharedString::from(t.name.clone()),
-                        SharedString::from(t.appearance.clone()),
-                    )
+                    (SharedString::from(t.name.clone()), SharedString::from(t.appearance.clone()))
                 })
             })
             .collect()
@@ -200,10 +183,7 @@ impl ThemeRegistry {
 
     /// Find a theme by name
     pub fn get_theme(&self, name: &str) -> Option<&ThemeDefinition> {
-        self.families
-            .iter()
-            .flat_map(|f| f.themes.iter())
-            .find(|t| t.name == name)
+        self.families.iter().flat_map(|f| f.themes.iter()).find(|t| t.name == name)
     }
 
     /// Get light themes
@@ -228,20 +208,18 @@ impl ThemeRegistry {
 
     /// Get theme colors by name, with fallback
     pub fn get_colors(&self, name: &str, is_dark: bool) -> ThemeColors {
-        self.get_theme(name)
-            .map(|t| t.to_colors())
-            .unwrap_or_else(|| {
-                if is_dark {
-                    ThemeColors::fallback_dark()
-                } else {
-                    ThemeColors::fallback_light()
-                }
-            })
+        self.get_theme(name).map(|t| t.to_colors()).unwrap_or_else(|| {
+            if is_dark {
+                ThemeColors::fallback_dark()
+            } else {
+                ThemeColors::fallback_light()
+            }
+        })
     }
 }
 
 /// User's selected themes - stored globally
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeSettings {
     pub light_theme: String,
     pub dark_theme: String,
@@ -249,10 +227,7 @@ pub struct ThemeSettings {
 
 impl Default for ThemeSettings {
     fn default() -> Self {
-        Self {
-            light_theme: "One Light".to_string(),
-            dark_theme: "One Dark".to_string(),
-        }
+        Self { light_theme: "One Light".to_string(), dark_theme: "One Dark".to_string() }
     }
 }
 
@@ -343,11 +318,7 @@ fn parse_color(s: Option<&str>) -> Option<Rgba> {
     let r = u8::from_str_radix(&s[0..2], 16).ok()?;
     let g = u8::from_str_radix(&s[2..4], 16).ok()?;
     let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-    let a = if s.len() >= 8 {
-        u8::from_str_radix(&s[6..8], 16).ok()?
-    } else {
-        255
-    };
+    let a = if s.len() >= 8 { u8::from_str_radix(&s[6..8], 16).ok()? } else { 255 };
 
     Some(Rgba {
         r: r as f32 / 255.0,

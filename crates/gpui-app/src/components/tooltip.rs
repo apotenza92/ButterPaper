@@ -12,7 +12,11 @@ pub struct TooltipView {
 }
 
 impl Render for TooltipView {
-    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         div()
             .px(sizes::SPACE_2)
             .py(sizes::SPACE_1)
@@ -38,12 +42,5 @@ pub fn tooltip_builder(
     border: Rgba,
 ) -> impl Fn(&mut gpui::Window, &mut gpui::App) -> gpui::AnyView + 'static {
     let text = text.into();
-    move |_window, cx| {
-        cx.new(|_| TooltipView {
-            text: text.clone(),
-            bg,
-            border,
-        })
-        .into()
-    }
+    move |_window, cx| cx.new(|_| TooltipView { text: text.clone(), bg, border }).into()
 }

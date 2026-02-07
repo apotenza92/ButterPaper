@@ -117,10 +117,7 @@ pub fn clear_all_elements() {
 /// Get all registered elements
 pub fn get_all_elements() -> Vec<(String, ElementInfo)> {
     if let Ok(elements) = ELEMENT_REGISTRY.read() {
-        elements
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
+        elements.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     } else {
         Vec::new()
     }
@@ -172,10 +169,7 @@ pub fn elements_to_json(elements: &[(String, ElementInfo)]) -> String {
 
 /// Print elements in a human-readable table format
 pub fn print_elements_table(elements: &[(String, ElementInfo)]) {
-    println!(
-        "{:<25} {:<20} {:<10} {:<15} {:<10}",
-        "ID", "Name", "Type", "Position", "Size"
-    );
+    println!("{:<25} {:<20} {:<10} {:<15} {:<10}", "ID", "Name", "Type", "Position", "Size");
     println!("{}", "-".repeat(80));
     for (id, info) in elements {
         let (cx, cy) = info.center();

@@ -2,6 +2,7 @@
 
 use gpui::{div, prelude::*, ClickEvent, SharedString, Window};
 
+use crate::components::ButtonSize;
 use crate::ui::sizes;
 use crate::Theme;
 
@@ -27,7 +28,7 @@ where
 
     div()
         .id(SharedString::from(format!("nav-{}", label.into())))
-        .h(sizes::CONTROL_HEIGHT)
+        .h(ButtonSize::Medium.height_px())
         .px(sizes::PADDING_MD)
         .flex()
         .items_center()
@@ -56,7 +57,7 @@ where
 
     div()
         .id(SharedString::from(format!("nav-{}", label.clone())))
-        .h(sizes::CONTROL_HEIGHT)
+        .h(ButtonSize::Medium.height_px())
         .px(sizes::PADDING_MD)
         .flex()
         .items_center()

@@ -62,13 +62,7 @@ impl TileId {
         rotation: u16,
         profile: TileProfile,
     ) -> Self {
-        Self {
-            page_index,
-            coordinate,
-            zoom_level,
-            rotation,
-            profile,
-        }
+        Self { page_index, coordinate, zoom_level, rotation, profile }
     }
 
     /// Compute a simple hash for this tile ID (for cache keys)
@@ -141,9 +135,7 @@ pub struct TileRenderer {
 impl TileRenderer {
     /// Create a new tile renderer with the default tile size
     pub fn new() -> Self {
-        Self {
-            tile_size: TILE_SIZE,
-        }
+        Self { tile_size: TILE_SIZE }
     }
 
     /// Create a new tile renderer with a custom tile size
@@ -532,11 +524,7 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should be very fast (under 100ms for 6000 tile IDs)
-        assert!(
-            elapsed.as_millis() < 100,
-            "Tile ID generation took too long: {:?}",
-            elapsed
-        );
+        assert!(elapsed.as_millis() < 100, "Tile ID generation took too long: {:?}", elapsed);
         assert_eq!(tile_ids.len(), 6000);
     }
 
@@ -563,11 +551,7 @@ mod tests {
 
         // Check for uniqueness (no collisions)
         let unique_keys: std::collections::HashSet<_> = cache_keys.iter().collect();
-        assert_eq!(
-            unique_keys.len(),
-            cache_keys.len(),
-            "Cache key collision detected"
-        );
+        assert_eq!(unique_keys.len(), cache_keys.len(), "Cache key collision detected");
 
         // Check distribution - verify keys use a good range of values
         let min_key = *cache_keys.iter().min().unwrap();
@@ -834,11 +818,7 @@ mod tests {
 
         // A 4K viewport should need ~120 tiles max at 100% zoom
         // (3840/256 = 15 cols, 2160/256 = 9 rows = 135 tiles)
-        assert!(
-            viewport_tiles <= 150,
-            "Too many viewport tiles: {}",
-            viewport_tiles
-        );
+        assert!(viewport_tiles <= 150, "Too many viewport tiles: {}", viewport_tiles);
 
         // Even for a 1000-page PDF, the visible tile count is bounded
         // by viewport size, not document size
@@ -846,11 +826,7 @@ mod tests {
         let _total_document_tiles = page_count * 12; // 12,000 tiles total
 
         // But we only ever render viewport_tiles at once
-        assert!(
-            viewport_tiles < 200,
-            "Viewport tiles should be bounded: {}",
-            viewport_tiles
-        );
+        assert!(viewport_tiles < 200, "Viewport tiles should be bounded: {}", viewport_tiles);
     }
 
     #[test]

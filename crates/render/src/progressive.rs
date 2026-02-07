@@ -44,28 +44,17 @@ pub struct ProgressiveTileLoader {
 impl ProgressiveTileLoader {
     /// Create a new progressive tile loader
     pub fn new() -> Self {
-        Self {
-            renderer: TileRenderer::new(),
-            tile_states: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self { renderer: TileRenderer::new(), tile_states: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Create a progressive tile loader with a custom tile renderer
     pub fn with_renderer(renderer: TileRenderer) -> Self {
-        Self {
-            renderer,
-            tile_states: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self { renderer, tile_states: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Get the current state of a tile
     pub fn get_tile_state(&self, tile_id: &TileId) -> TileState {
-        self.tile_states
-            .lock()
-            .unwrap()
-            .get(tile_id)
-            .copied()
-            .unwrap_or(TileState::NotLoaded)
+        self.tile_states.lock().unwrap().get(tile_id).copied().unwrap_or(TileState::NotLoaded)
     }
 
     /// Load a single tile progressively
@@ -84,13 +73,8 @@ impl ProgressiveTileLoader {
         let mut results = Vec::new();
 
         // Stage 1: Render preview tile
-        let preview_id = TileId::new(
-            page_index,
-            coordinate,
-            zoom_level,
-            rotation,
-            TileProfile::Preview,
-        );
+        let preview_id =
+            TileId::new(page_index, coordinate, zoom_level, rotation, TileProfile::Preview);
         let preview_tile = self.renderer.render_tile(document, &preview_id)?;
 
         // Update state
@@ -107,13 +91,8 @@ impl ProgressiveTileLoader {
         results.push(preview_tile);
 
         // Stage 2: Render crisp tile
-        let crisp_id = TileId::new(
-            page_index,
-            coordinate,
-            zoom_level,
-            rotation,
-            TileProfile::Crisp,
-        );
+        let crisp_id =
+            TileId::new(page_index, coordinate, zoom_level, rotation, TileProfile::Crisp);
         let crisp_tile = self.renderer.render_tile(document, &crisp_id)?;
 
         // Update state
@@ -150,8 +129,7 @@ impl ProgressiveTileLoader {
         let page_height = page.height().value;
 
         let (columns, rows) =
-            self.renderer
-                .calculate_tile_grid(page_width, page_height, zoom_level);
+            self.renderer.calculate_tile_grid(page_width, page_height, zoom_level);
 
         let mut results = Vec::new();
 
@@ -159,13 +137,8 @@ impl ProgressiveTileLoader {
         for y in 0..rows {
             for x in 0..columns {
                 let coordinate = TileCoordinate::new(x, y);
-                let preview_id = TileId::new(
-                    page_index,
-                    coordinate,
-                    zoom_level,
-                    rotation,
-                    TileProfile::Preview,
-                );
+                let preview_id =
+                    TileId::new(page_index, coordinate, zoom_level, rotation, TileProfile::Preview);
 
                 let preview_tile = self.renderer.render_tile(document, &preview_id)?;
 
@@ -188,13 +161,8 @@ impl ProgressiveTileLoader {
         for y in 0..rows {
             for x in 0..columns {
                 let coordinate = TileCoordinate::new(x, y);
-                let crisp_id = TileId::new(
-                    page_index,
-                    coordinate,
-                    zoom_level,
-                    rotation,
-                    TileProfile::Crisp,
-                );
+                let crisp_id =
+                    TileId::new(page_index, coordinate, zoom_level, rotation, TileProfile::Crisp);
 
                 let crisp_tile = self.renderer.render_tile(document, &crisp_id)?;
 

@@ -22,10 +22,7 @@ pub struct CacheKey {
 
 impl CacheKey {
     pub fn new(page_index: u16, zoom_level: u32) -> Self {
-        Self {
-            page_index,
-            zoom_level,
-        }
+        Self { page_index, zoom_level }
     }
 }
 
@@ -52,11 +49,7 @@ pub struct PageCache {
 
 impl PageCache {
     pub fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-            access_counter: 0,
-            max_entries: MAX_CACHE_ENTRIES,
-        }
+        Self { entries: HashMap::new(), access_counter: 0, max_entries: MAX_CACHE_ENTRIES }
     }
 
     /// Get a cached page if available
@@ -89,23 +82,13 @@ impl PageCache {
         }
 
         self.access_counter += 1;
-        self.entries.insert(
-            key,
-            CacheEntry {
-                image,
-                width,
-                height,
-                last_access: self.access_counter,
-            },
-        );
+        self.entries
+            .insert(key, CacheEntry { image, width, height, last_access: self.access_counter });
     }
 
     /// Evict the least recently used entry
     fn evict_lru(&mut self) {
-        if let Some((&lru_key, _)) = self
-            .entries
-            .iter()
-            .min_by_key(|(_, entry)| entry.last_access)
+        if let Some((&lru_key, _)) = self.entries.iter().min_by_key(|(_, entry)| entry.last_access)
         {
             self.entries.remove(&lru_key);
         }
@@ -148,7 +131,5 @@ pub fn create_render_image(
 
     let buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, bgra_pixels)?;
     let frame = image::Frame::new(buffer);
-    Some(Arc::new(gpui::RenderImage::new(SmallVec::from_elem(
-        frame, 1,
-    ))))
+    Some(Arc::new(gpui::RenderImage::new(SmallVec::from_elem(frame, 1))))
 }

@@ -4,11 +4,10 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 /// Theme sources from Zed's repository
-const THEME_SOURCES: &[(&str, &str)] = &[
-    ("one", "https://raw.githubusercontent.com/zed-industries/zed/main/assets/themes/one/one.json"),
-    ("ayu", "https://raw.githubusercontent.com/zed-industries/zed/main/assets/themes/ayu/ayu.json"),
-    ("gruvbox", "https://raw.githubusercontent.com/zed-industries/zed/main/assets/themes/gruvbox/gruvbox.json"),
-];
+const THEME_SOURCES: &[(&str, &str)] = &[(
+    "one",
+    "https://raw.githubusercontent.com/zed-industries/zed/main/assets/themes/one/one.json",
+)];
 
 /// How often to check for theme updates (24 hours)
 const UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);

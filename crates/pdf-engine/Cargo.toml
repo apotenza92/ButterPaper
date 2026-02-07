@@ -1,0 +1,18 @@
+[package]
+name = "pdf-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+pdfium = ["dep:pdfium-render"]
+
+[dependencies]
+image.workspace = true
+lopdf.workspace = true
+thiserror.workspace = true
+
+[dependencies.pdfium-render]
+version = "0.8"
+optional = true

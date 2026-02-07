@@ -7,6 +7,9 @@ use gpui::{
     StatefulInteractiveElement, Styled,
 };
 
+#[allow(unused_imports)]
+pub use crate::styles::{rems_from_px, ui_density, DynamicSpacing, TextSize, UiDensity};
+
 /// Standard UI sizing constants
 pub mod sizes {
     use gpui::{px, Pixels};
@@ -34,13 +37,57 @@ pub mod sizes {
     pub const TAB_BAR_HEIGHT: Pixels = px(32.0);
     /// Tab height within tab bar
     pub const TAB_HEIGHT: Pixels = px(28.0);
+    /// In-window app menu row height.
+    pub const MENU_ROW_HEIGHT: Pixels = px(28.0);
+    /// Canvas toolbar height above the PDF viewport.
+    pub const CANVAS_TOOLBAR_HEIGHT: Pixels = px(32.0);
+    /// Left tool rail width.
+    pub const TOOL_RAIL_WIDTH: Pixels = px(36.0);
 
-    /// Standard control heights
-    pub const CONTROL_HEIGHT: Pixels = px(28.0);
+    /// Zed-style button ladder heights.
+    pub const CONTROL_HEIGHT_NONE: Pixels = px(16.0);
+    pub const CONTROL_HEIGHT_COMPACT: Pixels = px(18.0);
+    pub const CONTROL_HEIGHT_DEFAULT: Pixels = px(22.0);
+    pub const CONTROL_HEIGHT_MEDIUM: Pixels = px(28.0);
+    pub const CONTROL_HEIGHT_LG: Pixels = px(32.0);
+    /// Legacy alias retained during migration; maps to medium controls.
+    pub const CONTROL_HEIGHT: Pixels = CONTROL_HEIGHT_MEDIUM;
 
     /// Standard dropdown button width - consistent across all dropdowns
     /// Must fit long theme names like "Gruvbox Dark Hard"
     pub const DROPDOWN_WIDTH: Pixels = px(180.0);
+    pub const MENU_WIDTH_MIN: Pixels = px(180.0);
+    pub const MENU_WIDTH_MAX: Pixels = px(260.0);
+
+    /// Tab metrics
+    pub const TAB_MIN_WIDTH: Pixels = px(120.0);
+    pub const TAB_MAX_WIDTH: Pixels = px(220.0);
+    pub const TAB_CLOSE_SIZE: Pixels = px(18.0);
+    pub const TAB_ACTIVE_UNDERLINE_HEIGHT: Pixels = px(2.0);
+
+    /// Toggle/radio/checkbox metrics
+    pub const TOGGLE_WIDTH: Pixels = px(44.0);
+    pub const TOGGLE_KNOB_SIZE: Pixels = px(18.0);
+    pub const TOGGLE_KNOB_OFFSET: Pixels = px(3.0);
+    pub const RADIO_SIZE: Pixels = px(16.0);
+    pub const RADIO_DOT_SIZE: Pixels = px(7.0);
+    pub const CHECKBOX_SIZE: Pixels = px(16.0);
+
+    /// Slider metrics
+    pub const SLIDER_BUTTON_SIZE: Pixels = px(24.0);
+    pub const SLIDER_TRACK_WIDTH: Pixels = px(140.0);
+    pub const SLIDER_TRACK_HEIGHT: Pixels = px(8.0);
+    pub const SLIDER_VALUE_MIN_WIDTH: Pixels = px(44.0);
+    pub const SLIDER_ICON_SIZE: f32 = 12.0;
+
+    /// Dropdown metrics
+    pub const DROPDOWN_MAX_HEIGHT: Pixels = px(240.0);
+
+    /// Editor toolbar metrics
+    pub const ZOOM_COMBO_MIN_WIDTH: Pixels = px(86.0);
+    pub const PAGE_LABEL_MIN_WIDTH: Pixels = px(68.0);
+    pub const TOOLBAR_SEPARATOR_WIDTH: Pixels = px(1.0);
+    pub const TOOLBAR_SEPARATOR_HEIGHT: Pixels = px(16.0);
 
     // ============================================
     // Icon Sizes
@@ -70,9 +117,19 @@ pub mod sizes {
     // ============================================
     // Border Radius
     // ============================================
-    pub const RADIUS_SM: Pixels = px(4.0);
-    pub const RADIUS_MD: Pixels = px(6.0);
-    pub const RADIUS_LG: Pixels = px(8.0);
+    pub const RADIUS_SM: Pixels = px(7.0);
+    pub const RADIUS_MD: Pixels = px(10.0);
+    pub const RADIUS_LG: Pixels = px(14.0);
+
+    // ============================================
+    // Stroke / Opacity Tokens
+    // ============================================
+    /// Alpha multiplier for subtle control borders.
+    pub const BORDER_ALPHA_SUBTLE: f32 = 0.45;
+    /// Alpha multiplier for stronger border emphasis.
+    pub const BORDER_ALPHA_STRONG: f32 = 0.8;
+    /// Default disabled content alpha multiplier.
+    pub const DISABLED_ALPHA: f32 = 0.7;
 
     // ============================================
     // Layout Widths
@@ -98,8 +155,7 @@ pub trait InteractiveExt: InteractiveElement + Styled + Sized {
 
     /// Apply default and hover text colors for interactive text elements.
     fn interactive_text(self, default: Rgba, hover: Rgba) -> Self {
-        self.text_color(default)
-            .hover(move |s| s.text_color(hover))
+        self.text_color(default).hover(move |s| s.text_color(hover))
     }
 }
 
@@ -110,8 +166,7 @@ impl<T: InteractiveElement + Styled> InteractiveExt for T {}
 pub trait StatefulInteractiveExt: StatefulInteractiveElement + Styled + Sized {
     /// Apply hover and active background colors for interactive elements.
     fn interactive_bg(self, hover: Rgba, active: Rgba) -> Self {
-        self.hover(move |s| s.bg(hover))
-            .active(move |s| s.bg(active))
+        self.hover(move |s| s.bg(hover)).active(move |s| s.bg(active))
     }
 }
 
@@ -124,6 +179,29 @@ pub mod text {
     pub const SIZE_BASE: &str = "text_base";
     pub const SIZE_LG: &str = "text_lg";
     pub const SIZE_XL: &str = "text_xl";
+}
+
+/// Shared color helpers for standardized control styling.
+pub mod color {
+    use gpui::Rgba;
+
+    use crate::ui::sizes;
+
+    pub fn with_alpha(color: Rgba, alpha_multiplier: f32) -> Rgba {
+        Rgba { r: color.r, g: color.g, b: color.b, a: color.a * alpha_multiplier }
+    }
+
+    pub fn subtle_border(color: Rgba) -> Rgba {
+        with_alpha(color, sizes::BORDER_ALPHA_SUBTLE)
+    }
+
+    pub fn strong_border(color: Rgba) -> Rgba {
+        with_alpha(color, sizes::BORDER_ALPHA_STRONG)
+    }
+
+    pub fn disabled(color: Rgba) -> Rgba {
+        with_alpha(color, sizes::DISABLED_ALPHA)
+    }
 }
 
 /// Create a centered title bar for transparent titlebar windows.

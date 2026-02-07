@@ -3,6 +3,7 @@
 use gpui::{div, prelude::*, px, ClickEvent, SharedString, Window};
 
 use super::{icon, Icon};
+use crate::ui::color;
 use crate::ui::sizes;
 use crate::Theme;
 
@@ -29,16 +30,16 @@ where
     F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
     let accent = theme.accent;
-    let surface = theme.surface;
-    let border = theme.border;
+    let surface = theme.elevated_surface;
     let text = theme.text;
+    let subtle_border = color::subtle_border(theme.border);
 
     // Switch dimensions
-    let switch_width = px(44.0);
-    let switch_height = sizes::ICON_LG;
-    let knob_size = px(18.0);
-    let knob_offset_off = px(3.0);
-    let knob_offset_on = switch_width - knob_size - px(3.0);
+    let switch_width = sizes::TOGGLE_WIDTH;
+    let switch_height = sizes::CONTROL_HEIGHT_COMPACT;
+    let knob_size = sizes::TOGGLE_KNOB_SIZE;
+    let knob_offset_off = sizes::TOGGLE_KNOB_OFFSET;
+    let knob_offset_on = switch_width - knob_size - sizes::TOGGLE_KNOB_OFFSET;
 
     div()
         .id(id.into())
@@ -49,7 +50,7 @@ where
         .rounded(sizes::RADIUS_MD)
         .cursor_pointer()
         .border_1()
-        .border_color(border)
+        .border_color(subtle_border)
         .when(enabled, move |d| d.bg(accent))
         .when(!enabled, move |d| d.bg(surface))
         .on_click(on_toggle)
@@ -57,17 +58,17 @@ where
             div()
                 .w(knob_size)
                 .h(knob_size)
-                .rounded(px(9.0))
+                .rounded_full()
                 .bg(text)
                 .when(enabled, move |d| d.ml(knob_offset_on))
                 .when(!enabled, move |d| d.ml(knob_offset_off)),
         )
 }
 
-/// Checkbox size in pixels (Zed uses 14-16px)
-const CHECKBOX_SIZE: gpui::Pixels = px(16.0);
+/// Checkbox size in pixels.
+const CHECKBOX_SIZE: gpui::Pixels = sizes::CHECKBOX_SIZE;
 /// Checkmark icon size
-const CHECK_ICON_SIZE: f32 = 10.0;
+const CHECK_ICON_SIZE: f32 = 12.0;
 
 /// Zed-style checkbox without label.
 pub fn checkbox<F>(
@@ -79,11 +80,11 @@ pub fn checkbox<F>(
 where
     F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let border = theme.border;
-    let surface = theme.surface;
+    let surface = theme.elevated_surface;
     let hover_bg = theme.element_hover;
     let selected_bg = theme.element_selected;
-    let check_color = theme.text_muted;
+    let check_color = theme.text;
+    let subtle_border = color::subtle_border(theme.border);
 
     div()
         .id(id.into())
@@ -92,16 +93,18 @@ where
         .flex()
         .items_center()
         .justify_center()
-        .rounded(sizes::RADIUS_SM)
+        .rounded(sizes::RADIUS_MD)
         .cursor_pointer()
         .border_1()
         .when(checked, move |d| {
-            d.bg(selected_bg)
-                .border_color(border)
-                .child(icon(Icon::Close, CHECK_ICON_SIZE, check_color))
+            d.bg(selected_bg).border_color(subtle_border).child(icon(
+                Icon::Check,
+                CHECK_ICON_SIZE,
+                check_color,
+            ))
         })
         .when(!checked, move |d| {
-            d.bg(surface).border_color(border).hover(move |s| s.bg(hover_bg))
+            d.bg(surface).border_color(subtle_border).hover(move |s| s.bg(hover_bg))
         })
         .on_click(on_toggle)
 }
@@ -119,12 +122,12 @@ where
 {
     let id = id.into();
     let label = label.into();
-    let border = theme.border;
-    let surface = theme.surface;
+    let surface = theme.elevated_surface;
     let hover_bg = theme.element_hover;
     let selected_bg = theme.element_selected;
     let text_color = theme.text;
-    let check_color = theme.text_muted;
+    let check_color = theme.text;
+    let subtle_border = color::subtle_border(theme.border);
 
     div()
         .id(id)
@@ -142,17 +145,17 @@ where
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(sizes::RADIUS_SM)
+                .rounded(sizes::RADIUS_MD)
                 .border_1()
                 .when(checked, move |d| {
-                    d.bg(selected_bg)
-                        .border_color(border)
-                        .child(icon(Icon::Close, CHECK_ICON_SIZE, check_color))
+                    d.bg(selected_bg).border_color(subtle_border).child(icon(
+                        Icon::Check,
+                        CHECK_ICON_SIZE,
+                        check_color,
+                    ))
                 })
                 .when(!checked, move |d| {
-                    d.bg(surface)
-                        .border_color(border)
-                        .hover(move |s| s.bg(hover_bg))
+                    d.bg(surface).border_color(subtle_border).hover(move |s| s.bg(hover_bg))
                 }),
         )
         .child(div().text_sm().text_color(text_color).child(label))

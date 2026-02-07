@@ -1,0 +1,12 @@
+---
+source: crates/cli/tests/cli_contract.rs
+expression: value
+---
+{
+  "first_page_size_pt": {
+    "height": 792.0,
+    "width": 612.0
+  },
+  "page_count": 1,
+  "path": "<FIXTURE>"
+}

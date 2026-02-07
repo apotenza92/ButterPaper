@@ -12,11 +12,11 @@
 //!
 //! No additional title bar offset needed because GPUI coords include it.
 
+use butterpaper_gpui::ui;
 use gpui::{
     div, point, prelude::*, px, rgb, size, App, Application, Bounds, Context, MouseMoveEvent,
     TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
-use butterpaper_gpui::ui;
 
 struct CalibrationWindow {
     mouse_pos: Option<gpui::Point<gpui::Pixels>>,
@@ -25,10 +25,7 @@ struct CalibrationWindow {
 
 impl CalibrationWindow {
     fn new() -> Self {
-        Self {
-            mouse_pos: None,
-            clicks: Vec::new(),
-        }
+        Self { mouse_pos: None, clicks: Vec::new() }
     }
 }
 
@@ -137,20 +134,13 @@ fn marker(x: i32, y: i32, gpui_label: &str) -> impl IntoElement {
                 .border_color(rgb(0xffffff)),
         )
         // Label
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0x9399b2))
-                .child(gpui_label.to_string()),
-        )
+        .child(div().text_xs().text_color(rgb(0x9399b2)).child(gpui_label.to_string()))
 }
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        let bounds = Bounds {
-            origin: point(px(100.0), px(100.0)),
-            size: size(px(520.0), px(380.0)),
-        };
+        let bounds =
+            Bounds { origin: point(px(100.0), px(100.0)), size: size(px(520.0), px(380.0)) };
 
         eprintln!("╭─────────────────────────────────────────────╮");
         eprintln!("│  Calibration Window                         │");

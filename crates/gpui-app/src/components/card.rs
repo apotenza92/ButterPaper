@@ -2,6 +2,7 @@
 
 use gpui::{div, prelude::*, AnyElement};
 
+use crate::ui::color;
 use crate::ui::sizes;
 use crate::Theme;
 
@@ -14,12 +15,14 @@ use crate::Theme;
 /// ])
 /// ```
 pub fn card(theme: &Theme, children: Vec<AnyElement>) -> impl IntoElement {
+    let subtle_border = color::subtle_border(theme.border);
+
     div()
         .p(sizes::SPACE_4)
-        .bg(theme.surface)
+        .bg(theme.elevated_surface)
         .border_1()
-        .border_color(theme.border)
-        .rounded(sizes::RADIUS_MD)
+        .border_color(subtle_border)
+        .rounded(sizes::RADIUS_LG)
         .shadow_sm()
         .children(children)
 }

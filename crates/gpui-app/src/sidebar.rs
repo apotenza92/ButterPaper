@@ -6,12 +6,10 @@
 #![allow(clippy::type_complexity)]
 
 use crate::current_theme;
-use gpui::{
-    div, img, prelude::*, px, rgb, FocusHandle, Focusable, ImageSource, ScrollDelta,
-    ScrollWheelEvent,
-};
-use image::{ImageBuffer, Rgba};
+use crate::ui::color;
 use butterpaper_render::PdfDocument;
+use gpui::{div, img, prelude::*, px, FocusHandle, Focusable, ImageSource};
+use image::{ImageBuffer, Rgba};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -19,7 +17,7 @@ use std::sync::Arc;
 const THUMBNAIL_WIDTH: u32 = 120;
 
 /// Sidebar width in pixels
-const SIDEBAR_WIDTH: f32 = 160.0;
+pub const SIDEBAR_WIDTH: f32 = 220.0;
 
 /// Rendered thumbnail for a page
 #[derive(Clone)]
@@ -38,8 +36,6 @@ pub struct ThumbnailSidebar {
     thumbnails: Vec<Thumbnail>,
     /// Currently selected page
     selected_page: u16,
-    /// Scroll offset for thumbnail list
-    scroll_offset: f32,
     /// Focus handle
     focus_handle: FocusHandle,
     /// Callback entity for page selection
@@ -52,7 +48,6 @@ impl ThumbnailSidebar {
             document: None,
             thumbnails: Vec::new(),
             selected_page: 0,
-            scroll_offset: 0.0,
             focus_handle: cx.focus_handle(),
             on_page_select: None,
         }
@@ -63,7 +58,6 @@ impl ThumbnailSidebar {
         self.document = doc;
         self.thumbnails.clear();
         self.selected_page = 0;
-        self.scroll_offset = 0.0;
         self.render_thumbnails();
         cx.notify();
     }
@@ -106,9 +100,7 @@ impl ThumbnailSidebar {
         let thumb_height = (page_height * scale) as u32;
 
         // Render at thumbnail size
-        let rgba_pixels = doc
-            .render_page_rgba(page_index, THUMBNAIL_WIDTH, thumb_height)
-            .ok()?;
+        let rgba_pixels = doc.render_page_rgba(page_index, THUMBNAIL_WIDTH, thumb_height).ok()?;
 
         // Convert RGBA to BGRA
         let mut bgra_pixels = rgba_pixels;
@@ -129,20 +121,6 @@ impl ThumbnailSidebar {
             image: render_image,
         })
     }
-
-    /// Handle scroll
-    fn handle_scroll(&mut self, delta: ScrollDelta, cx: &mut gpui::Context<Self>) {
-        match delta {
-            ScrollDelta::Pixels(point) => {
-                self.scroll_offset -= point.y.0;
-            }
-            ScrollDelta::Lines(point) => {
-                self.scroll_offset -= point.y * 40.0;
-            }
-        }
-        self.scroll_offset = self.scroll_offset.max(0.0);
-        cx.notify();
-    }
 }
 
 impl Focusable for ThumbnailSidebar {
@@ -158,12 +136,12 @@ impl Render for ThumbnailSidebar {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let theme = current_theme(window, cx);
-        let scroll_offset = self.scroll_offset;
         let selected_page = self.selected_page;
         let thumbnails = self.thumbnails.clone();
         let text_muted = theme.text_muted;
         let element_hover = theme.element_hover;
-        let accent = theme.accent;
+        let selected_bg = theme.element_selected;
+        let selected_border = color::subtle_border(theme.accent);
 
         div()
             .id("thumbnail-sidebar")
@@ -175,73 +153,49 @@ impl Render for ThumbnailSidebar {
             // No right border - content column provides left border for clean corner connection
             .overflow_hidden()
             // Scrollable thumbnail list
-            .child(
-                div()
-                    .id("thumbnail-scroll-container")
-                    .flex_1()
-                    .overflow_hidden()
-                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
-                        this.handle_scroll(event.delta, cx);
-                    }))
-                    .child(
+            .child(div().id("thumbnail-scroll-container").flex_1().overflow_y_scroll().child(
+                div().id("thumbnail-list").flex().flex_col().gap_2().p_2().children(
+                    thumbnails.into_iter().enumerate().map(move |(idx, thumb)| {
+                        let page_index = thumb.page_index;
+                        let is_selected = page_index == selected_page;
+
                         div()
-                            .id("thumbnail-list")
+                            .id(("thumbnail", idx))
                             .flex()
                             .flex_col()
-                            .gap_2()
-                            .p_2()
-                            .top(px(-scroll_offset))
-                            .children(thumbnails.into_iter().enumerate().map(
-                                move |(idx, thumb)| {
-                                    let page_index = thumb.page_index;
-                                    let is_selected = page_index == selected_page;
-
-                                    div()
-                                        .id(("thumbnail", idx))
-                                        .flex()
-                                        .flex_col()
-                                        .items_center()
-                                        .p_1()
-                                        .rounded_md()
-                                        .cursor_pointer()
-                                        .when(is_selected, move |s| s.bg(accent).shadow_sm())
-                                        .hover(
-                                            move |s| {
-                                                if is_selected {
-                                                    s
-                                                } else {
-                                                    s.bg(element_hover)
-                                                }
-                                            },
-                                        )
-                                        .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.selected_page = page_index;
-                                            if let Some(callback) = &this.on_page_select {
-                                                callback(page_index, cx);
-                                            }
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            div().rounded_sm().overflow_hidden().shadow_sm().child(
-                                                img(ImageSource::Render(thumb.image.clone()))
-                                                    .w(px(thumb.width as f32))
-                                                    .h(px(thumb.height as f32)),
-                                            ),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(if is_selected {
-                                                    rgb(0xffffff)
-                                                } else {
-                                                    text_muted
-                                                })
-                                                .mt_1()
-                                                .child(format!("{}", page_index + 1)),
-                                        )
-                                },
-                            )),
-                    ),
-            )
+                            .items_center()
+                            .p_1()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(gpui::Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 })
+                            .cursor_pointer()
+                            .when(is_selected, move |s| {
+                                s.bg(selected_bg).border_color(selected_border).shadow_sm()
+                            })
+                            .hover(move |s| if is_selected { s } else { s.bg(element_hover) })
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.selected_page = page_index;
+                                if let Some(callback) = &this.on_page_select {
+                                    callback(page_index, cx);
+                                }
+                                cx.notify();
+                            }))
+                            .child(
+                                div().rounded_sm().overflow_hidden().shadow_sm().child(
+                                    img(ImageSource::Render(thumb.image.clone()))
+                                        .w(px(thumb.width as f32))
+                                        .h(px(thumb.height as f32)),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(if is_selected { theme.text } else { text_muted })
+                                    .mt_1()
+                                    .child(format!("{}", page_index + 1)),
+                            )
+                    }),
+                ),
+            ))
     }
 }
