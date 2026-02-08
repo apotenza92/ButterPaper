@@ -124,9 +124,9 @@ impl ProgressiveTileLoader {
         callback: Option<ProgressCallback>,
     ) -> PdfResult<Vec<RenderedTile>> {
         // Get page dimensions to calculate tile grid
-        let page = document.get_page(page_index)?;
-        let page_width = page.width().value;
-        let page_height = page.height().value;
+        let dimensions = document.page_dimensions(page_index)?;
+        let page_width = dimensions.width;
+        let page_height = dimensions.height;
 
         let (columns, rows) =
             self.renderer.calculate_tile_grid(page_width, page_height, zoom_level);

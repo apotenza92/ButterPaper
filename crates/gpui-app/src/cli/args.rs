@@ -36,6 +36,10 @@ pub struct CliArgs {
     pub click_element: Option<String>,
     pub dev_mode: bool,
     pub gui_mode: bool,
+    pub benchmark_scroll: bool,
+    pub benchmark_file: Option<PathBuf>,
+    pub benchmark_seconds: u64,
+    pub benchmark_output: Option<PathBuf>,
 }
 
 /// Parse command line arguments
@@ -71,6 +75,10 @@ pub fn parse_args() -> CliArgs {
         println!("  --settings                 Open settings window");
         println!("  --dev                      Enable dev mode (dynamic element tracking)");
         println!("  --gui                      Force GUI mode (skip screenshot/headless commands)");
+        println!("  --benchmark-scroll         Run local continuous-scroll benchmark and exit");
+        println!("  --benchmark-file <path>    Benchmark PDF path");
+        println!("  --benchmark-seconds <n>    Benchmark duration in seconds (default: 45)");
+        println!("  --benchmark-output <path>  Benchmark JSON output path");
         println!();
         println!("Keyboard Shortcuts:");
         println!("  Cmd+O              Open file");
@@ -116,6 +124,10 @@ pub fn parse_args() -> CliArgs {
         click_element: None,
         dev_mode: false,
         gui_mode: false,
+        benchmark_scroll: false,
+        benchmark_file: None,
+        benchmark_seconds: 45,
+        benchmark_output: None,
     };
 
     let mut i = 1;
@@ -184,6 +196,27 @@ pub fn parse_args() -> CliArgs {
             }
             "--gui" => {
                 cli.gui_mode = true;
+            }
+            "--benchmark-scroll" => {
+                cli.benchmark_scroll = true;
+            }
+            "--benchmark-file" => {
+                if i + 1 < args.len() {
+                    cli.benchmark_file = Some(PathBuf::from(&args[i + 1]));
+                    i += 1;
+                }
+            }
+            "--benchmark-seconds" => {
+                if i + 1 < args.len() {
+                    cli.benchmark_seconds = args[i + 1].parse().unwrap_or(45).max(15);
+                    i += 1;
+                }
+            }
+            "--benchmark-output" => {
+                if i + 1 < args.len() {
+                    cli.benchmark_output = Some(PathBuf::from(&args[i + 1]));
+                    i += 1;
+                }
             }
             arg if !arg.starts_with('-') => {
                 cli.files.push(PathBuf::from(arg));

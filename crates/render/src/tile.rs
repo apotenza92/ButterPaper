@@ -3,7 +3,6 @@
 //! Divides PDF pages into fixed-size tiles for efficient rendering and caching.
 
 use crate::pdf::{PdfDocument, PdfError, PdfResult};
-use pdfium_render::prelude::*;
 use std::hash::{Hash, Hasher};
 
 /// Fixed tile size in pixels (256x256)
@@ -177,12 +176,10 @@ impl TileRenderer {
     /// # Returns
     /// A `RenderedTile` with the pixel data or an error
     pub fn render_tile(&self, document: &PdfDocument, tile_id: &TileId) -> PdfResult<RenderedTile> {
-        // Get the page
-        let page = document.get_page(tile_id.page_index)?;
-
         // Get page dimensions
-        let page_width = page.width().value;
-        let page_height = page.height().value;
+        let page_dimensions = document.page_dimensions(tile_id.page_index)?;
+        let page_width = page_dimensions.width;
+        let page_height = page_dimensions.height;
 
         // Apply zoom to get actual render dimensions
         let zoom_factor = tile_id.zoom_level as f32 / 100.0;
@@ -202,32 +199,12 @@ impl TileRenderer {
             )));
         }
 
-        // Configure render settings based on profile
-        let render_config = match tile_id.profile {
-            TileProfile::Preview => {
-                // Preview: faster rendering with lower quality
-                PdfRenderConfig::new()
-                    .set_target_width(render_width as i32)
-                    .set_target_height(render_height as i32)
-                    .render_form_data(false)
-            }
-            TileProfile::Crisp => {
-                // Crisp: high quality rendering with all features
-                PdfRenderConfig::new()
-                    .set_target_width(render_width as i32)
-                    .set_target_height(render_height as i32)
-                    .render_form_data(true)
-                    .use_print_quality(true)
-            }
-        };
-
-        // Render the entire page at the target zoom level
-        let bitmap = page
-            .render_with_config(&render_config)
-            .map_err(|e| PdfError::RenderError(e.to_string()))?;
-
-        // Convert bitmap to RGBA
-        let full_page_rgba = bitmap.as_rgba_bytes();
+        // Render the entire page at the target zoom level.
+        //
+        // We intentionally use the document renderer path here so all PDFium
+        // operations are serialized through the render-layer lock.
+        let full_page_rgba =
+            document.render_page_rgba(tile_id.page_index, render_width, render_height)?;
 
         // Extract the tile region from the full page render
         let mut tile_pixels = Vec::with_capacity((tile_width * tile_height * 4) as usize);
@@ -264,9 +241,9 @@ impl TileRenderer {
         profile: TileProfile,
     ) -> PdfResult<Vec<RenderedTile>> {
         // Get page dimensions
-        let page = document.get_page(page_index)?;
-        let page_width = page.width().value;
-        let page_height = page.height().value;
+        let page_dimensions = document.page_dimensions(page_index)?;
+        let page_width = page_dimensions.width;
+        let page_height = page_dimensions.height;
 
         // Calculate tile grid
         let (columns, rows) = self.calculate_tile_grid(page_width, page_height, zoom_level);

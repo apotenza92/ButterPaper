@@ -34,7 +34,10 @@ mod tooltip;
 pub use button::{button, button_default, button_primary, ButtonVariant};
 pub use button_like::ButtonSize;
 pub use card::{card, card_header, card_with_header};
-pub use chrome::{chrome_control_shell, chrome_control_size, chrome_icon_button};
+pub use chrome::{
+    chrome_control_shell, chrome_control_size, chrome_icon_button,
+    chrome_icon_button_with_tooltip_visibility,
+};
 pub use context_menu::{context_menu, ContextMenuItem};
 pub use dropdown::{Dropdown, DropdownOption};
 pub use icon::{icon, Icon};

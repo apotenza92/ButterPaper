@@ -1,5 +1,21 @@
 # UI Standardization Notes
 
+## 2026-02-08
+
+### Completed
+- Fixed settings sidebar navigation labels not rendering by restoring `nav_item(...)` label content in `crates/gpui-app/src/components/nav_item.rs` and standardizing selected/unselected/hover text colors.
+- Added global danger semantics in `crates/gpui-app/src/theme.rs` by mapping theme `error`, `error.background`, and `error.border` into shared `ThemeColors` tokens (`danger`, `danger_bg`, `danger_border`) with deterministic fallbacks.
+- Consolidated remaining shared visual literals into global UI tokens in `crates/gpui-app/src/ui.rs` and migrated consumers:
+  - selected-surface alpha (`tab` + `chrome`),
+  - scrollbar geometry/alpha (`components/scrollbar.rs`),
+  - tab close radius/icon sizing (`components/tab.rs`),
+  - thumbnail card width + transparent border helper (`sidebar.rs`),
+  - left-cluster width/handle sizing (`app/editor.rs`, `ui_preferences.rs`).
+- Updated `ButtonLikeVariant::Danger` in `crates/gpui-app/src/components/button_like.rs` to source colors from theme danger tokens instead of local hardcoded red values.
+- Expanded visual tooling to include settings capture/comparison:
+  - new `scripts/capture_settings_visuals.sh`,
+  - updated `scripts/compare_visuals.sh` and `scripts/promote_visual_baselines.sh` for editor + settings suites.
+
 ## 2026-02-07
 
 ### Completed
@@ -16,6 +32,7 @@
 - Renamed desktop package id from `butterpaper-gpui` to `butterpaper` in `crates/gpui-app/Cargo.toml` (CLI remains `butterpaper-cli`).
 - Refactored editor shell to fixed rows: title bar -> in-window menu row -> full-width tab row -> content row.
 - Moved thumbnail lane below tab row and introduced a left tool rail with sidebar toggle (`Icon::PanelLeft`).
+- Updated thumbnail rail polish: resizable left cluster (tool rail + thumbnails) with persisted width, neutral selected thumbnail border styling, and dedicated thumbnail toggle icon (`Icon::PageThumbnails`).
 - Added compact canvas toolbar above viewport with page navigation (first/prev/next/last), fit-page/fit-width, and zoom controls.
 - Added editable zoom combo behavior (`NNN%` input + preset dropdown) with deterministic parsing/clamping.
 - Added new viewport APIs for deterministic reader controls: `first_page`, `last_page`, `fit_width`, `fit_page`, `reset_zoom`, and `set_canvas_metrics`.

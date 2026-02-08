@@ -1,6 +1,6 @@
 //! Standardized tab item primitive.
 
-use gpui::{div, prelude::*, px, ClickEvent, SharedString, Window};
+use gpui::{div, prelude::*, ClickEvent, SharedString, Window};
 
 use crate::components::tab_bar::TabId;
 use crate::components::{icon, tooltip_builder, Icon};
@@ -42,7 +42,7 @@ where
     let subtle_border = color::subtle_border(theme.border);
     let inactive_bg = theme.elevated_surface;
     let hover_bg = theme.element_hover;
-    let active_bg = color::with_alpha(theme.element_selected, 0.88);
+    let active_bg = color::selected_surface(theme.element_selected);
     let pressed_bg = theme.element_selected;
     let close_hover_bg = theme.element_hover;
     let close_pressed_bg = theme.element_selected;
@@ -98,12 +98,12 @@ where
                     .child(
                         div()
                             .id(SharedString::from(format!("tab-close-{}", data.id)))
-                            .w(px(18.0))
-                            .h(px(18.0))
+                            .w(sizes::TAB_CLOSE_SIZE)
+                            .h(sizes::TAB_CLOSE_SIZE)
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded(px(4.0))
+                            .rounded(sizes::TAB_CLOSE_RADIUS)
                             .hover({
                                 let hover_text = theme.text;
                                 move |s| s.bg(close_hover_bg).text_color(hover_text)
@@ -120,7 +120,7 @@ where
                                 theme.text,
                             ))
                             .on_click(on_close)
-                            .child(icon(Icon::Close, 13.0, close_icon_color)),
+                            .child(icon(Icon::Close, sizes::TAB_CLOSE_ICON_SIZE, close_icon_color)),
                     ),
             )
         })

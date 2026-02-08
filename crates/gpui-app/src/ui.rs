@@ -71,6 +71,8 @@ pub mod sizes {
     pub const TAB_MIN_WIDTH: Pixels = px(120.0);
     pub const TAB_MAX_WIDTH: Pixels = px(220.0);
     pub const TAB_CLOSE_SIZE: Pixels = px(18.0);
+    pub const TAB_CLOSE_RADIUS: Pixels = px(4.0);
+    pub const TAB_CLOSE_ICON_SIZE: f32 = 13.0;
     pub const TAB_ACTIVE_UNDERLINE_HEIGHT: Pixels = px(2.0);
 
     /// Toggle/radio/checkbox metrics
@@ -139,14 +141,39 @@ pub mod sizes {
     pub const BORDER_ALPHA_SUBTLE: f32 = 0.45;
     /// Alpha multiplier for stronger border emphasis.
     pub const BORDER_ALPHA_STRONG: f32 = 0.8;
+    /// Alpha multiplier used for selected capsule/card surfaces.
+    pub const SELECTED_SURFACE_ALPHA: f32 = 0.88;
     /// Default disabled content alpha multiplier.
     pub const DISABLED_ALPHA: f32 = 0.7;
+    /// Scrollbar track alpha multiplier.
+    pub const SCROLLBAR_TRACK_ALPHA: f32 = 0.35;
+    /// Scrollbar thumb background alpha multiplier.
+    pub const SCROLLBAR_THUMB_BG_ALPHA: f32 = 0.52;
+    /// Scrollbar thumb border alpha multiplier.
+    pub const SCROLLBAR_THUMB_BORDER_ALPHA: f32 = 0.78;
+    /// Scrollbar geometry metrics.
+    pub const SCROLLBAR_MIN_THUMB_HEIGHT_PX: f32 = 24.0;
+    pub const SCROLLBAR_TRACK_INSET_PX: f32 = 3.0;
+    pub const SCROLLBAR_GUTTER_WIDTH_PX: f32 = 15.0;
+    pub const SCROLLBAR_VISUAL_WIDTH_PX: f32 = 10.0;
 
     // ============================================
     // Layout Widths
     // ============================================
     /// Sidebar width
     pub const SIDEBAR_WIDTH: Pixels = px(220.0);
+    /// Thumbnail card width inside the thumbnail sidebar list.
+    pub const THUMBNAIL_CARD_WIDTH_PX: f32 = 150.0;
+    /// Width of full left cluster (tool rail + thumbnail pane).
+    pub const THUMBNAIL_CLUSTER_DEFAULT_WIDTH_PX: f32 = 261.0;
+    /// Min width of full left cluster (tool rail + thumbnail pane).
+    pub const THUMBNAIL_CLUSTER_MIN_WIDTH_PX: f32 = 200.0;
+    /// Max width of full left cluster (tool rail + thumbnail pane).
+    pub const THUMBNAIL_CLUSTER_MAX_WIDTH_PX: f32 = 520.0;
+    /// Right-edge resize handle width for thumbnail cluster.
+    pub const THUMBNAIL_CLUSTER_RESIZE_HANDLE_WIDTH_PX: f32 = 6.0;
+    /// Minimum width of the main content column.
+    pub const MIN_MAIN_COLUMN_WIDTH_PX: f32 = 420.0;
 
     /// Settings content max width (prevents overflow)
     pub const SETTINGS_CONTENT_MAX_WIDTH: Pixels = px(600.0);
@@ -234,8 +261,16 @@ pub mod color {
         with_alpha(color, sizes::BORDER_ALPHA_STRONG)
     }
 
+    pub fn selected_surface(color: Rgba) -> Rgba {
+        with_alpha(color, sizes::SELECTED_SURFACE_ALPHA)
+    }
+
     pub fn disabled(color: Rgba) -> Rgba {
         with_alpha(color, sizes::DISABLED_ALPHA)
+    }
+
+    pub fn transparent() -> Rgba {
+        Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
     }
 }
 

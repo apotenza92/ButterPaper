@@ -6,5 +6,5 @@ mod menus;
 
 #[allow(unused_imports)]
 pub use document::DocumentTab;
-pub use editor::PdfEditor;
+pub use editor::{BenchmarkPerfSnapshot, PdfEditor};
 pub use menus::set_menus;

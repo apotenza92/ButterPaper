@@ -6,4 +6,4 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-pdfium-render = "0.8"
+pdfium-render = { version = "0.8", features = ["sync"] }

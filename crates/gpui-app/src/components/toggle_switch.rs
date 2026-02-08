@@ -7,6 +7,30 @@ use crate::ui::color;
 use crate::ui::{sizes, TypographyExt};
 use crate::Theme;
 
+#[derive(Clone, Copy)]
+struct CheckboxColors {
+    checked_bg: gpui::Rgba,
+    checked_border: gpui::Rgba,
+    checked_icon: gpui::Rgba,
+    unchecked_bg: gpui::Rgba,
+    unchecked_border: gpui::Rgba,
+    unchecked_hover_bg: gpui::Rgba,
+}
+
+fn checkbox_colors(theme: &Theme) -> CheckboxColors {
+    CheckboxColors {
+        // Inverted checked state: dark fill + light tick in light themes,
+        // and light fill + dark tick in dark themes.
+        checked_bg: theme.text,
+        checked_border: color::strong_border(theme.text),
+        checked_icon: theme.background,
+        // Neutral unchecked state.
+        unchecked_bg: theme.elevated_surface,
+        unchecked_border: color::strong_border(theme.text_muted),
+        unchecked_hover_bg: theme.element_hover,
+    }
+}
+
 /// Toggle switch for boolean values.
 ///
 /// # Example
@@ -80,11 +104,7 @@ pub fn checkbox<F>(
 where
     F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let surface = theme.elevated_surface;
-    let hover_bg = theme.element_hover;
-    let selected_bg = theme.element_selected;
-    let check_color = theme.text;
-    let subtle_border = color::subtle_border(theme.border);
+    let colors = checkbox_colors(theme);
 
     div()
         .id(id.into())
@@ -97,14 +117,16 @@ where
         .cursor_pointer()
         .border_1()
         .when(checked, move |d| {
-            d.bg(selected_bg).border_color(subtle_border).child(icon(
+            d.bg(colors.checked_bg).border_color(colors.checked_border).child(icon(
                 Icon::Check,
                 CHECK_ICON_SIZE,
-                check_color,
+                colors.checked_icon,
             ))
         })
         .when(!checked, move |d| {
-            d.bg(surface).border_color(subtle_border).hover(move |s| s.bg(hover_bg))
+            d.bg(colors.unchecked_bg)
+                .border_color(colors.unchecked_border)
+                .hover(move |s| s.bg(colors.unchecked_hover_bg))
         })
         .on_click(on_toggle)
 }
@@ -122,12 +144,8 @@ where
 {
     let id = id.into();
     let label = label.into();
-    let surface = theme.elevated_surface;
-    let hover_bg = theme.element_hover;
-    let selected_bg = theme.element_selected;
+    let colors = checkbox_colors(theme);
     let text_color = theme.text;
-    let check_color = theme.text;
-    let subtle_border = color::subtle_border(theme.border);
 
     div()
         .id(id)
@@ -148,15 +166,42 @@ where
                 .rounded(sizes::RADIUS_MD)
                 .border_1()
                 .when(checked, move |d| {
-                    d.bg(selected_bg).border_color(subtle_border).child(icon(
+                    d.bg(colors.checked_bg).border_color(colors.checked_border).child(icon(
                         Icon::Check,
                         CHECK_ICON_SIZE,
-                        check_color,
+                        colors.checked_icon,
                     ))
                 })
                 .when(!checked, move |d| {
-                    d.bg(surface).border_color(subtle_border).hover(move |s| s.bg(hover_bg))
+                    d.bg(colors.unchecked_bg)
+                        .border_color(colors.unchecked_border)
+                        .hover(move |s| s.bg(colors.unchecked_hover_bg))
                 }),
         )
         .child(div().text_ui_body().text_color(text_color).child(label))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checkbox_colors;
+    use crate::theme::ThemeColors;
+    use crate::ui::color;
+
+    #[test]
+    fn checkbox_checked_state_uses_neutral_contrast_palette() {
+        let theme = ThemeColors::fallback_dark();
+        let colors = checkbox_colors(&theme);
+        assert_eq!(colors.checked_bg, theme.text);
+        assert_eq!(colors.checked_icon, theme.background);
+        assert_eq!(colors.checked_border, color::strong_border(theme.text));
+    }
+
+    #[test]
+    fn checkbox_unchecked_state_uses_neutral_palette() {
+        let theme = ThemeColors::fallback_light();
+        let colors = checkbox_colors(&theme);
+        assert_eq!(colors.unchecked_bg, theme.elevated_surface);
+        assert_eq!(colors.unchecked_border, color::strong_border(theme.text_muted));
+        assert_eq!(colors.unchecked_hover_bg, theme.element_hover);
+    }
 }

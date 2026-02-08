@@ -19,15 +19,21 @@ detect_platform() {
 }
 
 PLATFORM="${VISUAL_PLATFORM:-$(detect_platform)}"
-CANDIDATE_DIR="tests/visual/candidates/${PLATFORM}/editor"
-BASELINE_DIR="tests/visual/baselines/${PLATFORM}/editor"
 
-if [[ ! -d "${CANDIDATE_DIR}" ]]; then
-  echo "Candidate directory not found: ${CANDIDATE_DIR}" >&2
-  exit 1
-fi
+promote_suite() {
+  local suite="$1"
+  local candidate_dir="tests/visual/candidates/${PLATFORM}/${suite}"
+  local baseline_dir="tests/visual/baselines/${PLATFORM}/${suite}"
 
-mkdir -p "${BASELINE_DIR}"
-cp "${CANDIDATE_DIR}"/*.png "${BASELINE_DIR}/"
+  if [[ ! -d "${candidate_dir}" ]]; then
+    echo "Skipping ${suite} baseline promotion: ${candidate_dir} not found."
+    return
+  fi
 
-echo "Promoted ${PLATFORM} editor visuals into ${BASELINE_DIR}"
+  mkdir -p "${baseline_dir}"
+  cp "${candidate_dir}"/*.png "${baseline_dir}/"
+  echo "Promoted ${PLATFORM} ${suite} visuals into ${baseline_dir}"
+}
+
+promote_suite "editor"
+promote_suite "settings"

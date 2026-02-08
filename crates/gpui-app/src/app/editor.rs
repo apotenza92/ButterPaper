@@ -1,23 +1,31 @@
 //! ButterPaper main component with tabbed document management.
 
 use gpui::{
-    div, prelude::*, px, App, Context, ExternalPaths, FocusHandle, Focusable, KeyDownEvent,
-    MouseButton, MouseMoveEvent, ScrollHandle, Window,
+    deferred, div, prelude::*, px, rems, svg, App, Context, ExternalPaths, FocusHandle, Focusable,
+    KeyDownEvent, MouseButton, MouseMoveEvent, ScrollHandle, Window,
 };
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use super::document::DocumentTab;
 use crate::components::tab_bar::TabId as UiTabId;
 use crate::components::{
-    chrome_control_shell, chrome_icon_button, context_menu, icon, popover_menu, tab_item,
+    chrome_control_shell, chrome_control_size, chrome_icon_button,
+    chrome_icon_button_with_tooltip_visibility, context_menu, icon, popover_menu, tab_item,
     text_button_with_shortcut, ButtonSize, ContextMenuItem, Icon, TabItemData,
 };
+use crate::cache::AdaptiveMemoryBudget;
+use crate::preview_cache::SharedPreviewCache;
 use crate::settings;
-use crate::sidebar::{ThumbnailSidebar, SIDEBAR_WIDTH};
+use crate::sidebar::{ThumbnailPerfSnapshot, ThumbnailSidebar};
 use crate::ui::TypographyExt;
-use crate::viewport::{PdfViewport, ViewMode, ZoomMode};
+use crate::ui_preferences::save_ui_preferences_from_app;
+use crate::viewport::{PdfViewport, PerfSnapshot, ViewMode, ZoomMode};
 use crate::workspace::{load_preferences, TabPreferences};
-use crate::{current_theme, ui, Theme};
+use crate::{current_theme, ui, Theme, ThumbnailClusterWidthPx};
 use crate::{
     CloseTab, CloseWindow, FirstPage, FitPage, FitWidth, LastPage, NextPage, NextTab, Open,
     PrevPage, PrevTab, ResetZoom, ZoomIn, ZoomOut,
@@ -26,6 +34,7 @@ use crate::{
 const MIN_ZOOM_PERCENT: u32 = 25;
 const MAX_ZOOM_PERCENT: u32 = 400;
 const TAB_BAR_OVERFLOW_EPSILON: f32 = 0.5;
+const LINKED_TOOLBAR_CLICK_WINDOW: Duration = Duration::from_millis(1400);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuKind {
@@ -41,6 +50,32 @@ enum MenuCommand {
     Open,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinkedToolbarButton {
+    FitPage,
+    FitWidth,
+    SinglePage,
+    Continuous,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LinkedToolbarPendingClick {
+    button: LinkedToolbarButton,
+    expires_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LinkedToolbarHint {
+    button: LinkedToolbarButton,
+    expires_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SidebarResizeDrag {
+    start_mouse_x: f32,
+    start_width_px: f32,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ActiveViewportInfo {
     has_document: bool,
@@ -51,6 +86,13 @@ struct ActiveViewportInfo {
     view_mode: ViewMode,
 }
 
+#[derive(Clone, Debug)]
+pub struct BenchmarkPerfSnapshot {
+    pub viewport: PerfSnapshot,
+    pub thumbnail: ThumbnailPerfSnapshot,
+    pub total_owned_bytes: u64,
+}
+
 impl Default for ActiveViewportInfo {
     fn default() -> Self {
         Self {
@@ -58,8 +100,8 @@ impl Default for ActiveViewportInfo {
             page_count: 0,
             current_page: 0,
             zoom_level: 100,
-            zoom_mode: ZoomMode::Percent,
-            view_mode: ViewMode::Continuous,
+            zoom_mode: ZoomMode::FitPage,
+            view_mode: ViewMode::SinglePage,
         }
     }
 }
@@ -83,6 +125,10 @@ pub struct PdfEditor {
     tab_bar_last_row_width: f32,
     /// Whether the thumbnail sidebar is visible for the active tab.
     thumbnail_sidebar_visible: bool,
+    /// Width of the full left cluster (tool rail + thumbnail pane) when visible.
+    thumbnail_cluster_width_px: f32,
+    /// Active resize drag state for the left cluster splitter.
+    sidebar_resize_drag: Option<SidebarResizeDrag>,
     /// Which in-window menu is currently open.
     open_menu: Option<MenuKind>,
     /// Current text shown in the zoom combo field.
@@ -99,6 +145,10 @@ pub struct PdfEditor {
     page_input_editing: bool,
     /// Whether the current page text should behave like a selected value.
     page_input_select_all: bool,
+    /// Pending "click again" state for linked toolbar toggles.
+    linked_toolbar_pending: Option<LinkedToolbarPendingClick>,
+    /// Visible click hint for linked toolbar toggles.
+    linked_toolbar_hint: Option<LinkedToolbarHint>,
 }
 
 fn next_active_tab_index_after_close(
@@ -160,10 +210,12 @@ fn compute_canvas_metrics(
     viewport_width: f32,
     viewport_height: f32,
     show_sidebar: bool,
+    thumbnail_cluster_width_px: f32,
     show_in_window_menu: bool,
 ) -> (f32, f32) {
-    let sidebar = if show_sidebar { SIDEBAR_WIDTH } else { 0.0 };
-    let canvas_width = (viewport_width - ui::sizes::TOOL_RAIL_WIDTH.0 - sidebar).max(1.0);
+    let left_cluster =
+        if show_sidebar { thumbnail_cluster_width_px } else { ui::sizes::TOOL_RAIL_WIDTH.0 };
+    let canvas_width = (viewport_width - left_cluster).max(1.0);
     let menu_height = if show_in_window_menu { ui::sizes::MENU_ROW_HEIGHT.0 } else { 0.0 };
     let chrome_height = ui::sizes::TITLE_BAR_HEIGHT.0
         + menu_height
@@ -171,6 +223,20 @@ fn compute_canvas_metrics(
         + ui::sizes::CANVAS_TOOLBAR_HEIGHT.0;
     let canvas_height = (viewport_height - chrome_height).max(1.0);
     (canvas_width, canvas_height)
+}
+
+fn clamp_thumbnail_cluster_width(width_px: f32, window_width_px: f32) -> f32 {
+    if !width_px.is_finite() {
+        return ui::sizes::THUMBNAIL_CLUSTER_DEFAULT_WIDTH_PX;
+    }
+
+    let bounded_window_width =
+        if window_width_px.is_finite() { window_width_px.max(1.0) } else { f32::INFINITY };
+    let max_from_window = (bounded_window_width - ui::sizes::MIN_MAIN_COLUMN_WIDTH_PX)
+        .max(ui::sizes::THUMBNAIL_CLUSTER_MIN_WIDTH_PX)
+        .min(ui::sizes::THUMBNAIL_CLUSTER_MAX_WIDTH_PX);
+
+    width_px.clamp(ui::sizes::THUMBNAIL_CLUSTER_MIN_WIDTH_PX, max_from_window)
 }
 
 fn map_menu_command(value: &str) -> Option<MenuCommand> {
@@ -195,8 +261,53 @@ fn tab_bar_is_overflowing(max_offset_width: f32) -> bool {
     max_offset_width > TAB_BAR_OVERFLOW_EPSILON
 }
 
+fn linked_toolbar_hint_text(button: LinkedToolbarButton) -> &'static str {
+    match button {
+        LinkedToolbarButton::FitPage => "Click again for Single page view",
+        LinkedToolbarButton::SinglePage => "Click again for Fit page",
+        LinkedToolbarButton::FitWidth => "Click again for Continuous view",
+        LinkedToolbarButton::Continuous => "Click again for Fit width",
+    }
+}
+
+fn should_offer_linked_toolbar_hint(
+    button: LinkedToolbarButton,
+    viewport_info: ActiveViewportInfo,
+) -> bool {
+    if !viewport_info.has_document {
+        return false;
+    }
+
+    match button {
+        LinkedToolbarButton::FitPage => viewport_info.view_mode != ViewMode::SinglePage,
+        LinkedToolbarButton::SinglePage => viewport_info.zoom_mode != ZoomMode::FitPage,
+        LinkedToolbarButton::FitWidth => viewport_info.view_mode != ViewMode::Continuous,
+        LinkedToolbarButton::Continuous => viewport_info.zoom_mode != ZoomMode::FitWidth,
+    }
+}
+
+fn linked_toolbar_hint_width(text: &str, window: &Window) -> gpui::Pixels {
+    let text = text.to_string();
+    let mut text_style = window.text_style();
+    // Match `text_ui_body()` so the measured width tracks rendered glyphs.
+    text_style.font_size = rems(0.875).into();
+    let font_size = text_style.font_size.to_pixels(window.rem_size());
+    let text_run = text_style.to_run(text.len());
+    let text_width = window
+        .text_system()
+        .layout_line(text.clone(), font_size, &[text_run])
+        .map(|layout| layout.width)
+        .unwrap_or_else(|_| px(text.chars().count() as f32 * 7.0));
+    text_width + ui::sizes::SPACE_2 + ui::sizes::SPACE_2
+}
+
 impl PdfEditor {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let initial_cluster_width = clamp_thumbnail_cluster_width(
+            cx.try_global::<ThumbnailClusterWidthPx>().copied().unwrap_or_default().0,
+            f32::INFINITY,
+        );
+
         Self {
             tabs: Vec::new(),
             active_tab_index: 0,
@@ -210,6 +321,8 @@ impl PdfEditor {
             tab_bar_measure_scheduled: false,
             tab_bar_last_row_width: 0.0,
             thumbnail_sidebar_visible: true,
+            thumbnail_cluster_width_px: initial_cluster_width,
+            sidebar_resize_drag: None,
             open_menu: None,
             zoom_input_text: "100%".to_string(),
             zoom_input_editing: false,
@@ -218,14 +331,66 @@ impl PdfEditor {
             page_input_text: "0".to_string(),
             page_input_editing: false,
             page_input_select_all: false,
+            linked_toolbar_pending: None,
+            linked_toolbar_hint: None,
         }
+    }
+
+    fn start_sidebar_resize_drag(
+        &mut self,
+        mouse_x_window: f32,
+        window_width_px: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.thumbnail_cluster_width_px =
+            clamp_thumbnail_cluster_width(self.thumbnail_cluster_width_px, window_width_px);
+        self.sidebar_resize_drag = Some(SidebarResizeDrag {
+            start_mouse_x: mouse_x_window,
+            start_width_px: self.thumbnail_cluster_width_px,
+        });
+        cx.notify();
+    }
+
+    fn update_sidebar_resize_drag(
+        &mut self,
+        mouse_x_window: f32,
+        window_width_px: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(drag) = self.sidebar_resize_drag else {
+            return;
+        };
+        let proposed = drag.start_width_px + (mouse_x_window - drag.start_mouse_x);
+        let clamped = clamp_thumbnail_cluster_width(proposed, window_width_px);
+        if (self.thumbnail_cluster_width_px - clamped).abs() > 0.1 {
+            self.thumbnail_cluster_width_px = clamped;
+            cx.notify();
+        }
+    }
+
+    fn finish_sidebar_resize_drag(&mut self, cx: &mut Context<Self>) {
+        if self.sidebar_resize_drag.take().is_none() {
+            return;
+        }
+        cx.set_global(ThumbnailClusterWidthPx(self.thumbnail_cluster_width_px));
+        let _ = save_ui_preferences_from_app(cx);
+        cx.notify();
     }
 
     /// Create a new document tab, optionally with a file path.
     /// If path is None, creates a welcome tab.
     fn create_tab(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) -> usize {
-        let viewport = cx.new(PdfViewport::new);
-        let sidebar = cx.new(ThumbnailSidebar::new);
+        let budget = AdaptiveMemoryBudget::detect();
+        let preview_budget_bytes =
+            SharedPreviewCache::preview_budget_bytes(budget.total_budget_bytes);
+        let preview_cache = Arc::new(Mutex::new(SharedPreviewCache::new(preview_budget_bytes)));
+        let viewport_preview = preview_cache.clone();
+        let sidebar_preview = preview_cache.clone();
+
+        let viewport =
+            cx.new(move |cx| PdfViewport::new_with_preview_cache(viewport_preview.clone(), cx));
+        let sidebar =
+            cx.new(move |cx| ThumbnailSidebar::new_with_preview_cache(sidebar_preview.clone(), cx));
 
         // Set up page change callback from viewport to sidebar
         let sidebar_weak = sidebar.downgrade();
@@ -257,8 +422,15 @@ impl PdfEditor {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "Welcome".to_string());
 
-        let tab =
-            DocumentTab { id: UiTabId::new(), path, title, viewport, sidebar, is_dirty: false };
+        let tab = DocumentTab {
+            id: UiTabId::new(),
+            path,
+            title,
+            viewport,
+            sidebar,
+            preview_cache,
+            is_dirty: false,
+        };
 
         self.tabs.push(tab);
         self.tabs.len() - 1
@@ -350,6 +522,61 @@ impl PdfEditor {
         self.mark_tab_bar_layout_dirty();
         self.reveal_active_tab();
         cx.notify();
+    }
+
+    pub fn configure_benchmark_continuous_fit_width(&mut self, cx: &mut Context<Self>) {
+        if let Some(tab) = self.active_tab() {
+            let viewport = tab.viewport.clone();
+            viewport.update(cx, |viewport, cx| {
+                viewport.set_view_mode(ViewMode::Continuous, cx);
+                viewport.fit_width(cx);
+            });
+        }
+    }
+
+    pub fn benchmark_scroll_by_pixels(&mut self, delta_pixels: f32, cx: &mut Context<Self>) {
+        if let Some(tab) = self.active_tab() {
+            let viewport = tab.viewport.clone();
+            viewport.update(cx, |viewport, cx| {
+                viewport.scroll_by_pixels(delta_pixels, cx);
+            });
+        }
+    }
+
+    pub fn benchmark_jump_to_fraction(&mut self, fraction: f32, cx: &mut Context<Self>) {
+        if let Some(tab) = self.active_tab() {
+            let viewport = tab.viewport.clone();
+            viewport.update(cx, |viewport, cx| {
+                viewport.benchmark_jump_to_fraction(fraction, cx);
+            });
+        }
+    }
+
+    pub fn benchmark_perf_snapshot(&self, cx: &App) -> Option<BenchmarkPerfSnapshot> {
+        self.active_tab().and_then(|tab| {
+            let viewport = tab.viewport.read(cx);
+            let sidebar = tab.sidebar.read(cx);
+            if viewport.has_document() {
+                let viewport_snapshot = viewport.perf_snapshot();
+                let thumbnail_snapshot = sidebar.perf_snapshot();
+                let preview_snapshot = tab
+                    .preview_cache
+                    .lock()
+                    .map(|cache| cache.snapshot())
+                    .unwrap_or_default();
+                let total_owned_bytes = viewport_snapshot
+                    .current_owned_bytes
+                    .saturating_add(thumbnail_snapshot.current_thumbnail_decoded_bytes)
+                    .saturating_add(preview_snapshot.current_preview_decoded_bytes);
+                Some(BenchmarkPerfSnapshot {
+                    viewport: viewport_snapshot,
+                    thumbnail: thumbnail_snapshot,
+                    total_owned_bytes,
+                })
+            } else {
+                None
+            }
+        })
     }
 
     fn handle_file_drop(&mut self, paths: &ExternalPaths, cx: &mut Context<Self>) {
@@ -904,6 +1131,237 @@ impl PdfEditor {
         }
     }
 
+    fn apply_linked_toolbar_action(
+        &mut self,
+        button: LinkedToolbarButton,
+        include_linked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(tab) = self.active_tab() {
+            tab.viewport.update(cx, |viewport, cx| {
+                match button {
+                    LinkedToolbarButton::FitPage => viewport.fit_page(cx),
+                    LinkedToolbarButton::FitWidth => viewport.fit_width(cx),
+                    LinkedToolbarButton::SinglePage => {
+                        viewport.set_view_mode(ViewMode::SinglePage, cx)
+                    }
+                    LinkedToolbarButton::Continuous => {
+                        viewport.set_view_mode(ViewMode::Continuous, cx)
+                    }
+                }
+
+                if include_linked {
+                    match button {
+                        LinkedToolbarButton::FitPage => {
+                            viewport.set_view_mode(ViewMode::SinglePage, cx)
+                        }
+                        LinkedToolbarButton::SinglePage => viewport.fit_page(cx),
+                        LinkedToolbarButton::FitWidth => {
+                            viewport.set_view_mode(ViewMode::Continuous, cx)
+                        }
+                        LinkedToolbarButton::Continuous => viewport.fit_width(cx),
+                    }
+                }
+            });
+            self.sync_zoom_input_from_active(cx);
+            self.sync_page_input_from_active(cx);
+        }
+    }
+
+    fn clear_linked_toolbar_hint_for(
+        &mut self,
+        button: LinkedToolbarButton,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        if self.linked_toolbar_pending.is_some_and(|pending| pending.button == button) {
+            self.linked_toolbar_pending = None;
+            changed = true;
+        }
+        if self.linked_toolbar_hint.is_some_and(|hint| hint.button == button) {
+            self.linked_toolbar_hint = None;
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn clear_linked_toolbar_hint(&mut self) {
+        self.linked_toolbar_pending = None;
+        self.linked_toolbar_hint = None;
+    }
+
+    fn consume_linked_toolbar_second_click(&mut self, button: LinkedToolbarButton) -> bool {
+        let now = Instant::now();
+
+        let Some(pending) = self.linked_toolbar_pending else {
+            return false;
+        };
+
+        if pending.expires_at <= now {
+            self.linked_toolbar_pending = None;
+            if self.linked_toolbar_hint.is_some_and(|hint| hint.button == pending.button) {
+                self.linked_toolbar_hint = None;
+            }
+            return false;
+        }
+
+        if pending.button != button {
+            return false;
+        }
+
+        self.clear_linked_toolbar_hint();
+        true
+    }
+
+    fn arm_linked_toolbar_hint(&mut self, button: LinkedToolbarButton, cx: &mut Context<Self>) {
+        let expires_at = Instant::now() + LINKED_TOOLBAR_CLICK_WINDOW;
+        self.linked_toolbar_pending = Some(LinkedToolbarPendingClick { button, expires_at });
+        self.linked_toolbar_hint = Some(LinkedToolbarHint { button, expires_at });
+        cx.notify();
+
+        cx.spawn(move |this: gpui::WeakEntity<PdfEditor>, cx: &mut gpui::AsyncApp| {
+            let mut async_cx = cx.clone();
+            async move {
+                async_cx.background_executor().timer(LINKED_TOOLBAR_CLICK_WINDOW).await;
+                let _ = this.update(
+                    &mut async_cx,
+                    move |editor: &mut PdfEditor, cx: &mut Context<'_, PdfEditor>| {
+                        let now = Instant::now();
+                        let mut changed = false;
+
+                        if editor.linked_toolbar_pending.is_some_and(|pending| {
+                            pending.button == button && pending.expires_at <= now
+                        }) {
+                            editor.linked_toolbar_pending = None;
+                            changed = true;
+                        }
+
+                        if editor
+                            .linked_toolbar_hint
+                            .is_some_and(|hint| hint.button == button && hint.expires_at <= now)
+                        {
+                            editor.linked_toolbar_hint = None;
+                            changed = true;
+                        }
+
+                        if changed {
+                            cx.notify();
+                        }
+                    },
+                );
+            }
+        })
+        .detach();
+    }
+
+    fn linked_toolbar_hint_for(&self, button: LinkedToolbarButton) -> Option<&'static str> {
+        let now = Instant::now();
+        self.linked_toolbar_hint
+            .filter(|hint| hint.button == button && hint.expires_at > now)
+            .map(|_| linked_toolbar_hint_text(button))
+    }
+
+    fn handle_linked_toolbar_click(
+        &mut self,
+        button: LinkedToolbarButton,
+        click_count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let should_offer_hint =
+            should_offer_linked_toolbar_hint(button, self.active_viewport_info(cx));
+        let linked = click_count >= 2 || self.consume_linked_toolbar_second_click(button);
+        self.apply_linked_toolbar_action(button, linked, cx);
+
+        if linked {
+            self.clear_linked_toolbar_hint();
+            cx.notify();
+        } else if should_offer_hint {
+            self.arm_linked_toolbar_hint(button, cx);
+        } else {
+            self.clear_linked_toolbar_hint();
+            cx.notify();
+        }
+    }
+
+    fn render_linked_toolbar_button(
+        &self,
+        id: &'static str,
+        icon_type: Icon,
+        tooltip: &'static str,
+        enabled: bool,
+        selected: bool,
+        button: LinkedToolbarButton,
+        theme: &Theme,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let hint = self.linked_toolbar_hint_for(button);
+
+        div()
+            .id((id, 1usize))
+            .relative()
+            .on_hover(cx.listener(move |this, hovering: &bool, _window, cx| {
+                if !*hovering {
+                    this.clear_linked_toolbar_hint_for(button, cx);
+                }
+            }))
+            .child(chrome_icon_button_with_tooltip_visibility(
+                id,
+                icon_type,
+                tooltip,
+                hint.is_none(),
+                enabled,
+                selected,
+                theme,
+                {
+                    let entity = cx.entity().downgrade();
+                    move |event, _, cx| {
+                        if let Some(editor) = entity.upgrade() {
+                            editor.update(cx, |editor, cx| {
+                                editor.handle_linked_toolbar_click(
+                                    button,
+                                    event.up.click_count,
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+                },
+            ))
+            .when_some(hint, |d, hint| {
+                let hint_width = linked_toolbar_hint_width(hint, window);
+                d.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_auto()
+                        .top(chrome_control_size() + ui::sizes::SPACE_1)
+                        .child(
+                            deferred(
+                                div()
+                                    .id((id, 2usize))
+                                    .occlude()
+                                    .w(hint_width)
+                                    .px(ui::sizes::SPACE_2)
+                                    .py(ui::sizes::SPACE_1)
+                                    .bg(theme.surface)
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .rounded(ui::sizes::RADIUS_SM)
+                                    .shadow_md()
+                                    .text_ui_body()
+                                    .text_color(theme.text)
+                                    .whitespace_nowrap()
+                                    .child(hint),
+                            )
+                            .with_priority(1),
+                        ),
+                )
+            })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_canvas_toolbar(
         &self,
@@ -916,6 +1374,7 @@ impl PdfEditor {
         page_control: gpui::AnyElement,
         zoom_combo: gpui::AnyElement,
         theme: &Theme,
+        window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         div()
@@ -1000,51 +1459,27 @@ impl PdfEditor {
                                     .text_color(theme.text_muted)
                                     .child("|"),
                             )
-                            .child(chrome_icon_button(
+                            .child(self.render_linked_toolbar_button(
                                 "toolbar-fit-page",
                                 Icon::FitPage,
                                 "Fit page",
                                 can_zoom,
                                 fit_page_selected,
+                                LinkedToolbarButton::FitPage,
                                 theme,
-                                {
-                                    let entity = cx.entity().downgrade();
-                                    move |_, _, cx| {
-                                        if let Some(editor) = entity.upgrade() {
-                                            editor.update(cx, |editor, cx| {
-                                                if let Some(tab) = editor.active_tab() {
-                                                    tab.viewport.update(cx, |viewport, cx| {
-                                                        viewport.fit_page(cx);
-                                                    });
-                                                    editor.sync_zoom_input_from_active(cx);
-                                                }
-                                            });
-                                        }
-                                    }
-                                },
+                                window,
+                                cx,
                             ))
-                            .child(chrome_icon_button(
+                            .child(self.render_linked_toolbar_button(
                                 "toolbar-fit-width",
                                 Icon::FitWidth,
                                 "Fit width",
                                 can_zoom,
                                 fit_width_selected,
+                                LinkedToolbarButton::FitWidth,
                                 theme,
-                                {
-                                    let entity = cx.entity().downgrade();
-                                    move |_, _, cx| {
-                                        if let Some(editor) = entity.upgrade() {
-                                            editor.update(cx, |editor, cx| {
-                                                if let Some(tab) = editor.active_tab() {
-                                                    tab.viewport.update(cx, |viewport, cx| {
-                                                        viewport.fit_width(cx);
-                                                    });
-                                                    editor.sync_zoom_input_from_active(cx);
-                                                }
-                                            });
-                                        }
-                                    }
-                                },
+                                window,
+                                cx,
                             ))
                             .child(
                                 div()
@@ -1054,55 +1489,27 @@ impl PdfEditor {
                                     .text_color(theme.text_muted)
                                     .child("|"),
                             )
-                            .child(chrome_icon_button(
+                            .child(self.render_linked_toolbar_button(
                                 "toolbar-view-single-page",
                                 Icon::ViewSinglePage,
                                 "Single page view",
                                 can_zoom,
                                 page_view_mode == ViewMode::SinglePage,
+                                LinkedToolbarButton::SinglePage,
                                 theme,
-                                {
-                                    let entity = cx.entity().downgrade();
-                                    move |_, _, cx| {
-                                        if let Some(editor) = entity.upgrade() {
-                                            editor.update(cx, |editor, cx| {
-                                                if let Some(tab) = editor.active_tab() {
-                                                    tab.viewport.update(cx, |viewport, cx| {
-                                                        viewport.set_view_mode(
-                                                            ViewMode::SinglePage,
-                                                            cx,
-                                                        );
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    }
-                                },
+                                window,
+                                cx,
                             ))
-                            .child(chrome_icon_button(
+                            .child(self.render_linked_toolbar_button(
                                 "toolbar-view-continuous",
                                 Icon::ViewContinuous,
                                 "Continuous view",
                                 can_zoom,
                                 page_view_mode == ViewMode::Continuous,
+                                LinkedToolbarButton::Continuous,
                                 theme,
-                                {
-                                    let entity = cx.entity().downgrade();
-                                    move |_, _, cx| {
-                                        if let Some(editor) = entity.upgrade() {
-                                            editor.update(cx, |editor, cx| {
-                                                if let Some(tab) = editor.active_tab() {
-                                                    tab.viewport.update(cx, |viewport, cx| {
-                                                        viewport.set_view_mode(
-                                                            ViewMode::Continuous,
-                                                            cx,
-                                                        );
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    }
-                                },
+                                window,
+                                cx,
                             )),
                     ),
             )
@@ -1325,9 +1732,11 @@ mod tests {
     use gpui::{point, px, size, AppContext as _, ScrollDelta, ScrollWheelEvent, TestAppContext};
 
     use super::{
-        compute_canvas_metrics, hover_open_menu, map_menu_command,
-        next_active_tab_index_after_close, parse_page_input_index, parse_zoom_input_percent,
-        tab_bar_is_overflowing, MenuCommand, MenuKind, TAB_BAR_OVERFLOW_EPSILON,
+        clamp_thumbnail_cluster_width, compute_canvas_metrics, hover_open_menu,
+        linked_toolbar_hint_text, map_menu_command, next_active_tab_index_after_close,
+        parse_page_input_index, parse_zoom_input_percent, should_offer_linked_toolbar_hint,
+        tab_bar_is_overflowing, ActiveViewportInfo, LinkedToolbarButton, MenuCommand, MenuKind,
+        ViewMode, ZoomMode, TAB_BAR_OVERFLOW_EPSILON,
     };
 
     #[test]
@@ -1390,19 +1799,41 @@ mod tests {
 
     #[test]
     fn canvas_metrics_account_for_sidebar() {
-        let (w_open, h_open) = compute_canvas_metrics(1200.0, 900.0, true, true);
-        let (w_closed, h_closed) = compute_canvas_metrics(1200.0, 900.0, false, true);
+        let (w_open, h_open) = compute_canvas_metrics(1200.0, 900.0, true, 261.0, true);
+        let (w_closed, h_closed) = compute_canvas_metrics(1200.0, 900.0, false, 261.0, true);
 
         assert!(w_closed > w_open);
         assert_eq!(h_open, h_closed);
     }
 
     #[test]
+    fn canvas_metrics_uses_cluster_width_when_visible() {
+        let (wide, _) = compute_canvas_metrics(1200.0, 900.0, true, 420.0, true);
+        let (narrow, _) = compute_canvas_metrics(1200.0, 900.0, true, 240.0, true);
+        assert!(narrow > wide);
+    }
+
+    #[test]
+    fn canvas_metrics_hidden_sidebar_keeps_tool_rail_reserved() {
+        let (width, _) = compute_canvas_metrics(1200.0, 900.0, false, 261.0, true);
+        assert_eq!(width, 1200.0 - crate::ui::sizes::TOOL_RAIL_WIDTH.0);
+    }
+
+    #[test]
     fn canvas_metrics_account_for_menu_visibility() {
-        let (_w_with_menu, h_with_menu) = compute_canvas_metrics(1200.0, 900.0, false, true);
-        let (_w_without_menu, h_without_menu) = compute_canvas_metrics(1200.0, 900.0, false, false);
+        let (_w_with_menu, h_with_menu) = compute_canvas_metrics(1200.0, 900.0, false, 261.0, true);
+        let (_w_without_menu, h_without_menu) =
+            compute_canvas_metrics(1200.0, 900.0, false, 261.0, false);
 
         assert!(h_without_menu > h_with_menu);
+    }
+
+    #[test]
+    fn clamp_thumbnail_cluster_width_clamps_min_max_and_window_limit() {
+        assert_eq!(clamp_thumbnail_cluster_width(120.0, 1400.0), 200.0);
+        assert_eq!(clamp_thumbnail_cluster_width(900.0, 1800.0), 520.0);
+        // Window cap: 700 - 420 = 280 max.
+        assert_eq!(clamp_thumbnail_cluster_width(380.0, 700.0), 280.0);
     }
 
     #[test]
@@ -1443,6 +1874,48 @@ mod tests {
         assert_ne!(overflowing, next);
         overflowing = next;
         assert!(!overflowing);
+    }
+
+    #[test]
+    fn linked_toolbar_hint_copy_matches_pairing_contract() {
+        assert_eq!(
+            linked_toolbar_hint_text(LinkedToolbarButton::FitPage),
+            "Click again for Single page view"
+        );
+        assert_eq!(
+            linked_toolbar_hint_text(LinkedToolbarButton::SinglePage),
+            "Click again for Fit page"
+        );
+        assert_eq!(
+            linked_toolbar_hint_text(LinkedToolbarButton::FitWidth),
+            "Click again for Continuous view"
+        );
+        assert_eq!(
+            linked_toolbar_hint_text(LinkedToolbarButton::Continuous),
+            "Click again for Fit width"
+        );
+    }
+
+    #[test]
+    fn linked_toolbar_hint_hidden_when_pair_is_already_active() {
+        let mut info = ActiveViewportInfo::default();
+        info.has_document = true;
+
+        info.view_mode = ViewMode::SinglePage;
+        assert!(!should_offer_linked_toolbar_hint(LinkedToolbarButton::FitPage, info));
+
+        info.zoom_mode = ZoomMode::FitPage;
+        assert!(!should_offer_linked_toolbar_hint(LinkedToolbarButton::SinglePage, info));
+
+        info.view_mode = ViewMode::Continuous;
+        assert!(!should_offer_linked_toolbar_hint(LinkedToolbarButton::FitWidth, info));
+
+        info.zoom_mode = ZoomMode::FitWidth;
+        assert!(!should_offer_linked_toolbar_hint(LinkedToolbarButton::Continuous, info));
+
+        info.view_mode = ViewMode::Continuous;
+        info.zoom_mode = ZoomMode::Percent;
+        assert!(should_offer_linked_toolbar_hint(LinkedToolbarButton::FitPage, info));
     }
 
     #[gpui::test]
@@ -1596,10 +2069,14 @@ impl Render for PdfEditor {
         self.sync_tab_row_width_and_mark_dirty(viewport_size.width.0);
         let show_sidebar =
             self.thumbnail_sidebar_visible && self.active_tab().is_some() && !active_is_welcome;
+        let sidebar_cluster_width =
+            clamp_thumbnail_cluster_width(self.thumbnail_cluster_width_px, viewport_size.width.0);
+        self.thumbnail_cluster_width_px = sidebar_cluster_width;
         let (canvas_width, canvas_height) = compute_canvas_metrics(
             viewport_size.width.0,
             viewport_size.height.0,
             show_sidebar,
+            sidebar_cluster_width,
             show_in_window_menu,
         );
         if show_tab_bar {
@@ -1610,6 +2087,18 @@ impl Render for PdfEditor {
             let viewport = tab.viewport.clone();
             viewport.update(cx, |viewport, cx| {
                 viewport.set_canvas_metrics(canvas_width, canvas_height, cx);
+            });
+            let (pressure_state, scroll_active) = {
+                let vp = tab.viewport.read(cx);
+                (vp.memory_pressure_state(), vp.is_scroll_active_for_performance())
+            };
+            let sidebar = tab.sidebar.clone();
+            sidebar.update(cx, |sidebar, cx| {
+                sidebar.set_performance_state(pressure_state, scroll_active, cx);
+            });
+            let sidebar_has_gaps = tab.sidebar.read(cx).has_visible_thumbnail_gaps();
+            viewport.update(cx, |viewport, _cx| {
+                viewport.set_sidebar_thumbnail_backpressure(sidebar_has_gaps);
             });
         }
 
@@ -1890,6 +2379,19 @@ impl Render for PdfEditor {
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _window, cx| {
                 this.handle_file_drop(paths, cx);
             }))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                this.update_sidebar_resize_drag(
+                    event.position.x.0,
+                    window.viewport_size().width.0,
+                    cx,
+                );
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event: &gpui::MouseUpEvent, _window, cx| {
+                    this.finish_sidebar_resize_drag(cx);
+                }),
+            )
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     if this.page_input_editing {
@@ -2103,41 +2605,109 @@ impl Render for PdfEditor {
                     .flex_row()
                     .flex_1()
                     .overflow_hidden()
-                    .child(
-                        div()
-                            .id("tool-rail")
-                            .w(ui::sizes::TOOL_RAIL_WIDTH)
-                            .h_full()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .pt(ui::sizes::TOOL_RAIL_TOP_INSET)
-                            .bg(theme.surface)
-                            .border_r_1()
-                            .border_color(toolbar_chrome_border)
-                            .child({
-                                let entity = cx.entity().downgrade();
-                                chrome_icon_button(
-                                    "tool-rail-toggle-thumbnails",
-                                    Icon::PanelLeft,
-                                    "Toggle thumbnails",
-                                    !active_is_welcome,
-                                    show_sidebar,
-                                    &theme,
-                                    move |_, _, cx| {
-                                        if let Some(editor) = entity.upgrade() {
-                                            editor.update(cx, |editor, cx| {
-                                                editor.thumbnail_sidebar_visible =
-                                                    !editor.thumbnail_sidebar_visible;
-                                                cx.notify();
-                                            });
-                                        }
-                                    },
-                                )
-                            }),
-                    )
                     .when(show_sidebar, |d| {
-                        d.when_some(self.active_tab(), |d, tab| d.child(tab.sidebar.clone()))
+                        d.child(
+                            div()
+                                .id("left-cluster")
+                                .w(px(sidebar_cluster_width))
+                                .h_full()
+                                .flex()
+                                .flex_row()
+                                .bg(theme.surface)
+                                .child(
+                                    div()
+                                        .id("tool-rail")
+                                        .w(ui::sizes::TOOL_RAIL_WIDTH)
+                                        .h_full()
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .pt(ui::sizes::TOOL_RAIL_TOP_INSET)
+                                        .bg(theme.surface)
+                                        .border_r_1()
+                                        .border_color(toolbar_chrome_border)
+                                        .child({
+                                            let entity = cx.entity().downgrade();
+                                            chrome_icon_button(
+                                                "tool-rail-toggle-thumbnails",
+                                                Icon::PageThumbnails,
+                                                "Toggle thumbnails",
+                                                !active_is_welcome,
+                                                show_sidebar,
+                                                &theme,
+                                                move |_, _, cx| {
+                                                    if let Some(editor) = entity.upgrade() {
+                                                        editor.update(cx, |editor, cx| {
+                                                            editor.thumbnail_sidebar_visible =
+                                                                !editor.thumbnail_sidebar_visible;
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                },
+                                            )
+                                        }),
+                                )
+                                .when_some(self.active_tab(), |d, tab| d.child(tab.sidebar.clone()))
+                                .child(
+                                    div()
+                                        .id("left-cluster-resize-handle")
+                                        .w(px(ui::sizes::THUMBNAIL_CLUSTER_RESIZE_HANDLE_WIDTH_PX))
+                                        .h_full()
+                                        .bg(theme.surface)
+                                        .cursor(gpui::CursorStyle::ResizeColumn)
+                                        .hover({
+                                            let hover = theme.element_hover;
+                                            move |s| s.bg(hover)
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(
+                                                |this, event: &gpui::MouseDownEvent, window, cx| {
+                                                    this.start_sidebar_resize_drag(
+                                                        event.position.x.0,
+                                                        window.viewport_size().width.0,
+                                                        cx,
+                                                    );
+                                                },
+                                            ),
+                                        ),
+                                ),
+                        )
+                    })
+                    .when(!show_sidebar, |d| {
+                        d.child(
+                            div()
+                                .id("tool-rail")
+                                .w(ui::sizes::TOOL_RAIL_WIDTH)
+                                .h_full()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .pt(ui::sizes::TOOL_RAIL_TOP_INSET)
+                                .bg(theme.surface)
+                                .border_r_1()
+                                .border_color(toolbar_chrome_border)
+                                .child({
+                                    let entity = cx.entity().downgrade();
+                                    chrome_icon_button(
+                                        "tool-rail-toggle-thumbnails",
+                                        Icon::PageThumbnails,
+                                        "Toggle thumbnails",
+                                        !active_is_welcome,
+                                        show_sidebar,
+                                        &theme,
+                                        move |_, _, cx| {
+                                            if let Some(editor) = entity.upgrade() {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.thumbnail_sidebar_visible =
+                                                        !editor.thumbnail_sidebar_visible;
+                                                    cx.notify();
+                                                });
+                                            }
+                                        },
+                                    )
+                                }),
+                        )
                     })
                     .child(
                         div()
@@ -2157,6 +2727,7 @@ impl Render for PdfEditor {
                                 page_control,
                                 zoom_combo,
                                 &theme,
+                                window,
                                 cx,
                             ))
                             .child(
@@ -2175,6 +2746,14 @@ impl Render for PdfEditor {
                                                     .flex_col()
                                                     .items_center()
                                                     .justify_center()
+                                                    .gap(rems(1.25))
+                                                    .child(
+                                                        div().size(px(84.0)).child(
+                                                            svg().size_full().path(
+                                                                "branding/butterpaper-icon.svg",
+                                                            ),
+                                                        ),
+                                                    )
                                                     .child(text_button_with_shortcut(
                                                         "welcome-open-file",
                                                         "Open File",
@@ -2210,6 +2789,12 @@ impl Render for PdfEditor {
                                                         .flex_col()
                                                         .items_center()
                                                         .justify_center()
+                                                        .gap(rems(1.25))
+                                                        .child(div().size(px(84.0)).child(
+                                                            svg().size_full().path(
+                                                                "branding/butterpaper-icon.svg",
+                                                            ),
+                                                        ))
                                                         .child(text_button_with_shortcut(
                                                             "tab-welcome-open-file",
                                                             "Open File",

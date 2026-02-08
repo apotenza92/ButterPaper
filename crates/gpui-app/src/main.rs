@@ -1,5 +1,6 @@
 mod app;
 mod assets;
+mod benchmark;
 mod cache;
 mod cli;
 mod components;
@@ -7,6 +8,8 @@ mod element_registry;
 mod icons;
 #[cfg(target_os = "macos")]
 mod macos;
+mod process_memory;
+mod preview_cache;
 mod settings;
 mod sidebar;
 mod styles;
@@ -23,16 +26,28 @@ pub use theme::{current_theme, AppearanceMode, Theme, ThemeSettings};
 
 use butterpaper_render::PdfDocument;
 use gpui::{
-    actions, point, prelude::*, px, size, App, Application, Bounds, Focusable, KeyBinding,
+    actions, point, prelude::*, px, size, App, Application, Bounds, Focusable, Global, KeyBinding,
     TitlebarOptions, WindowBounds, WindowOptions,
 };
 use std::path::PathBuf;
 
 use app::{set_menus, PdfEditor};
 use assets::Assets;
+use benchmark::BenchmarkConfig;
 use cli::parse_args;
 use ui_preferences::load_ui_preferences;
 use window::{focus_window, list_windows, schedule_screenshot};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThumbnailClusterWidthPx(pub f32);
+
+impl Default for ThumbnailClusterWidthPx {
+    fn default() -> Self {
+        Self(ui_preferences::THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX)
+    }
+}
+
+impl Global for ThumbnailClusterWidthPx {}
 
 actions!(
     butterpaper,
@@ -56,7 +71,7 @@ actions!(
     ]
 );
 
-fn open_editor_window(cx: &mut App, initial_files: Vec<PathBuf>) {
+fn open_editor_window(cx: &mut App, initial_files: Vec<PathBuf>) -> gpui::WindowHandle<PdfEditor> {
     let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
 
     cx.open_window(
@@ -102,7 +117,7 @@ fn open_editor_window(cx: &mut App, initial_files: Vec<PathBuf>) {
             editor
         },
     )
-    .unwrap();
+    .unwrap()
 }
 
 fn main() {
@@ -155,11 +170,25 @@ fn main() {
 
     let initial_files = cli.files;
     let open_settings = cli.open_settings;
+    let benchmark_config = if cli.benchmark_scroll {
+        Some(BenchmarkConfig {
+            file: cli.benchmark_file.clone().unwrap_or_else(|| {
+                PathBuf::from("/Users/alex/code/ButterPaper/samples/All Slides + Cases.pdf")
+            }),
+            seconds: cli.benchmark_seconds,
+            output: cli
+                .benchmark_output
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("/tmp/butterpaper-benchmark.json")),
+        })
+    } else {
+        None
+    };
 
     let app = Application::new().with_assets(Assets);
     app.on_reopen(|cx| {
         if cx.windows().is_empty() {
-            open_editor_window(cx, Vec::new());
+            let _ = open_editor_window(cx, Vec::new());
             cx.activate(true);
         }
     });
@@ -206,6 +235,7 @@ fn main() {
         let ui_preferences = load_ui_preferences();
         cx.set_global(ui_preferences.appearance_mode);
         cx.set_global(ui_preferences.theme_settings);
+        cx.set_global(ThumbnailClusterWidthPx(ui_preferences.thumbnail_cluster_width_px));
         #[cfg(target_os = "macos")]
         macos::set_app_appearance(ui_preferences.appearance_mode);
 
@@ -231,7 +261,14 @@ fn main() {
             settings::open_settings_window(cx);
         }
 
-        open_editor_window(cx, initial_files.clone());
+        let editor_window = open_editor_window(cx, initial_files.clone());
+
+        if let Some(config) = benchmark_config.clone() {
+            if let Err(err) = benchmark::start(editor_window, config, cx) {
+                eprintln!("benchmark: failed to start benchmark runner: {err}");
+                std::process::exit(2);
+            }
+        }
 
         cx.activate(true);
     });

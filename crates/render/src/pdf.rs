@@ -2,9 +2,11 @@
 //!
 //! Provides a high-level interface to PDF documents using PDFium.
 
+use crate::RenderQuality;
 use pdfium_render::prelude::*;
 use std::cell::OnceCell;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use std::{env, fs};
 
 thread_local! {
@@ -14,6 +16,13 @@ thread_local! {
     /// creates a single shared instance while avoiding Send+Sync requirements.
     static PDFIUM: OnceCell<&'static Pdfium> = const { OnceCell::new() };
 }
+
+/// Global PDFium operation lock.
+///
+/// PDFium page parsing / rendering is not reliably safe when the same document
+/// is accessed concurrently from multiple worker threads. Serializing calls here
+/// prevents sporadic heap corruption crashes during startup thumbnail + viewport rendering.
+static PDFIUM_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Minimum number of non-whitespace characters required to skip OCR
 const MIN_TEXT_CHARS_THRESHOLD: usize = 50;
@@ -104,6 +113,14 @@ pub struct PdfDocument {
 }
 
 impl PdfDocument {
+    fn quality_scale_factor(quality: RenderQuality) -> f32 {
+        match quality {
+            RenderQuality::LqThumb => 0.25,
+            RenderQuality::LqScroll => 0.5,
+            RenderQuality::HqFinal => 1.0,
+        }
+    }
+
     #[cfg(target_os = "windows")]
     fn platform_library_filename() -> &'static str {
         "pdfium.dll"
@@ -296,6 +313,10 @@ or run scripts/setup_pdfium.sh to install a local runtime copy.",
         })
     }
 
+    fn operation_lock() -> &'static Mutex<()> {
+        PDFIUM_OPERATION_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
     /// Pre-initialize Pdfium library.
     ///
     /// Call this early in the application startup to ensure Pdfium is ready
@@ -354,6 +375,7 @@ or run scripts/setup_pdfium.sh to install a local runtime copy.",
 
     /// Get the number of pages in the document
     pub fn page_count(&self) -> u16 {
+        let _guard = Self::operation_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         self.document.pages().len()
     }
 
@@ -368,8 +390,21 @@ or run scripts/setup_pdfium.sh to install a local runtime copy.",
         self.document.pages().get(index).map_err(|_| PdfError::InvalidPageIndex(index))
     }
 
+    /// Get page dimensions in points without exposing a `PdfPage` reference.
+    ///
+    /// This is the preferred API for layout calculations that may overlap with
+    /// background rendering work.
+    pub fn page_dimensions(&self, index: u16) -> PdfResult<PageDimensions> {
+        let _guard = Self::operation_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let page =
+            self.document.pages().get(index).map_err(|_| PdfError::InvalidPageIndex(index))?;
+
+        Ok(PageDimensions { width: page.width().value, height: page.height().value })
+    }
+
     /// Get the document's metadata
     pub fn metadata(&self) -> PdfMetadata {
+        let _guard = Self::operation_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let meta = self.document.metadata();
 
         PdfMetadata {
@@ -392,7 +427,12 @@ or run scripts/setup_pdfium.sh to install a local runtime copy.",
     /// # Returns
     /// The extracted text or an error if the page index is invalid
     pub fn extract_page_text(&self, page_index: u16) -> PdfResult<String> {
-        let page = self.get_page(page_index)?;
+        let _guard = Self::operation_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let page = self
+            .document
+            .pages()
+            .get(page_index)
+            .map_err(|_| PdfError::InvalidPageIndex(page_index))?;
 
         // Extract text from the page
         let text = page
@@ -429,10 +469,34 @@ or run scripts/setup_pdfium.sh to install a local runtime copy.",
     /// # Returns
     /// RGBA pixel data (4 bytes per pixel) or an error
     pub fn render_page_rgba(&self, page_index: u16, width: u32, height: u32) -> PdfResult<Vec<u8>> {
-        let page = self.get_page(page_index)?;
+        self.render_page_rgba_with_quality(page_index, width, height, RenderQuality::HqFinal)
+    }
 
-        let config =
-            PdfRenderConfig::new().set_target_width(width as i32).set_target_height(height as i32);
+    /// Render a page to RGBA pixel data using a quality profile.
+    ///
+    /// The provided `width` / `height` are treated as the HQ target dimensions; lower quality
+    /// profiles are rendered at deterministic linear scale multipliers of that target.
+    pub fn render_page_rgba_with_quality(
+        &self,
+        page_index: u16,
+        width: u32,
+        height: u32,
+        quality: RenderQuality,
+    ) -> PdfResult<Vec<u8>> {
+        let _guard = Self::operation_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let page = self
+            .document
+            .pages()
+            .get(page_index)
+            .map_err(|_| PdfError::InvalidPageIndex(page_index))?;
+
+        let scale = Self::quality_scale_factor(quality);
+        let target_width = ((width as f32) * scale).round().max(1.0) as u32;
+        let target_height = ((height as f32) * scale).round().max(1.0) as u32;
+
+        let config = PdfRenderConfig::new()
+            .set_target_width(target_width as i32)
+            .set_target_height(target_height as i32);
 
         let bitmap =
             page.render_with_config(&config).map_err(|e| PdfError::RenderError(e.to_string()))?;
@@ -456,17 +520,39 @@ or run scripts/setup_pdfium.sh to install a local runtime copy.",
         max_width: u32,
         max_height: u32,
     ) -> PdfResult<(Vec<u8>, u32, u32)> {
-        let page = self.get_page(page_index)?;
-        let page_width = page.width().value;
-        let page_height = page.height().value;
+        self.render_page_scaled_with_quality(
+            page_index,
+            max_width,
+            max_height,
+            RenderQuality::HqFinal,
+        )
+    }
+
+    /// Render a page to RGBA pixel data, scaling to fit within max dimensions
+    /// while maintaining aspect ratio and applying the given quality profile.
+    pub fn render_page_scaled_with_quality(
+        &self,
+        page_index: u16,
+        max_width: u32,
+        max_height: u32,
+        quality: RenderQuality,
+    ) -> PdfResult<(Vec<u8>, u32, u32)> {
+        let dimensions = self.page_dimensions(page_index)?;
+        let page_width = dimensions.width;
+        let page_height = dimensions.height;
 
         let scale = (max_width as f32 / page_width).min(max_height as f32 / page_height).max(0.1);
 
         let render_width = (page_width * scale) as u32;
         let render_height = (page_height * scale) as u32;
 
-        let rgba = self.render_page_rgba(page_index, render_width, render_height)?;
-        Ok((rgba, render_width, render_height))
+        let scale = Self::quality_scale_factor(quality);
+        let quality_width = ((render_width as f32) * scale).round().max(1.0) as u32;
+        let quality_height = ((render_height as f32) * scale).round().max(1.0) as u32;
+
+        let rgba =
+            self.render_page_rgba_with_quality(page_index, render_width, render_height, quality)?;
+        Ok((rgba, quality_width, quality_height))
     }
 
     /// Extract text with bounding boxes from a page
@@ -480,7 +566,12 @@ or run scripts/setup_pdfium.sh to install a local runtime copy.",
     /// # Returns
     /// A vector of (text, x, y, width, height) tuples in page coordinates
     pub fn extract_text_spans(&self, page_index: u16) -> PdfResult<Vec<TextSpanInfo>> {
-        let page = self.get_page(page_index)?;
+        let _guard = Self::operation_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let page = self
+            .document
+            .pages()
+            .get(page_index)
+            .map_err(|_| PdfError::InvalidPageIndex(page_index))?;
         let page_height = page.height().value;
 
         let text_page = page
@@ -581,6 +672,7 @@ or run scripts/setup_pdfium.sh to install a local runtime copy.",
     /// # Returns
     /// Ok(()) on success, or a SaveError on failure
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), SaveError> {
+        let _guard = Self::operation_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         self.document.save_to_file(path.as_ref()).map_err(|e| SaveError::SaveFailed(e.to_string()))
     }
 
@@ -589,6 +681,7 @@ or run scripts/setup_pdfium.sh to install a local runtime copy.",
     /// # Returns
     /// The PDF data as a Vec<u8> on success, or a SaveError on failure
     pub fn save_to_bytes(&self) -> Result<Vec<u8>, SaveError> {
+        let _guard = Self::operation_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         self.document.save_to_bytes().map_err(|e| SaveError::SaveFailed(e.to_string()))
     }
 }

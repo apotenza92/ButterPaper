@@ -106,6 +106,16 @@ pub fn disabled_text(theme: &Theme) -> Rgba {
     color::disabled(theme.text_muted)
 }
 
+fn mix_color(left: Rgba, right: Rgba, factor: f32) -> Rgba {
+    let t = factor.clamp(0.0, 1.0);
+    Rgba {
+        r: left.r * (1.0 - t) + right.r * t,
+        g: left.g * (1.0 - t) + right.g * t,
+        b: left.b * (1.0 - t) + right.b * t,
+        a: left.a,
+    }
+}
+
 /// Standardized colors for a button-like variant.
 pub fn variant_colors(variant: ButtonLikeVariant, theme: &Theme) -> ButtonLikeColors {
     match variant {
@@ -139,32 +149,19 @@ pub fn variant_colors(variant: ButtonLikeVariant, theme: &Theme) -> ButtonLikeCo
             },
         },
         ButtonLikeVariant::Ghost => ButtonLikeColors {
-            background: Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+            background: color::transparent(),
             text: theme.text,
-            border: Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+            border: color::transparent(),
             hover: theme.element_hover,
             active: theme.element_selected,
         },
-        ButtonLikeVariant::Danger => {
-            let danger = Rgba { r: 0.85, g: 0.25, b: 0.25, a: 1.0 };
-            ButtonLikeColors {
-                background: danger,
-                text: theme.text_accent,
-                border: Rgba { r: danger.r, g: danger.g, b: danger.b, a: 0.85 },
-                hover: Rgba {
-                    r: danger.r * 0.9,
-                    g: danger.g * 0.9,
-                    b: danger.b * 0.9,
-                    a: danger.a,
-                },
-                active: Rgba {
-                    r: danger.r * 0.8,
-                    g: danger.g * 0.8,
-                    b: danger.b * 0.8,
-                    a: danger.a,
-                },
-            }
-        }
+        ButtonLikeVariant::Danger => ButtonLikeColors {
+            background: theme.danger,
+            text: theme.text_accent,
+            border: theme.danger_border,
+            hover: mix_color(theme.danger, theme.danger_bg, 0.14),
+            active: mix_color(theme.danger, theme.danger_border, 0.22),
+        },
     }
 }
 
@@ -191,6 +188,7 @@ impl<T: StatefulInteractiveElement + Styled> ButtonLikeExt for T {}
 mod tests {
     use super::{disabled_text, subtle_border, variant_colors, ButtonLikeVariant, ButtonSize};
     use crate::theme::ThemeColors;
+    use gpui::Rgba;
 
     #[test]
     fn subtle_border_is_lower_alpha_than_base_border() {
@@ -211,6 +209,19 @@ mod tests {
         let theme = ThemeColors::fallback_light();
         let colors = variant_colors(ButtonLikeVariant::Accent, &theme);
         assert_eq!(colors.background, theme.accent);
+    }
+
+    #[test]
+    fn danger_variant_uses_theme_danger_tokens() {
+        let mut theme = ThemeColors::fallback_dark();
+        theme.danger = Rgba { r: 0.8, g: 0.1, b: 0.2, a: 1.0 };
+        theme.danger_bg = Rgba { r: 0.95, g: 0.75, b: 0.75, a: 0.4 };
+        theme.danger_border = Rgba { r: 0.6, g: 0.1, b: 0.15, a: 0.9 };
+
+        let colors = variant_colors(ButtonLikeVariant::Danger, &theme);
+        assert_eq!(colors.background, theme.danger);
+        assert_eq!(colors.border, theme.danger_border);
+        assert_eq!(colors.text, theme.text_accent);
     }
 
     #[test]

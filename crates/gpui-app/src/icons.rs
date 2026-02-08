@@ -14,6 +14,7 @@ pub enum IconName {
     PageFirst,
     PageLast,
     PanelLeft,
+    PageThumbnails,
     FitWidth,
     FitPage,
     Dirty,
@@ -40,6 +41,7 @@ impl IconName {
             IconName::PageFirst => "icons/page_first.svg",
             IconName::PageLast => "icons/page_last.svg",
             IconName::PanelLeft => "icons/panel_left.svg",
+            IconName::PageThumbnails => "icons/page_thumbnails.svg",
             IconName::FitWidth => "icons/fit_width.svg",
             IconName::FitPage => "icons/fit_page.svg",
             IconName::Dirty => "icons/dirty.svg",
@@ -53,5 +55,15 @@ impl IconName {
             IconName::ViewContinuous => "icons/view_continuous.svg",
             IconName::ViewSinglePage => "icons/view_single_page.svg",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IconName;
+
+    #[test]
+    fn page_thumbnails_icon_path_is_stable() {
+        assert_eq!(IconName::PageThumbnails.path(), "icons/page_thumbnails.svg");
     }
 }

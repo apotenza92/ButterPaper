@@ -6,13 +6,10 @@ use gpui::{
 };
 
 use crate::ui::color;
+use crate::ui::sizes;
 use crate::Theme;
-
-const SCROLLBAR_MIN_THUMB_HEIGHT: f32 = 24.0;
-const SCROLLBAR_TRACK_INSET: f32 = 3.0;
-
-pub const SCROLLBAR_GUTTER_WIDTH: f32 = 15.0;
-pub const SCROLLBAR_VISUAL_WIDTH: f32 = 10.0;
+pub const SCROLLBAR_GUTTER_WIDTH: f32 = sizes::SCROLLBAR_GUTTER_WIDTH_PX;
+pub const SCROLLBAR_VISUAL_WIDTH: f32 = sizes::SCROLLBAR_VISUAL_WIDTH_PX;
 
 #[derive(Clone)]
 struct ScrollbarDragToken;
@@ -71,12 +68,12 @@ impl ScrollbarController {
             return None;
         }
 
-        let track_height = (viewport_height - SCROLLBAR_TRACK_INSET * 2.0).max(1.0);
+        let track_height = (viewport_height - sizes::SCROLLBAR_TRACK_INSET_PX * 2.0).max(1.0);
         let thumb_height = ((viewport_height / content_height) * track_height)
-            .clamp(SCROLLBAR_MIN_THUMB_HEIGHT, track_height);
+            .clamp(sizes::SCROLLBAR_MIN_THUMB_HEIGHT_PX, track_height);
         let offset = (-self.scroll_handle.offset().y.0).clamp(0.0, max_offset);
         let ratio = if max_offset > 0.0 { offset / max_offset } else { 0.0 };
-        let thumb_top = SCROLLBAR_TRACK_INSET + ratio * (track_height - thumb_height);
+        let thumb_top = sizes::SCROLLBAR_TRACK_INSET_PX + ratio * (track_height - thumb_height);
 
         Some(ScrollbarMetrics { thumb_top, thumb_height, track_height, max_offset })
     }
@@ -116,8 +113,8 @@ impl ScrollbarController {
         let viewport_top = self.scroll_handle.bounds().origin.y.0;
         let movable = (metrics.track_height - metrics.thumb_height).max(1.0);
         let drag_top = (mouse_y_window - viewport_top - drag_offset)
-            .clamp(SCROLLBAR_TRACK_INSET, SCROLLBAR_TRACK_INSET + movable);
-        let ratio = (drag_top - SCROLLBAR_TRACK_INSET) / movable;
+            .clamp(sizes::SCROLLBAR_TRACK_INSET_PX, sizes::SCROLLBAR_TRACK_INSET_PX + movable);
+        let ratio = (drag_top - sizes::SCROLLBAR_TRACK_INSET_PX) / movable;
         let next_offset = -ratio * metrics.max_offset;
         let prev_offset = self.scroll_handle.offset().y.0;
         self.scroll_handle.set_offset(point(px(0.0), px(next_offset)));
@@ -138,8 +135,8 @@ where
     Up: Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
     Move: Fn(&gpui::MouseMoveEvent, &mut Window, &mut App) + 'static,
 {
-    let thumb_bg = color::with_alpha(theme.text_muted, 0.52);
-    let thumb_border = color::with_alpha(theme.border, 0.78);
+    let thumb_bg = color::with_alpha(theme.text_muted, sizes::SCROLLBAR_THUMB_BG_ALPHA);
+    let thumb_border = color::with_alpha(theme.border, sizes::SCROLLBAR_THUMB_BORDER_ALPHA);
 
     div()
         .id(id)
@@ -159,7 +156,7 @@ where
                 .w(px(SCROLLBAR_VISUAL_WIDTH))
                 .relative()
                 .rounded_full()
-                .bg(color::with_alpha(theme.background, 0.35))
+                .bg(color::with_alpha(theme.background, sizes::SCROLLBAR_TRACK_ALPHA))
                 .child(
                     div()
                         .absolute()

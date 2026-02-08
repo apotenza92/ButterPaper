@@ -7,6 +7,17 @@ pub mod pdf;
 pub mod progressive;
 pub mod tile;
 
+/// Rendering quality profiles for staged PDF rasterization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RenderQuality {
+    /// Sidebar thumbnail quality (fastest, heavily downscaled).
+    LqThumb,
+    /// In-motion viewport quality while scrolling.
+    LqScroll,
+    /// Final viewport quality after idle.
+    HqFinal,
+}
+
 pub use font_info::{
     extract_fonts_from_page, find_font_in_region, get_page_fonts, FontInfo, TextSpanWithFont,
 };

@@ -107,6 +107,14 @@ pub struct ThemeStyle {
     #[serde(rename = "text.accent")]
     pub text_accent: Option<String>,
 
+    // Semantic colors
+    #[serde(rename = "error")]
+    pub error: Option<String>,
+    #[serde(rename = "error.background")]
+    pub error_background: Option<String>,
+    #[serde(rename = "error.border")]
+    pub error_border: Option<String>,
+
     // Editor
     #[serde(rename = "editor.background")]
     pub editor_background: Option<String>,
@@ -132,6 +140,9 @@ pub struct ThemeColors {
     pub element: Rgba,
     pub element_hover: Rgba,
     pub element_selected: Rgba,
+    pub danger: Rgba,
+    pub danger_bg: Rgba,
+    pub danger_border: Rgba,
 }
 
 /// Registry of available themes
@@ -249,6 +260,11 @@ impl ThemeDefinition {
         // Prefer editor.background for the main content area to show theme differences.
         let editor_bg = parse_color(style.editor_background.as_deref());
         let elevated_bg = parse_color(style.elevated_surface_background.as_deref());
+        let danger = parse_color(style.error.as_deref()).unwrap_or(rgba(0xd14d5b, 1.0));
+        let danger_bg =
+            parse_color(style.error_background.as_deref()).unwrap_or(with_alpha(danger, 0.16));
+        let danger_border =
+            parse_color(style.error_border.as_deref()).unwrap_or(with_alpha(danger, 0.62));
 
         ThemeColors {
             background: parse_color(style.background.as_deref()).unwrap_or(rgba(0x282c33, 1.0)),
@@ -259,7 +275,11 @@ impl ThemeDefinition {
             text: parse_color(style.text.as_deref()).unwrap_or(rgba(0xdce0e5, 1.0)),
             text_muted: parse_color(style.text_muted.as_deref()).unwrap_or(rgba(0xa9afbc, 1.0)),
             border: parse_color(style.border.as_deref()).unwrap_or(rgba(0x464b57, 1.0)),
-            accent: parse_color(style.text_accent.as_deref()).unwrap_or(rgba(0x74ade8, 1.0)),
+            // Use focused border as the global accent source so interactive emphasis
+            // follows the theme's focus contract (mode-specific by design).
+            accent: parse_color(style.border_focused.as_deref())
+                .or_else(|| parse_color(style.text_accent.as_deref()))
+                .unwrap_or(rgba(0x47679e, 1.0)),
             text_accent: rgba(0xffffff, 1.0),
             element: parse_color(style.element_background.as_deref())
                 .unwrap_or(rgba(0x2e343e, 1.0)),
@@ -268,6 +288,9 @@ impl ThemeDefinition {
             element_selected: parse_color(style.element_selected.as_deref())
                 .or_else(|| parse_color(style.element_active.as_deref()))
                 .unwrap_or(rgba(0x454a56, 1.0)),
+            danger,
+            danger_bg,
+            danger_border,
         }
     }
 }
@@ -282,11 +305,14 @@ impl ThemeColors {
             text: rgba(0x242529, 1.0),
             text_muted: rgba(0x58585a, 1.0),
             border: rgba(0xc9c9ca, 1.0),
-            accent: rgba(0x526fff, 1.0),
+            accent: rgba(0x7d82e8, 1.0),
             text_accent: rgba(0xffffff, 1.0),
             element: rgba(0xebebec, 1.0),
             element_hover: rgba(0xdfdfe0, 1.0),
             element_selected: rgba(0xd0d0d1, 1.0),
+            danger: rgba(0xd36151, 1.0),
+            danger_bg: rgba(0xfbdfd9, 1.0),
+            danger_border: rgba(0xf6c6bd, 1.0),
         }
     }
 
@@ -299,11 +325,14 @@ impl ThemeColors {
             text: rgba(0xdce0e5, 1.0),
             text_muted: rgba(0xa9afbc, 1.0),
             border: rgba(0x464b57, 1.0),
-            accent: rgba(0x74ade8, 1.0),
+            accent: rgba(0x47679e, 1.0),
             text_accent: rgba(0xffffff, 1.0),
             element: rgba(0x2e343e, 1.0),
             element_hover: rgba(0x363c46, 1.0),
             element_selected: rgba(0x454a56, 1.0),
+            danger: rgba(0xd07277, 1.0),
+            danger_bg: rgba(0xd07277, 0.102),
+            danger_border: rgba(0x4c2b2c, 1.0),
         }
     }
 }
@@ -338,6 +367,10 @@ fn rgba(hex: u32, alpha: f32) -> Rgba {
     }
 }
 
+fn with_alpha(color: Rgba, alpha_multiplier: f32) -> Rgba {
+    Rgba { r: color.r, g: color.g, b: color.b, a: color.a * alpha_multiplier }
+}
+
 // Backwards compatibility alias
 pub type Theme = ThemeColors;
 
@@ -347,4 +380,45 @@ static THEME_REGISTRY: std::sync::OnceLock<ThemeRegistry> = std::sync::OnceLock:
 /// Get the global theme registry
 pub fn theme_registry() -> &'static ThemeRegistry {
     THEME_REGISTRY.get_or_init(ThemeRegistry::new)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{rgba, ThemeDefinition};
+
+    fn parse_theme(style_json: &str) -> ThemeDefinition {
+        let json = format!(r#"{{"name":"Test","appearance":"dark","style":{style_json}}}"#);
+        serde_json::from_str(&json).expect("parse test theme")
+    }
+
+    fn assert_rgba_eq(left: gpui::Rgba, right: gpui::Rgba) {
+        assert!((left.r - right.r).abs() < 0.0001);
+        assert!((left.g - right.g).abs() < 0.0001);
+        assert!((left.b - right.b).abs() < 0.0001);
+        assert!((left.a - right.a).abs() < 0.0001);
+    }
+
+    #[test]
+    fn to_colors_prefers_error_tokens_for_danger_palette() {
+        let theme = parse_theme(
+            r##"{
+                "error":"#112233ff",
+                "error.background":"#445566cc",
+                "error.border":"#778899ff"
+            }"##,
+        );
+        let colors = theme.to_colors();
+        assert_rgba_eq(colors.danger, rgba(0x112233, 1.0));
+        assert_rgba_eq(colors.danger_bg, rgba(0x445566, 0.8));
+        assert_rgba_eq(colors.danger_border, rgba(0x778899, 1.0));
+    }
+
+    #[test]
+    fn to_colors_derives_danger_background_and_border_when_missing() {
+        let theme = parse_theme(r##"{"error":"#334455ff"}"##);
+        let colors = theme.to_colors();
+        assert_rgba_eq(colors.danger, rgba(0x334455, 1.0));
+        assert_rgba_eq(colors.danger_bg, rgba(0x334455, 0.16));
+        assert_rgba_eq(colors.danger_border, rgba(0x334455, 0.62));
+    }
 }

@@ -10,5 +10,5 @@ mod persistence;
 mod types;
 mod window_manager;
 
-pub use persistence::{load_preferences, save_preferences};
+pub use persistence::load_preferences;
 pub use types::TabPreferences;

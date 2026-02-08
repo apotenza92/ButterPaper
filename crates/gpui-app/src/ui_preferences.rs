@@ -5,11 +5,40 @@ use std::path::PathBuf;
 use gpui::App;
 
 use crate::theme::{AppearanceMode, ThemeSettings};
+use crate::ThumbnailClusterWidthPx;
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub const THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX: f32 =
+    crate::ui::sizes::THUMBNAIL_CLUSTER_DEFAULT_WIDTH_PX;
+const THUMBNAIL_CLUSTER_WIDTH_MIN_PX: f32 = crate::ui::sizes::THUMBNAIL_CLUSTER_MIN_WIDTH_PX;
+const THUMBNAIL_CLUSTER_WIDTH_MAX_PX: f32 = crate::ui::sizes::THUMBNAIL_CLUSTER_MAX_WIDTH_PX;
+
+fn default_thumbnail_cluster_width_px() -> f32 {
+    THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX
+}
+
+pub fn clamp_thumbnail_cluster_width_pref(width_px: f32) -> f32 {
+    if !width_px.is_finite() {
+        return THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX;
+    }
+    width_px.clamp(THUMBNAIL_CLUSTER_WIDTH_MIN_PX, THUMBNAIL_CLUSTER_WIDTH_MAX_PX)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UiPreferences {
     pub appearance_mode: AppearanceMode,
     pub theme_settings: ThemeSettings,
+    #[serde(default = "default_thumbnail_cluster_width_px")]
+    pub thumbnail_cluster_width_px: f32,
+}
+
+impl Default for UiPreferences {
+    fn default() -> Self {
+        Self {
+            appearance_mode: AppearanceMode::default(),
+            theme_settings: ThemeSettings::default(),
+            thumbnail_cluster_width_px: THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX,
+        }
+    }
 }
 
 fn config_dir() -> Option<PathBuf> {
@@ -25,10 +54,13 @@ pub fn load_ui_preferences() -> UiPreferences {
         return UiPreferences::default();
     };
 
-    match std::fs::read_to_string(&path) {
+    let mut prefs = match std::fs::read_to_string(&path) {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => UiPreferences::default(),
-    }
+    };
+    prefs.thumbnail_cluster_width_px =
+        clamp_thumbnail_cluster_width_pref(prefs.thumbnail_cluster_width_px);
+    prefs
 }
 
 pub fn save_ui_preferences(preferences: &UiPreferences) -> std::io::Result<()> {
@@ -53,6 +85,11 @@ pub fn collect_ui_preferences(cx: &App) -> UiPreferences {
     UiPreferences {
         appearance_mode: cx.try_global::<AppearanceMode>().copied().unwrap_or_default(),
         theme_settings: cx.try_global::<ThemeSettings>().cloned().unwrap_or_default(),
+        thumbnail_cluster_width_px: cx
+            .try_global::<ThumbnailClusterWidthPx>()
+            .copied()
+            .unwrap_or_default()
+            .0,
     }
 }
 
@@ -64,16 +101,21 @@ pub fn save_ui_preferences_from_app(cx: &App) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::UiPreferences;
+    use super::THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX;
     use crate::theme::AppearanceMode;
 
     #[test]
     fn ui_preferences_json_roundtrip() {
-        let prefs =
-            UiPreferences { appearance_mode: AppearanceMode::Dark, ..UiPreferences::default() };
+        let prefs = UiPreferences {
+            appearance_mode: AppearanceMode::Dark,
+            thumbnail_cluster_width_px: 320.0,
+            ..UiPreferences::default()
+        };
 
         let json = serde_json::to_string(&prefs).expect("serialize prefs");
         let decoded: UiPreferences = serde_json::from_str(&json).expect("deserialize prefs");
         assert_eq!(decoded.appearance_mode, AppearanceMode::Dark);
+        assert_eq!(decoded.thumbnail_cluster_width_px, 320.0);
     }
 
     #[test]
@@ -88,5 +130,6 @@ mod tests {
         assert_eq!(decoded.appearance_mode, AppearanceMode::Dark);
         assert_eq!(decoded.theme_settings.light_theme, "One Light");
         assert_eq!(decoded.theme_settings.dark_theme, "One Dark");
+        assert_eq!(decoded.thumbnail_cluster_width_px, THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX);
     }
 }

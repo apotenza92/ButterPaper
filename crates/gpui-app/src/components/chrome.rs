@@ -24,7 +24,7 @@ pub fn chrome_control_shell(
 ) -> impl IntoElement {
     let control_size = chrome_control_size();
     let base_background = if selected {
-        color::with_alpha(theme.element_selected, 0.88)
+        color::selected_surface(theme.element_selected)
     } else {
         theme.elevated_surface
     };
@@ -72,6 +72,25 @@ pub fn chrome_icon_button<F>(
 where
     F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
+    chrome_icon_button_with_tooltip_visibility(
+        id, icon_type, tooltip, true, enabled, selected, theme, on_click,
+    )
+}
+
+/// Variant of `chrome_icon_button` that can disable hover tooltip rendering.
+pub fn chrome_icon_button_with_tooltip_visibility<F>(
+    id: impl Into<SharedString>,
+    icon_type: Icon,
+    tooltip: impl Into<SharedString>,
+    show_tooltip: bool,
+    enabled: bool,
+    selected: bool,
+    theme: &Theme,
+    on_click: F,
+) -> impl IntoElement
+where
+    F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+{
     let tooltip = tooltip.into();
     let icon_size = 16.0;
     let text_color = if enabled {
@@ -86,7 +105,7 @@ where
 
     let button_size = chrome_control_size();
     let base_background = if selected {
-        color::with_alpha(theme.element_selected, 0.88)
+        color::selected_surface(theme.element_selected)
     } else {
         theme.elevated_surface
     };
@@ -106,7 +125,9 @@ where
         .border_1()
         .border_color(border)
         .rounded(sizes::RADIUS_SM)
-        .tooltip(tooltip_builder(tooltip, theme.surface, theme.border, theme.text))
+        .when(show_tooltip, move |d| {
+            d.tooltip(tooltip_builder(tooltip, theme.surface, theme.border, theme.text))
+        })
         .when(enabled, move |d| {
             d.cursor_pointer()
                 .hover({

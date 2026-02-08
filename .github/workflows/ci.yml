@@ -17,6 +17,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -28,6 +31,9 @@ jobs:
 
       - name: Control sizing guard
         run: ./scripts/check_control_sizes.sh
+
+      - name: Validate app icon assets
+        run: python scripts/validate_app_icons.py
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
