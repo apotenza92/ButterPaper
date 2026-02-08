@@ -103,6 +103,14 @@ fn resolve_page_nav_target(current_page: u16, page_count: u16, target: PageNavTa
     }
 }
 
+fn continuous_scroll_for_single_page(layout_y_offset: f32, single_scroll_y: f32) -> f32 {
+    (layout_y_offset - PAGE_GAP + single_scroll_y).max(0.0)
+}
+
+fn single_page_scroll_for_continuous(layout_y_offset: f32, continuous_scroll_y: f32) -> f32 {
+    (continuous_scroll_y + PAGE_GAP - layout_y_offset).max(0.0)
+}
+
 /// Rendered page ready for display
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -309,13 +317,27 @@ impl PdfViewport {
         if self.view_mode == mode {
             return;
         }
+
+        let previous_mode = self.view_mode;
+        let previous_scroll_y = self.scroll_y;
+        let previous_page = self.current_page().min(self.page_count().saturating_sub(1));
+
         self.view_mode = mode;
+        self.current_page_index = previous_page;
         self.single_page_wheel_accum_px = 0.0;
-        if matches!(self.view_mode, ViewMode::SinglePage) {
-            self.scroll_y = 0.0;
-        } else if let Some(layout) = self.page_layouts.get(self.current_page_index as usize) {
-            self.scroll_y = layout.y_offset;
+
+        if let Some(layout) = self.page_layouts.get(self.current_page_index as usize) {
+            self.scroll_y = match (previous_mode, self.view_mode) {
+                (ViewMode::SinglePage, ViewMode::Continuous) => {
+                    continuous_scroll_for_single_page(layout.y_offset, previous_scroll_y)
+                }
+                (ViewMode::Continuous, ViewMode::SinglePage) => {
+                    single_page_scroll_for_continuous(layout.y_offset, previous_scroll_y)
+                }
+                _ => previous_scroll_y,
+            };
         }
+
         self.clamp_scroll();
         self.sync_scroll_handle_to_state();
         self.update_visible_pages();
@@ -1099,7 +1121,8 @@ mod tests {
     use gpui::{px, size, AppContext as _, TestAppContext};
 
     use super::{
-        fit_page_percent, fit_width_percent, resolve_page_nav_target, PageNavTarget, PdfViewport,
+        continuous_scroll_for_single_page, fit_page_percent, fit_width_percent,
+        resolve_page_nav_target, single_page_scroll_for_continuous, PageNavTarget, PdfViewport,
         ViewMode, SINGLE_PAGE_IMMEDIATE_FLIP_SCROLL_EPSILON_PX,
     };
 
@@ -1123,6 +1146,26 @@ mod tests {
         assert_eq!(resolve_page_nav_target(0, 5, PageNavTarget::Next), 1);
         assert_eq!(resolve_page_nav_target(4, 5, PageNavTarget::Next), 4);
         assert_eq!(resolve_page_nav_target(2, 5, PageNavTarget::Last), 4);
+    }
+
+    #[test]
+    fn mode_switch_scroll_translation_preserves_page_top_padding() {
+        let layout_y = 1260.0;
+        let single_scroll = 0.0;
+        let continuous_scroll = continuous_scroll_for_single_page(layout_y, single_scroll);
+        assert_eq!(continuous_scroll, 1240.0);
+
+        let restored_single = single_page_scroll_for_continuous(layout_y, continuous_scroll);
+        assert_eq!(restored_single, single_scroll);
+    }
+
+    #[test]
+    fn mode_switch_scroll_translation_preserves_in_page_offset() {
+        let layout_y = 700.0;
+        let single_scroll = 142.5;
+        let continuous_scroll = continuous_scroll_for_single_page(layout_y, single_scroll);
+        let restored_single = single_page_scroll_for_continuous(layout_y, continuous_scroll);
+        assert!((restored_single - single_scroll).abs() < 0.001);
     }
 
     fn fixture_pdf_path(name: &str) -> PathBuf {
