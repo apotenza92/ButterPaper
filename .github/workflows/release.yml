@@ -402,7 +402,6 @@ jobs:
           chmod +x "$APPDIR/usr/bin/ButterPaper"
           cp "crates/gpui-app/assets/app-icons/butterpaper-icon-256.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/butterpaper.png"
 
-          export APPDIR
           python3 - <<'PY'
           import os
           from pathlib import Path
@@ -436,7 +435,9 @@ jobs:
             "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${APPIMAGE_ARCH}.AppImage"
           chmod +x appimagetool
           APPIMAGE_TMP="ButterPaper-${OUT_ARCH}.AppImage"
-          APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$APPIMAGE_ARCH" ./appimagetool --no-appstream "$APPDIR" "$APPIMAGE_TMP"
+          export ARCH="$APPIMAGE_ARCH"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          ./appimagetool --no-appstream "$APPDIR" "$APPIMAGE_TMP"
 
           PKGROOT="$(mktemp -d)"
           mkdir -p "$PKGROOT/usr/bin" "$PKGROOT/usr/share/applications" "$PKGROOT/usr/share/icons/hicolor/256x256/apps"
