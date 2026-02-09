@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ButterPaper rounded logo">
+  <defs>
+    <clipPath id="rounded">
+      <rect x="0" y="0" width="512" height="512" rx="112" ry="112"/>
+    </clipPath>
+    <linearGradient id="paperEdgeVertical" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#BF8546" stop-opacity="0.14"/>
+      <stop offset="6%" stop-color="#BF8546" stop-opacity="0.05"/>
+      <stop offset="10%" stop-color="#BF8546" stop-opacity="0"/>
+      <stop offset="90%" stop-color="#BF8546" stop-opacity="0"/>
+      <stop offset="94%" stop-color="#BF8546" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#BF8546" stop-opacity="0.14"/>
+    </linearGradient>
+    <linearGradient id="paperEdgeHorizontal" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#BF8546" stop-opacity="0.14"/>
+      <stop offset="6%" stop-color="#BF8546" stop-opacity="0.05"/>
+      <stop offset="10%" stop-color="#BF8546" stop-opacity="0"/>
+      <stop offset="90%" stop-color="#BF8546" stop-opacity="0"/>
+      <stop offset="94%" stop-color="#BF8546" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#BF8546" stop-opacity="0.14"/>
+    </linearGradient>
+  </defs>
+
+  <g clip-path="url(#rounded)">
+    <rect x="0" y="0" width="512" height="512" fill="#F6E3A3"/>
+    <rect x="0" y="0" width="512" height="512" fill="url(#paperEdgeVertical)"/>
+    <rect x="0" y="0" width="512" height="512" fill="url(#paperEdgeHorizontal)"/>
+    <g transform="rotate(45 256 256)">
+      <path
+        d="M256 120 V392"
+        fill="none"
+        stroke="#B1442A"
+        stroke-width="48"
+        stroke-linecap="round"
+      />
+      <path
+        d="M168 236 L256 120 L344 236"
+        fill="none"
+        stroke="#B1442A"
+        stroke-width="48"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </g>
+  </g>
+</svg>
