@@ -365,23 +365,32 @@ jobs:
           chmod +x "$APPDIR/usr/bin/ButterPaper"
           cp "crates/gpui-app/assets/app-icons/butterpaper-icon-256.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/butterpaper.png"
 
-          cat > "$APPDIR/butterpaper.desktop" <<'EOF'
-[Desktop Entry]
-Name=ButterPaper
-Comment=Rust-native desktop PDF app
-Exec=ButterPaper
-Icon=butterpaper
-Type=Application
-Categories=Office;Viewer;
-Terminal=false
-EOF
-          cp "$APPDIR/butterpaper.desktop" "$APPDIR/usr/share/applications/butterpaper.desktop"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
 
-          cat > "$APPDIR/AppRun" <<'EOF'
-#!/bin/sh
-HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/usr/bin/ButterPaper" "$@"
-EOF
+          appdir = os.environ["APPDIR"]
+
+          Path(f"{appdir}/butterpaper.desktop").write_text(
+              "[Desktop Entry]\n"
+              "Name=ButterPaper\n"
+              "Comment=Rust-native desktop PDF app\n"
+              "Exec=ButterPaper\n"
+              "Icon=butterpaper\n"
+              "Type=Application\n"
+              "Categories=Office;Viewer;\n"
+              "Terminal=false\n",
+              encoding="utf-8",
+          )
+
+          Path(f"{appdir}/AppRun").write_text(
+              "#!/bin/sh\n"
+              "HERE=\\\"$(dirname \\\"$(readlink -f \\\"$0\\\")\\\")\\\"\n"
+              "exec \\\"$HERE/usr/bin/ButterPaper\\\" \\\"$@\\\"\\n",
+              encoding="utf-8",
+          )
+          PY
+          cp "$APPDIR/butterpaper.desktop" "$APPDIR/usr/share/applications/butterpaper.desktop"
           chmod +x "$APPDIR/AppRun"
           ln -s usr/share/icons/hicolor/256x256/apps/butterpaper.png "$APPDIR/butterpaper.png"
 
