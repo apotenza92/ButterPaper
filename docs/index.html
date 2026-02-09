@@ -894,7 +894,10 @@
 
             function inferChannelFromURL() {
                 const params = new URLSearchParams(window.location.search);
-                return params.get("channel") === "beta" ? "beta" : "stable";
+                const channel = params.get("channel");
+                if (channel === "beta") return "beta";
+                if (channel === "stable") return "stable";
+                return null;
             }
 
             function detectPlatform() {
@@ -902,12 +905,18 @@
                 const platform = navigator.platform?.toLowerCase() || "";
 
                 if (ua.includes("mac")) {
+                    // Note: many browsers (including Safari) report "MacIntel" even on Apple Silicon.
+                    // Default to Apple Silicon unless we have an explicit ARM/x86 signal or a user override.
                     return {
                         platform: "mac",
                         arch:
-                            platform.includes("arm") || ua.includes("arm64")
+                            platform.includes("arm") ||
+                            ua.includes("arm64") ||
+                            ua.includes("aarch64")
                                 ? "arm64"
-                                : "x64",
+                                : ua.includes("x86_64")
+                                  ? "x64"
+                                  : "arm64",
                     };
                 }
 
@@ -932,6 +941,58 @@
                 }
 
                 return { platform: "mac", arch: "arm64" };
+            }
+
+            function safeReadPref(key) {
+                try {
+                    return window.localStorage
+                        ? window.localStorage.getItem(key)
+                        : null;
+                } catch (_err) {
+                    return null;
+                }
+            }
+
+            function safeWritePref(key, value) {
+                try {
+                    if (!window.localStorage) return;
+                    window.localStorage.setItem(key, value);
+                } catch (_err) {
+                    // ignore (private browsing, blocked storage, etc)
+                }
+            }
+
+            function safeHasPref(key) {
+                return safeReadPref(key) !== null;
+            }
+
+            async function refineMacArchFromUAData() {
+                if (state.platform !== "mac") return;
+
+                // If the user explicitly chose an arch (URL/localStorage), don't override.
+                if (inferArchFromURL()) return;
+                if (safeHasPref("bp.macArch")) return;
+
+                const uaData = navigator.userAgentData;
+                if (!uaData || typeof uaData.getHighEntropyValues !== "function")
+                    return;
+
+                try {
+                    const values = await uaData.getHighEntropyValues([
+                        "architecture",
+                    ]);
+                    const arch = (values.architecture || "").toLowerCase();
+                    // Observed values: "arm", "x86"
+                    if (arch.includes("x86")) {
+                        state.macArch = "x64";
+                        renderView();
+                    } else if (arch.includes("arm")) {
+                        state.macArch = "arm64";
+                        renderView();
+                    }
+                } catch (_err) {
+                    // ignore
+                }
             }
 
             function fallbackAssetName(channel, target) {
@@ -1289,26 +1350,64 @@
                 const fromUrlPlatform = inferPlatformFromURL();
                 const fromUrlArch = inferArchFromURL();
 
-                state.channel = inferChannelFromURL();
+                const storedChannel = safeReadPref("bp.channel");
+                state.channel =
+                    inferChannelFromURL() ||
+                    (storedChannel === "beta" ? "beta" : "stable");
 
-                state.platform = fromUrlPlatform || detected.platform;
+                const storedPlatform = safeReadPref("bp.platform");
+                state.platform =
+                    fromUrlPlatform ||
+                    (storedPlatform === "mac" ||
+                    storedPlatform === "windows" ||
+                    storedPlatform === "linux"
+                        ? storedPlatform
+                        : null) ||
+                    detected.platform;
 
                 if (state.platform === "mac") {
+                    const storedMacArch = safeReadPref("bp.macArch");
                     state.macArch =
                         fromUrlArch === "x64" || fromUrlArch === "intel"
                             ? "x64"
                             : fromUrlArch === "arm64" || fromUrlArch === "arm"
                               ? "arm64"
-                              : detected.arch;
+                              : storedMacArch === "x64" ||
+                                  storedMacArch === "arm64"
+                                ? storedMacArch
+                                : detected.arch;
                 }
 
                 if (state.platform === "windows") {
+                    const storedWindowsArch = safeReadPref("bp.windowsArch");
                     state.windowsArch =
-                        fromUrlArch === "arm64" ? "arm64" : "x64";
+                        fromUrlArch === "arm64"
+                            ? "arm64"
+                            : storedWindowsArch === "arm64" ||
+                                storedWindowsArch === "x64"
+                              ? storedWindowsArch
+                              : "x64";
                 }
 
                 if (state.platform === "linux") {
+                    const storedLinuxArch = safeReadPref("bp.linuxArch");
                     state.linuxArch = fromUrlArch === "arm64" ? "arm64" : "x64";
+                    if (!fromUrlArch) {
+                        state.linuxArch =
+                            storedLinuxArch === "arm64" ||
+                            storedLinuxArch === "x64"
+                                ? storedLinuxArch
+                                : state.linuxArch;
+                    }
+
+                    const storedLinuxFormat = safeReadPref("bp.linuxFormat");
+                    if (
+                        storedLinuxFormat === "appimage" ||
+                        storedLinuxFormat === "deb" ||
+                        storedLinuxFormat === "rpm"
+                    ) {
+                        state.linuxFormat = storedLinuxFormat;
+                    }
                 }
             }
 
@@ -1317,6 +1416,7 @@
                     .getElementById("channel-stable")
                     .addEventListener("click", () => {
                         state.channel = "stable";
+                        safeWritePref("bp.channel", "stable");
                         renderView();
                     });
 
@@ -1324,6 +1424,7 @@
                     .getElementById("channel-beta")
                     .addEventListener("click", () => {
                         state.channel = "beta";
+                        safeWritePref("bp.channel", "beta");
                         renderView();
                     });
 
@@ -1331,6 +1432,7 @@
                     .getElementById("platform-mac")
                     .addEventListener("click", () => {
                         state.platform = "mac";
+                        safeWritePref("bp.platform", "mac");
                         renderView();
                     });
 
@@ -1338,6 +1440,7 @@
                     .getElementById("platform-windows")
                     .addEventListener("click", () => {
                         state.platform = "windows";
+                        safeWritePref("bp.platform", "windows");
                         renderView();
                     });
 
@@ -1345,6 +1448,7 @@
                     .getElementById("platform-linux")
                     .addEventListener("click", () => {
                         state.platform = "linux";
+                        safeWritePref("bp.platform", "linux");
                         renderView();
                     });
 
@@ -1352,6 +1456,7 @@
                     .getElementById("mac-arch-arm64")
                     .addEventListener("click", () => {
                         state.macArch = "arm64";
+                        safeWritePref("bp.macArch", "arm64");
                         renderView();
                     });
 
@@ -1359,6 +1464,7 @@
                     .getElementById("mac-arch-x64")
                     .addEventListener("click", () => {
                         state.macArch = "x64";
+                        safeWritePref("bp.macArch", "x64");
                         renderView();
                     });
 
@@ -1366,6 +1472,7 @@
                     .getElementById("windows-arch-x64")
                     .addEventListener("click", () => {
                         state.windowsArch = "x64";
+                        safeWritePref("bp.windowsArch", "x64");
                         renderView();
                     });
 
@@ -1373,6 +1480,7 @@
                     .getElementById("windows-arch-arm64")
                     .addEventListener("click", () => {
                         state.windowsArch = "arm64";
+                        safeWritePref("bp.windowsArch", "arm64");
                         renderView();
                     });
 
@@ -1380,6 +1488,7 @@
                     .getElementById("linux-arch-x64")
                     .addEventListener("click", () => {
                         state.linuxArch = "x64";
+                        safeWritePref("bp.linuxArch", "x64");
                         renderView();
                     });
 
@@ -1387,6 +1496,7 @@
                     .getElementById("linux-arch-arm64")
                     .addEventListener("click", () => {
                         state.linuxArch = "arm64";
+                        safeWritePref("bp.linuxArch", "arm64");
                         renderView();
                     });
 
@@ -1394,6 +1504,7 @@
                     .getElementById("linux-format-appimage")
                     .addEventListener("click", () => {
                         state.linuxFormat = "appimage";
+                        safeWritePref("bp.linuxFormat", "appimage");
                         renderView();
                     });
 
@@ -1401,6 +1512,7 @@
                     .getElementById("linux-format-deb")
                     .addEventListener("click", () => {
                         state.linuxFormat = "deb";
+                        safeWritePref("bp.linuxFormat", "deb");
                         renderView();
                     });
 
@@ -1408,6 +1520,7 @@
                     .getElementById("linux-format-rpm")
                     .addEventListener("click", () => {
                         state.linuxFormat = "rpm";
+                        safeWritePref("bp.linuxFormat", "rpm");
                         renderView();
                     });
 
@@ -1467,6 +1580,8 @@
                 bindEvents();
                 await loadReleaseMetadata();
                 renderView();
+                // Best-effort refinement for Chromium-based browsers that support UA-CH.
+                refineMacArchFromUAData();
             }
 
             init();
