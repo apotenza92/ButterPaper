@@ -340,7 +340,19 @@ jobs:
             ruby \
             ruby-dev \
             libpipewire-0.3-dev \
-            libspa-0.2-dev
+            libspa-0.2-dev \
+            libegl1-mesa-dev \
+            libgl1-mesa-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libdbus-1-dev \
+            libudev-dev \
+            libasound2-dev
           sudo gem install --no-document fpm
 
       - name: Build and package Linux artifacts
