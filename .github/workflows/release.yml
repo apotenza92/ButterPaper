@@ -401,6 +401,7 @@ jobs:
           chmod +x "$APPDIR/usr/bin/ButterPaper"
           cp "crates/gpui-app/assets/app-icons/butterpaper-icon-256.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/butterpaper.png"
 
+          export APPDIR
           python3 - <<'PY'
           import os
           from pathlib import Path
