@@ -428,7 +428,7 @@ jobs:
           ln -s usr/share/icons/hicolor/256x256/apps/butterpaper.png "$APPDIR/butterpaper.png"
 
           curl -fsSL -o appimagetool \
-            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${APPIMAGE_ARCH}.AppImage"
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${APPIMAGE_ARCH}.AppImage"
           chmod +x appimagetool
           APPIMAGE_TMP="ButterPaper-${OUT_ARCH}.AppImage"
           export ARCH="$APPIMAGE_ARCH"
