@@ -29,8 +29,8 @@ const THUMBNAIL_RENDER_MULTIPLIER: u32 = 4;
 const MAX_THUMBNAIL_INFLIGHT_ACTIVE: usize = 1;
 const MAX_THUMBNAIL_INFLIGHT_IDLE: usize = 2;
 const MAX_THUMBNAIL_INFLIGHT_BOOTSTRAP: usize = 4;
-/// Cap queued thumbnail requests so we do not create an unbounded backlog.
-const MAX_QUEUED_THUMBNAILS: usize = 24;
+/// Base cap queued thumbnail requests so we do not create an unbounded backlog.
+const BASE_MAX_QUEUED_THUMBNAILS: usize = 24;
 const ACTIVE_SCROLL_THUMBNAIL_DISPATCH_INTERVAL: Duration = Duration::from_millis(200);
 const THUMBNAIL_HOTSET_RADIUS: i32 = 1;
 const JUMP_PREEMPT_MIN_DELTA: usize = 12;
@@ -90,6 +90,8 @@ pub struct ThumbnailSidebar {
     queued_pages: VecDeque<QueuedThumbnail>,
     /// De-duplication set for pending pages.
     queued_page_set: HashSet<u16>,
+    /// Dynamic queue capacity that guarantees strict-visible + hotset coverage.
+    effective_queue_capacity: usize,
     /// Stable document fingerprint for cache keys.
     doc_fingerprint: u64,
     /// Approximate row height used to estimate visible index range.
@@ -156,6 +158,7 @@ impl ThumbnailSidebar {
             inflight_pages: HashMap::new(),
             queued_pages: VecDeque::new(),
             queued_page_set: HashSet::new(),
+            effective_queue_capacity: BASE_MAX_QUEUED_THUMBNAILS,
             doc_fingerprint: 0,
             average_row_height: 150.0,
             selected_page: 0,
@@ -187,6 +190,7 @@ impl ThumbnailSidebar {
         self.inflight_pages.clear();
         self.queued_pages.clear();
         self.queued_page_set.clear();
+        self.effective_queue_capacity = BASE_MAX_QUEUED_THUMBNAILS;
         self.thumbnail_cache.clear();
         self.thumbnail_specs.clear();
         self.row_tops.clear();
@@ -293,6 +297,41 @@ impl ThumbnailSidebar {
         sizes::SPACE_2.0 * 2.0 + thumb_height + sizes::SPACE_2.0 + sizes::SPACE_1.0 + 14.0 + 10.0
     }
 
+    fn estimated_content_height(&self) -> Option<f32> {
+        let last_top = self.row_tops.last().copied()?;
+        let last_height = self.row_heights.last().copied()?;
+        Some((last_top + last_height).max(1.0))
+    }
+
+    fn measured_content_height(&self) -> Option<f32> {
+        let handle = self.scrollbar.handle();
+        let child_count = handle.children_count();
+        if child_count == 0 {
+            return None;
+        }
+        let first = handle.bounds_for_item(0)?;
+        let last = handle.bounds_for_item(child_count - 1)?;
+        Some((last.bottom() - first.top()).0.max(1.0))
+    }
+
+    fn normalize_scroll_window_to_estimated_model(
+        scroll_y: f32,
+        viewport_height: f32,
+        estimated_content_height: f32,
+        measured_content_height: f32,
+    ) -> (f32, f32) {
+        if !estimated_content_height.is_finite()
+            || !measured_content_height.is_finite()
+            || estimated_content_height <= 0.0
+            || measured_content_height <= 0.0
+        {
+            return (scroll_y, viewport_height);
+        }
+
+        let scale = (estimated_content_height / measured_content_height).clamp(0.25, 4.0);
+        (scroll_y * scale, viewport_height * scale)
+    }
+
     fn thumbnail_key(&self, page_index: u16) -> RenderCacheKey {
         RenderCacheKey::new(self.doc_fingerprint, page_index, 100, 0, RenderQuality::LqThumb, 100)
     }
@@ -308,13 +347,19 @@ impl ThumbnailSidebar {
 
     fn max_inflight(&self) -> usize {
         if self.visible_missing_count > 0
-            && matches!(self.pressure_state, MemoryPressureState::Normal | MemoryPressureState::Warm)
+            && matches!(
+                self.pressure_state,
+                MemoryPressureState::Normal | MemoryPressureState::Warm
+            )
         {
             return MAX_THUMBNAIL_INFLIGHT_BOOTSTRAP;
         }
         if !self.active_scroll
             && Instant::now() < self.prewarm_fast_until
-            && matches!(self.pressure_state, MemoryPressureState::Normal | MemoryPressureState::Warm)
+            && matches!(
+                self.pressure_state,
+                MemoryPressureState::Normal | MemoryPressureState::Warm
+            )
         {
             return MAX_THUMBNAIL_INFLIGHT_BOOTSTRAP;
         }
@@ -389,9 +434,22 @@ impl ThumbnailSidebar {
             return None;
         }
 
-        let scroll_y = (-self.scrollbar.offset_y()).max(0.0);
-        let viewport_height =
+        let mut scroll_y = (-self.scrollbar.offset_y()).max(0.0);
+        let mut viewport_height =
             self.scrollbar.handle().bounds().size.height.0.max(self.average_row_height * 6.0);
+        if let (Some(estimated_total), Some(measured_total)) =
+            (self.estimated_content_height(), self.measured_content_height())
+        {
+            let (normalized_scroll_y, normalized_viewport_height) =
+                Self::normalize_scroll_window_to_estimated_model(
+                    scroll_y,
+                    viewport_height,
+                    estimated_total,
+                    measured_total,
+                );
+            scroll_y = normalized_scroll_y;
+            viewport_height = normalized_viewport_height;
+        }
         Self::row_window_for_scroll(
             &self.row_tops,
             &self.row_heights,
@@ -451,11 +509,16 @@ impl ThumbnailSidebar {
         {
             attempts += 1;
             let index = self.prewarm_next_index % page_count;
-            self.prewarm_next_index = (self.prewarm_next_index + self.prewarm_stride) % page_count;
-            self.prewarm_remaining = self.prewarm_remaining.saturating_sub(1);
-
             let page_index = self.thumbnail_specs[index].page_index;
-            self.enqueue_thumbnail_render(page_index, false);
+            if self.enqueue_thumbnail_render(page_index, false) {
+                self.prewarm_next_index =
+                    (self.prewarm_next_index + self.prewarm_stride) % page_count;
+                self.prewarm_remaining = self.prewarm_remaining.saturating_sub(1);
+                continue;
+            }
+
+            // Queue saturation should not consume prewarm pages; retry on a future pump cycle.
+            break;
         }
     }
 
@@ -477,113 +540,164 @@ impl ThumbnailSidebar {
         self.queued_page_set.clear();
     }
 
-    fn rebuild_queue_for_window(&mut self, start: usize, end: usize, center: usize) {
-        self.clear_queue();
-
+    fn hotset_pages_in_priority_order(&self) -> Vec<u16> {
         let page_count = self.thumbnail_specs.len();
-        let max_page = page_count.saturating_sub(1);
-        let mut staged = Vec::new();
-
-        for hot in Self::protected_hotset_pages(self.selected_page, page_count) {
-            if self.queued_page_set.insert(hot) {
-                staged.push(hot);
-            }
-        }
-        for index in start..=end.min(max_page) {
-            let page = index as u16;
-            if self.queued_page_set.insert(page) {
-                staged.push(page);
-            }
+        if page_count == 0 {
+            return Vec::new();
         }
 
-        let mut remaining: Vec<usize> = (0..page_count)
-            .filter(|index| !self.queued_page_set.contains(&(*index as u16)))
-            .collect();
-        remaining.sort_by_key(|index| index.abs_diff(center));
-        for index in remaining {
-            let page = index as u16;
-            if self.queued_page_set.insert(page) {
-                staged.push(page);
+        let mut pages = Vec::new();
+        let max_page = page_count.saturating_sub(1) as i32;
+        let selected = self.selected_page as i32;
+
+        for delta in 0..=THUMBNAIL_HOTSET_RADIUS {
+            if delta == 0 {
+                if selected >= 0 && selected <= max_page {
+                    pages.push(selected as u16);
+                }
+                continue;
             }
-            if staged.len() >= MAX_QUEUED_THUMBNAILS {
+
+            let prev = selected - delta;
+            if prev >= 0 && prev <= max_page {
+                pages.push(prev as u16);
+            }
+            let next = selected + delta;
+            if next >= 0 && next <= max_page {
+                pages.push(next as u16);
+            }
+        }
+
+        pages
+    }
+
+    fn update_effective_queue_capacity(&mut self, strict_window: Option<(usize, usize)>) {
+        let strict_visible_count = strict_window
+            .map(|(start, end)| end.saturating_sub(start).saturating_add(1))
+            .unwrap_or(0);
+        let hotset_count = self.hotset_pages_in_priority_order().len();
+        self.effective_queue_capacity =
+            BASE_MAX_QUEUED_THUMBNAILS.max(strict_visible_count.saturating_add(hotset_count));
+
+        while self.queued_pages.len() > self.effective_queue_capacity {
+            let Some(evicted) = self.queued_pages.pop_back() else {
                 break;
-            }
-        }
-
-        for page in staged.into_iter().take(MAX_QUEUED_THUMBNAILS) {
-            self.queued_pages.push_back(QueuedThumbnail {
-                page_index: page,
-                generation: self.thumbnail_generation,
-            });
+            };
+            self.queued_page_set.remove(&evicted.page_index);
         }
     }
 
-    fn mark_deep_jump(&mut self, start: usize, end: usize, center: usize) {
-        self.rebuild_queue_for_window(start, end, center);
+    fn queue_strict_visible_first(
+        &mut self,
+        strict_window: (usize, usize),
+        preload_window: (usize, usize),
+    ) {
+        let page_count = self.thumbnail_specs.len();
+        if page_count == 0 {
+            return;
+        }
+
+        let max_index = page_count.saturating_sub(1);
+        let strict_start = strict_window.0.min(max_index);
+        let strict_end = strict_window.1.min(max_index).max(strict_start);
+        let preload_start = preload_window.0.min(max_index);
+        let preload_end = preload_window.1.min(max_index).max(preload_start);
+
+        // 1) Strict visible rows first.
+        for index in strict_start..=strict_end {
+            let page_index = self.thumbnail_specs[index].page_index;
+            self.enqueue_thumbnail_render(page_index, true);
+        }
+
+        // 2) Keep selected hotset warm.
+        for page_index in self.hotset_pages_in_priority_order() {
+            self.enqueue_thumbnail_render(page_index, true);
+        }
+
+        // 3) Then preload overscan-only rows.
+        for index in preload_start..=preload_end {
+            if index >= strict_start && index <= strict_end {
+                continue;
+            }
+            let page_index = self.thumbnail_specs[index].page_index;
+            self.enqueue_thumbnail_render(page_index, false);
+        }
+    }
+
+    fn mark_deep_jump(&mut self) {
+        self.thumbnail_generation = self.thumbnail_generation.wrapping_add(1).max(1);
+        self.clear_queue();
+        self.inflight_pages.clear();
         self.force_immediate_dispatch_until = Instant::now() + JUMP_FORCE_DISPATCH_WINDOW;
     }
 
     fn schedule_visible_thumbnails(&mut self, cx: &mut gpui::Context<Self>) {
         let overscan_rows = self.dynamic_overscan_rows();
         self.trim_thumbnail_cache_by_distance();
-        let Some((start, end)) = self.visible_index_window(overscan_rows) else {
+
+        let strict_window = self.visible_index_window(0);
+        self.update_effective_queue_capacity(strict_window);
+        let preload_window = if overscan_rows == 0 {
+            strict_window
+        } else {
+            self.visible_index_window(overscan_rows)
+        };
+
+        let Some(preload_window) = preload_window else {
             // First frame before scroll bounds are known.
-            let warmup = self.thumbnail_specs.len().min(overscan_rows.saturating_mul(2).max(2));
+            let warmup_target = overscan_rows.saturating_mul(2).max(2);
+            let warmup =
+                self.thumbnail_specs.len().min(self.effective_queue_capacity.min(warmup_target));
             for index in 0..warmup {
                 let page_index = self.thumbnail_specs[index].page_index;
                 self.enqueue_thumbnail_render(page_index, false);
             }
-            self.enqueue_thumbnail_render(self.selected_page, true);
+            for page_index in self.hotset_pages_in_priority_order() {
+                self.enqueue_thumbnail_render(page_index, true);
+            }
+            self.enqueue_background_prewarm();
             self.pump_thumbnail_queue(cx);
             return;
         };
 
-        let center = Self::visible_window_center((start, end));
+        let strict_window = strict_window.unwrap_or(preload_window);
+        self.update_effective_queue_capacity(Some(strict_window));
+
+        let center = Self::visible_window_center(strict_window);
         if Self::is_deep_jump(self.last_visible_center, center, overscan_rows) {
-            self.mark_deep_jump(start, end, center);
+            self.mark_deep_jump();
         }
         self.last_visible_center = Some(center);
 
-        for index in start..=end {
-            let page_index = self.thumbnail_specs[index].page_index;
-            self.enqueue_thumbnail_render(page_index, true);
-        }
-        self.enqueue_thumbnail_render(self.selected_page, true);
+        self.queue_strict_visible_first(strict_window, preload_window);
         self.enqueue_background_prewarm();
         self.pump_thumbnail_queue(cx);
     }
 
-    fn enqueue_thumbnail_render(&mut self, page_index: u16, high_priority: bool) {
+    fn enqueue_thumbnail_render(&mut self, page_index: u16, high_priority: bool) -> bool {
         let key = self.thumbnail_key(page_index);
         if self.doc_fingerprint == 0
             || self.thumbnail_cache.contains(&key)
             || self.inflight_pages.contains_key(&page_index)
             || self.queued_page_set.contains(&page_index)
         {
-            return;
+            return self.doc_fingerprint != 0;
         }
 
-        if self.queued_pages.len() >= MAX_QUEUED_THUMBNAILS {
+        if self.queued_pages.len() >= self.effective_queue_capacity {
             if !high_priority {
-                return;
+                return false;
             }
-            if let Some(evicted) = self.queued_pages.pop_back() {
-                self.queued_page_set.remove(&evicted.page_index);
-            }
+            let Some(evicted) = self.queued_pages.pop_back() else {
+                return false;
+            };
+            self.queued_page_set.remove(&evicted.page_index);
         }
 
-        if high_priority {
-            self.queued_pages.push_front(QueuedThumbnail {
-                page_index,
-                generation: self.thumbnail_generation,
-            });
-        } else {
-            self.queued_pages.push_back(QueuedThumbnail {
-                page_index,
-                generation: self.thumbnail_generation,
-            });
-        }
+        self.queued_pages
+            .push_back(QueuedThumbnail { page_index, generation: self.thumbnail_generation });
         self.queued_page_set.insert(page_index);
+        true
     }
 
     fn pump_thumbnail_queue(&mut self, cx: &mut gpui::Context<Self>) {
@@ -677,7 +791,7 @@ impl ThumbnailSidebar {
     fn finish_thumbnail_render(
         &mut self,
         page_index: u16,
-        _generation: u64,
+        generation: u64,
         key: RenderCacheKey,
         doc_fingerprint: u64,
         display_width: u32,
@@ -687,9 +801,21 @@ impl ThumbnailSidebar {
         result: Result<Vec<u8>, butterpaper_render::PdfError>,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.inflight_pages.remove(&page_index);
+        let is_current_inflight = self
+            .inflight_pages
+            .get(&page_index)
+            .map(|current_generation| *current_generation == generation)
+            .unwrap_or(false);
+        if is_current_inflight {
+            self.inflight_pages.remove(&page_index);
+        }
 
         if self.doc_fingerprint != doc_fingerprint {
+            self.pump_thumbnail_queue(cx);
+            return;
+        }
+
+        if generation != self.thumbnail_generation {
             self.pump_thumbnail_queue(cx);
             return;
         }
@@ -897,6 +1023,9 @@ impl Render for ThumbnailSidebar {
             self.visible_missing_count = missing_count;
             if missing_count > 0 {
                 self.visible_blank_frames = self.visible_blank_frames.saturating_add(1);
+                // Re-pump after strict visible gap sampling so active-scroll throttling
+                // can be bypassed immediately for in-view holes.
+                self.pump_thumbnail_queue(cx);
             }
         } else {
             self.visible_missing_count = 0;
@@ -1064,10 +1193,10 @@ impl Render for ThumbnailSidebar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use butterpaper_render::PdfDocument;
     use gpui::{point, px, size, ScrollDelta, ScrollWheelEvent, TestAppContext};
     use std::path::PathBuf;
     use std::sync::Arc;
-    use butterpaper_render::PdfDocument;
 
     fn fixture_pdf_path(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures").join(name)
@@ -1131,20 +1260,117 @@ mod tests {
     }
 
     #[gpui::test]
-    fn deep_jump_reorders_queue_without_generation_invalidation(cx: &mut TestAppContext) {
+    fn deep_jump_preempts_stale_work_and_bumps_generation(cx: &mut TestAppContext) {
         let (sidebar, cx) = cx.add_window_view(|_, cx| ThumbnailSidebar::new(cx));
 
         cx.update(|_, app| {
             sidebar.update(app, |sidebar, _cx| {
-                sidebar.thumbnail_specs = (0..30)
+                sidebar.thumbnail_specs = (0..80)
                     .map(|page_index| ThumbnailSpec { page_index, width: 120, height: 160 })
                     .collect();
+                sidebar.doc_fingerprint = 7;
                 sidebar.selected_page = 10;
                 sidebar.thumbnail_generation = 9;
-                sidebar.mark_deep_jump(12, 15, 13);
-
-                assert_eq!(sidebar.thumbnail_generation, 9);
+                sidebar.inflight_pages.insert(40, 9);
+                for page in 0..12 {
+                    sidebar.enqueue_thumbnail_render(page, false);
+                }
                 assert!(!sidebar.queued_pages.is_empty());
+                assert!(!sidebar.inflight_pages.is_empty());
+
+                sidebar.mark_deep_jump();
+
+                assert_eq!(sidebar.thumbnail_generation, 10);
+                assert!(sidebar.queued_pages.is_empty());
+                assert!(sidebar.queued_page_set.is_empty());
+                assert!(sidebar.inflight_pages.is_empty());
+                assert!(sidebar.force_immediate_dispatch_until > Instant::now());
+
+                sidebar.queue_strict_visible_first((12, 15), (8, 20));
+                let head: Vec<u16> =
+                    sidebar.queued_pages.iter().take(4).map(|queued| queued.page_index).collect();
+                assert_eq!(head, vec![12, 13, 14, 15]);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn stale_completion_does_not_clear_new_inflight_or_populate_cache(cx: &mut TestAppContext) {
+        let (sidebar, cx) = cx.add_window_view(|_, cx| ThumbnailSidebar::new(cx));
+
+        cx.update(|_, app| {
+            sidebar.update(app, |sidebar, cx| {
+                sidebar.thumbnail_specs =
+                    vec![ThumbnailSpec { page_index: 0, width: 120, height: 160 }];
+                sidebar.doc_fingerprint = 99;
+                sidebar.thumbnail_generation = 6;
+                sidebar.inflight_pages.insert(0, 6);
+
+                let key = sidebar.thumbnail_key(0);
+                let pixels = vec![255_u8; 16];
+                sidebar.finish_thumbnail_render(0, 5, key, 99, 2, 2, 2, 2, Ok(pixels), cx);
+
+                assert_eq!(sidebar.inflight_pages.get(&0), Some(&6));
+                assert!(!sidebar.thumbnail_cache.contains(&key));
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn queue_capacity_expands_for_strict_visible_plus_hotset(cx: &mut TestAppContext) {
+        let (sidebar, cx) = cx.add_window_view(|_, cx| ThumbnailSidebar::new(cx));
+
+        cx.update(|_, app| {
+            sidebar.update(app, |sidebar, _cx| {
+                sidebar.thumbnail_specs = (0..200)
+                    .map(|page_index| ThumbnailSpec { page_index, width: 120, height: 160 })
+                    .collect();
+                sidebar.selected_page = 150;
+
+                let strict_window = (10, 60);
+                sidebar.update_effective_queue_capacity(Some(strict_window));
+
+                let strict_count = strict_window.1 - strict_window.0 + 1;
+                let hotset_count = sidebar.hotset_pages_in_priority_order().len();
+                let expected = BASE_MAX_QUEUED_THUMBNAILS.max(strict_count + hotset_count);
+                assert_eq!(sidebar.effective_queue_capacity, expected);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn strict_visible_pages_are_not_dropped_when_preload_exceeds_base_queue(
+        cx: &mut TestAppContext,
+    ) {
+        let (sidebar, cx) = cx.add_window_view(|_, cx| ThumbnailSidebar::new(cx));
+
+        cx.update(|_, app| {
+            sidebar.update(app, |sidebar, _cx| {
+                sidebar.thumbnail_specs = (0..220)
+                    .map(|page_index| ThumbnailSpec { page_index, width: 120, height: 160 })
+                    .collect();
+                sidebar.doc_fingerprint = 11;
+                sidebar.selected_page = 150;
+
+                let strict_window = (20, 55);
+                let preload_window = (0, 120);
+                sidebar.update_effective_queue_capacity(Some(strict_window));
+                assert!(sidebar.effective_queue_capacity > BASE_MAX_QUEUED_THUMBNAILS);
+
+                sidebar.queue_strict_visible_first(strict_window, preload_window);
+
+                for page in strict_window.0 as u16..=strict_window.1 as u16 {
+                    assert!(
+                        sidebar.queued_page_set.contains(&page),
+                        "strict visible page {} should always remain queued",
+                        page
+                    );
+                }
+                assert!(sidebar.queued_page_set.contains(&149));
+                assert!(sidebar.queued_page_set.contains(&150));
+                assert!(sidebar.queued_page_set.contains(&151));
+                assert!(!sidebar.queued_page_set.contains(&0));
+                assert!(sidebar.queued_pages.len() <= sidebar.effective_queue_capacity);
             });
         });
     }
@@ -1158,6 +1384,67 @@ mod tests {
                 assert_eq!(ThumbnailSidebar::gcd(stride, pages), 1);
             }
         }
+    }
+
+    #[test]
+    fn scroll_window_normalization_corrects_deep_offset_drift() {
+        let row_heights = vec![100.0_f32; 100];
+        let mut row_tops = Vec::with_capacity(row_heights.len());
+        let mut y = 0.0_f32;
+        for h in &row_heights {
+            row_tops.push(y);
+            y += *h;
+        }
+
+        let raw =
+            ThumbnailSidebar::row_window_for_scroll(&row_tops, &row_heights, 6_000.0, 100.0, 0)
+                .expect("raw window");
+        assert_eq!(raw, (60, 60));
+
+        let (normalized_scroll, normalized_viewport) =
+            ThumbnailSidebar::normalize_scroll_window_to_estimated_model(
+                6_000.0, 100.0, 10_000.0, 12_000.0,
+            );
+        let normalized = ThumbnailSidebar::row_window_for_scroll(
+            &row_tops,
+            &row_heights,
+            normalized_scroll,
+            normalized_viewport,
+            0,
+        )
+        .expect("normalized window");
+        assert_eq!(normalized, (50, 50));
+    }
+
+    #[gpui::test]
+    fn prewarm_queue_does_not_consume_pages_when_low_priority_queue_is_full(
+        cx: &mut TestAppContext,
+    ) {
+        let (sidebar, cx) = cx.add_window_view(|_, cx| ThumbnailSidebar::new(cx));
+
+        cx.update(|_, app| {
+            sidebar.update(app, |sidebar, _cx| {
+                sidebar.thumbnail_specs = (0..40)
+                    .map(|page_index| ThumbnailSpec { page_index, width: 120, height: 160 })
+                    .collect();
+                sidebar.doc_fingerprint = 123;
+                sidebar.effective_queue_capacity = 2;
+
+                sidebar.queued_pages.push_back(QueuedThumbnail { page_index: 1, generation: 1 });
+                sidebar.queued_pages.push_back(QueuedThumbnail { page_index: 2, generation: 1 });
+                sidebar.queued_page_set.insert(1);
+                sidebar.queued_page_set.insert(2);
+
+                sidebar.prewarm_remaining = 10;
+                sidebar.prewarm_next_index = 0;
+                sidebar.prewarm_stride = 1;
+
+                sidebar.enqueue_background_prewarm();
+
+                assert_eq!(sidebar.prewarm_remaining, 10);
+                assert_eq!(sidebar.prewarm_next_index, 0);
+            });
+        });
     }
 
     #[test]
@@ -1209,9 +1496,7 @@ mod tests {
                 sidebar.scrollbar.set_offset_y(-deep_top);
                 sidebar.schedule_visible_thumbnails(cx);
 
-                let (start, end) = sidebar
-                    .visible_index_window(sidebar.dynamic_overscan_rows())
-                    .expect("visible window");
+                let (start, end) = sidebar.visible_index_window(0).expect("strict visible window");
                 let mut missing = Vec::new();
                 for idx in start..=end {
                     let page = sidebar.thumbnail_specs[idx].page_index;
@@ -1225,7 +1510,7 @@ mod tests {
                 }
                 assert!(
                     missing.is_empty(),
-                    "visible deep-window pages were not scheduled: {:?}",
+                    "strict deep-window pages were not scheduled: {:?}",
                     missing
                 );
             });
@@ -1249,10 +1534,7 @@ mod tests {
         cx.run_until_parked();
 
         let (before_offset, before_window) = cx.read_entity(&sidebar, |sidebar, _| {
-            (
-                sidebar.scrollbar.offset_y(),
-                sidebar.visible_index_window(0).expect("window before"),
-            )
+            (sidebar.scrollbar.offset_y(), sidebar.visible_index_window(0).expect("window before"))
         });
 
         cx.simulate_event(ScrollWheelEvent {
@@ -1263,10 +1545,7 @@ mod tests {
         cx.run_until_parked();
 
         let (after_offset, after_window) = cx.read_entity(&sidebar, |sidebar, _| {
-            (
-                sidebar.scrollbar.offset_y(),
-                sidebar.visible_index_window(0).expect("window after"),
-            )
+            (sidebar.scrollbar.offset_y(), sidebar.visible_index_window(0).expect("window after"))
         });
 
         assert_ne!(after_offset, before_offset, "sidebar scroll offset should change");
@@ -1292,17 +1571,16 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let (before_offset, before_window, bounds_top, bounds_height, metrics) = cx.read_entity(
-            &sidebar,
-            |sidebar, _| {
-            (
-                sidebar.scrollbar.offset_y(),
-                sidebar.visible_index_window(0).expect("window before"),
-                sidebar.scrollbar.handle().bounds().origin.y.0,
-                sidebar.scrollbar.handle().bounds().size.height.0,
-                sidebar.scrollbar.metrics().expect("scrollbar metrics"),
-            )
-        });
+        let (before_offset, before_window, bounds_top, bounds_height, metrics) =
+            cx.read_entity(&sidebar, |sidebar, _| {
+                (
+                    sidebar.scrollbar.offset_y(),
+                    sidebar.visible_index_window(0).expect("window before"),
+                    sidebar.scrollbar.handle().bounds().origin.y.0,
+                    sidebar.scrollbar.handle().bounds().size.height.0,
+                    sidebar.scrollbar.metrics().expect("scrollbar metrics"),
+                )
+            });
 
         eprintln!(
             "sidebar_drag_test before: offset_y={}, window={:?}, thumb_top={}, thumb_height={}, bounds_height={}",
@@ -1326,10 +1604,7 @@ mod tests {
         cx.run_until_parked();
 
         let (after_offset, after_window) = cx.read_entity(&sidebar, |sidebar, _| {
-            (
-                sidebar.scrollbar.offset_y(),
-                sidebar.visible_index_window(0).expect("window after"),
-            )
+            (sidebar.scrollbar.offset_y(), sidebar.visible_index_window(0).expect("window after"))
         });
 
         eprintln!(
