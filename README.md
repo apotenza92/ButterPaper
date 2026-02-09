@@ -4,7 +4,7 @@
 
 <h1>ButterPaper</h1>
 
-ButterPaper is a Rust based desktop PDF application.
+ButterPaper is a Rust-native desktop PDF application built with `GPUI`.
 
 This is an early version (pre-release), focused on performance and UX design.
 
