@@ -396,6 +396,7 @@ jobs:
           mkdir -p dist
 
           APPDIR="$(mktemp -d)"
+          export APPDIR
           mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
           cp "$BIN_PATH" "$APPDIR/usr/bin/ButterPaper"
           chmod +x "$APPDIR/usr/bin/ButterPaper"
