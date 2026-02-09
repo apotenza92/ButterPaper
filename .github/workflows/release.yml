@@ -504,6 +504,7 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.prepare.outputs.tag }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         shell: bash
@@ -512,13 +513,13 @@ jobs:
 
           ls -lah dist
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber --repo "$GH_REPO"
             exit 0
           fi
 
           if [[ "$PRERELEASE" == "true" ]]; then
-            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --prerelease
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --prerelease --repo "$GH_REPO"
           else
-            gh release create "$TAG" dist/* --title "$TAG" --generate-notes
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --repo "$GH_REPO"
           fi
