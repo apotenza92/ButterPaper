@@ -20,28 +20,30 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Fail if tap credentials are missing
-        if: ${{ secrets.HOMEBREW_TAP_PAT == '' && secrets.HOMEBREW_TAP_SSH_KEY == '' }}
-        run: |
-          echo "::error::Missing tap credentials. Set HOMEBREW_TAP_PAT or HOMEBREW_TAP_SSH_KEY in repo secrets."
-          exit 1
-
-      - name: Start ssh-agent (deploy key)
-        if: ${{ secrets.HOMEBREW_TAP_SSH_KEY != '' && secrets.HOMEBREW_TAP_PAT == '' }}
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
-
-      - name: Clone homebrew tap (PAT)
-        if: ${{ secrets.HOMEBREW_TAP_PAT != '' }}
+      - name: Clone homebrew tap
         env:
           HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
+          HOMEBREW_TAP_SSH_KEY: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
+        shell: bash
         run: |
-          git clone "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/apotenza92/homebrew-tap.git" /tmp/homebrew-tap
+          set -euo pipefail
 
-      - name: Clone homebrew tap (SSH deploy key)
-        if: ${{ secrets.HOMEBREW_TAP_PAT == '' && secrets.HOMEBREW_TAP_SSH_KEY != '' }}
-        run: |
+          if [[ -n "${HOMEBREW_TAP_PAT:-}" ]]; then
+            git clone "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/apotenza92/homebrew-tap.git" /tmp/homebrew-tap
+            exit 0
+          fi
+
+          if [[ -z "${HOMEBREW_TAP_SSH_KEY:-}" ]]; then
+            echo "::error::Missing tap credentials. Set HOMEBREW_TAP_PAT or HOMEBREW_TAP_SSH_KEY in repo secrets."
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$HOMEBREW_TAP_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan github.com >> "$HOME/.ssh/known_hosts"
+
           git clone "git@github.com:apotenza92/homebrew-tap.git" /tmp/homebrew-tap
 
       - name: Update casks from release data
