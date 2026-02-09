@@ -1,8 +1,7 @@
 name: Update Homebrew Tap
 
 on:
-  release:
-    types: [published]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -12,15 +11,8 @@ jobs:
   sync-homebrew-tap:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout ButterPaper
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Clone homebrew tap
+      - name: Check tap credentials
+        id: tap_creds
         env:
           HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
           HOMEBREW_TAP_SSH_KEY: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
@@ -28,14 +20,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -n "${HOMEBREW_TAP_PAT:-}" ]]; then
-            git clone "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/apotenza92/homebrew-tap.git" /tmp/homebrew-tap
+          if [[ -n "${HOMEBREW_TAP_PAT:-}" || -n "${HOMEBREW_TAP_SSH_KEY:-}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [[ -z "${HOMEBREW_TAP_SSH_KEY:-}" ]]; then
-            echo "::error::Missing tap credentials. Set HOMEBREW_TAP_PAT or HOMEBREW_TAP_SSH_KEY in repo secrets."
-            exit 1
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          echo "Homebrew tap credentials not configured; skipping tap update."
+
+      - name: Checkout ButterPaper
+        uses: actions/checkout@v4
+        if: ${{ steps.tap_creds.outputs.enabled == 'true' }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+        if: ${{ steps.tap_creds.outputs.enabled == 'true' }}
+
+      - name: Clone homebrew tap
+        env:
+          HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
+          HOMEBREW_TAP_SSH_KEY: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
+        shell: bash
+        if: ${{ steps.tap_creds.outputs.enabled == 'true' }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${HOMEBREW_TAP_PAT:-}" ]]; then
+            git clone "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/apotenza92/homebrew-tap.git" /tmp/homebrew-tap
+            exit 0
           fi
 
           mkdir -p "$HOME/.ssh"
@@ -47,10 +61,12 @@ jobs:
           git clone "git@github.com:apotenza92/homebrew-tap.git" /tmp/homebrew-tap
 
       - name: Update casks from release data
+        if: ${{ steps.tap_creds.outputs.enabled == 'true' }}
         run: |
           python3 scripts/release/update_homebrew_tap_casks.py --tap-path /tmp/homebrew-tap
 
       - name: Commit and push changes
+        if: ${{ steps.tap_creds.outputs.enabled == 'true' }}
         run: |
           cd /tmp/homebrew-tap
           if git diff --quiet -- Casks/butterpaper.rb Casks/butterpaper@beta.rb; then
