@@ -1,0 +1,1478 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="color-scheme" content="light dark" />
+        <link rel="icon" href="assets/butterpaper-icon-stable.png" />
+        <title>Download ButterPaper</title>
+        <style>
+            * {
+                box-sizing: border-box;
+            }
+
+            :root {
+                color-scheme: light dark;
+                --bg: #f7f4eb;
+                --bg-gradient: linear-gradient(
+                    145deg,
+                    #fcf8ec 0%,
+                    #f3e2bf 55%,
+                    #f8efda 100%
+                );
+                --surface: rgba(255, 255, 255, 0.66);
+                --text: #1f1e1a;
+                --text-muted: #5f594d;
+                --text-subtle: #807666;
+                --border: rgba(122, 86, 25, 0.23);
+                --primary: #b1442a;
+                --primary-hover: #943722;
+                --primary-soft: rgba(177, 68, 42, 0.12);
+                --code-bg: rgba(39, 24, 8, 0.09);
+                --panel-shadow: 0 20px 40px rgba(72, 45, 11, 0.12);
+            }
+
+            body.beta-mode {
+                --bg: #0a2441;
+                --bg-gradient: linear-gradient(
+                    145deg,
+                    #0d2f51 0%,
+                    #0a3e6a 50%,
+                    #0f568f 100%
+                );
+                --surface: rgba(4, 17, 35, 0.62);
+                --text: #f3f8ff;
+                --text-muted: #bdd7f4;
+                --text-subtle: #95b1d4;
+                --border: rgba(136, 193, 255, 0.28);
+                --primary: #4ab0ff;
+                --primary-hover: #2d99ef;
+                --primary-soft: rgba(74, 176, 255, 0.18);
+                --code-bg: rgba(10, 34, 60, 0.65);
+                --panel-shadow: 0 20px 44px rgba(0, 14, 27, 0.42);
+            }
+
+            body {
+                margin: 0;
+                min-height: 100vh;
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    Helvetica, Arial, sans-serif;
+                background: var(--bg-gradient);
+                color: var(--text);
+                display: flex;
+                justify-content: center;
+                align-items: flex-start;
+                padding: 2.5rem 1rem 2rem;
+            }
+
+            .container {
+                width: min(760px, 100%);
+                text-align: center;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 22px;
+                padding: 1.8rem 1.3rem 1.5rem;
+                box-shadow: var(--panel-shadow);
+                backdrop-filter: blur(6px);
+            }
+
+            .icon {
+                width: 96px;
+                height: 96px;
+                border-radius: 22px;
+                display: inline-block;
+                margin-bottom: 1.1rem;
+            }
+
+            h1 {
+                margin: 0;
+                font-size: 1.8rem;
+                font-weight: 700;
+                letter-spacing: -0.01em;
+            }
+
+            .subtitle {
+                margin: 0.8rem auto 0.8rem;
+                max-width: 550px;
+                color: var(--text-muted);
+                font-size: 0.95rem;
+                line-height: 1.5;
+            }
+
+            .repo-link {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.45rem;
+                color: var(--text-muted);
+                text-decoration: none;
+                margin-bottom: 1rem;
+                font-size: 0.85rem;
+            }
+
+            .repo-link:hover {
+                color: var(--text);
+            }
+
+            .repo-link svg {
+                width: 18px;
+                height: 18px;
+            }
+
+            .version-display {
+                margin: 0.5rem auto 0;
+                font-size: 0.78rem;
+                font-weight: 600;
+                color: var(--primary);
+            }
+
+            .status-note {
+                margin: 0.5rem auto 1.1rem;
+                padding: 0.55rem 0.75rem;
+                max-width: 560px;
+                border-radius: 10px;
+                border: 1px solid var(--border);
+                background: var(--primary-soft);
+                color: var(--text-muted);
+                font-size: 0.76rem;
+                display: none;
+            }
+
+            .selection-flow {
+                position: relative;
+                margin-top: 1rem;
+                padding-bottom: 0.35rem;
+                isolation: isolate;
+            }
+
+            .connector-svg {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+                z-index: 0;
+                overflow: visible;
+            }
+
+            .connector-path {
+                fill: none;
+                stroke: var(--primary);
+                stroke-width: 2;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+                stroke-dasharray: 6 4;
+                opacity: 0.86;
+                filter: drop-shadow(
+                    0 0 4px color-mix(in srgb, var(--primary) 55%, transparent)
+                );
+                animation: flowDash 1s linear infinite;
+            }
+
+            @keyframes flowDash {
+                to {
+                    stroke-dashoffset: -10;
+                }
+            }
+
+            .toggle-row {
+                display: flex;
+                justify-content: center;
+                margin-bottom: 1.3rem;
+                position: relative;
+                z-index: 1;
+            }
+
+            .toggle-row[hidden] {
+                display: none !important;
+            }
+
+            .toggle {
+                display: inline-flex;
+                border: 1px solid var(--border);
+                border-radius: 9px;
+                overflow: hidden;
+                background: rgba(255, 255, 255, 0.14);
+            }
+
+            body.beta-mode .toggle {
+                background: rgba(255, 255, 255, 0.04);
+            }
+
+            .toggle button {
+                border: 0;
+                margin: 0;
+                background: transparent;
+                color: var(--text-muted);
+                font-size: 0.82rem;
+                font-weight: 600;
+                padding: 0.45rem 0.85rem;
+                cursor: pointer;
+                transition: 0.2s ease;
+                min-width: 78px;
+            }
+
+            .toggle button + button {
+                border-left: 1px solid var(--border);
+            }
+
+            .toggle button:hover {
+                color: var(--primary);
+            }
+
+            .toggle button.active {
+                color: #fff;
+                background: var(--primary);
+            }
+
+            .download-stack {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 1.2rem;
+                margin-top: 0.15rem;
+                position: relative;
+                z-index: 1;
+            }
+
+            .download-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 0.5rem;
+                min-width: 252px;
+                max-width: 100%;
+                padding: 0.68rem 1.1rem;
+                border-radius: 10px;
+                text-decoration: none;
+                border: 0;
+                color: #fff;
+                background: var(--primary);
+                font-size: 0.89rem;
+                font-weight: 600;
+                transition: 0.2s ease;
+            }
+
+            .download-btn:hover {
+                background: var(--primary-hover);
+            }
+
+            .download-btn .spinner {
+                display: none;
+                width: 14px;
+                height: 14px;
+                border: 2px solid rgba(255, 255, 255, 0.42);
+                border-top-color: #fff;
+                border-radius: 50%;
+                animation: spin 0.9s linear infinite;
+            }
+
+            .download-btn.loading .spinner {
+                display: inline-block;
+            }
+
+            .download-btn.loading .download-icon {
+                display: none;
+            }
+
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            .command-box {
+                width: auto;
+                max-width: 100%;
+                border-radius: 8px;
+                background: var(--primary);
+                text-align: center;
+                overflow: hidden;
+                cursor: pointer;
+                transition: opacity 0.2s ease;
+                display: inline-flex;
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .command-box[hidden] {
+                display: none !important;
+            }
+
+            .command-box:hover {
+                opacity: 0.92;
+            }
+
+            .command-label {
+                margin: 0;
+                padding: 0.5rem 1rem 0.25rem;
+                font-size: 0.85rem;
+                font-weight: 500;
+                color: #fff;
+                text-align: center;
+            }
+
+            .command-body {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 0.5rem;
+                padding: 0.4rem 1rem 0.5rem;
+            }
+
+            .command-body code {
+                display: none;
+            }
+
+            .copy-btn {
+                background: transparent;
+                color: #fff;
+                border: none;
+                border-radius: 0;
+                font-size: 0.8rem;
+                font-weight: 500;
+                padding: 0;
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 0.6rem;
+            }
+
+            .copy-btn svg {
+                width: 16px;
+                height: 16px;
+                flex-shrink: 0;
+            }
+
+            .copy-btn span {
+                white-space: normal;
+                text-align: left;
+            }
+
+            .copy-btn:hover {
+                opacity: 0.84;
+            }
+
+            .copy-btn.copied {
+                color: #9dffca;
+            }
+
+            .beta-notice {
+                margin: 0.9rem auto 0;
+                max-width: 560px;
+                padding: 0.55rem 0.75rem;
+                border-radius: 10px;
+                border: 1px solid var(--border);
+                background: var(--primary-soft);
+                color: var(--text-muted);
+                font-size: 0.76rem;
+                display: none;
+            }
+
+            body.beta-mode .beta-notice {
+                display: block;
+            }
+
+            .donate {
+                margin-top: 1.5rem;
+            }
+
+            .donate p {
+                margin: 0 0 0.5rem;
+                font-size: 0.82rem;
+                color: var(--text-muted);
+            }
+
+            .donate img {
+                height: 28px;
+            }
+
+            @media (max-width: 640px) {
+                body {
+                    padding: 1rem 0.7rem 1.2rem;
+                }
+
+                .container {
+                    border-radius: 16px;
+                    padding: 1rem 0.8rem 1rem;
+                }
+
+                h1 {
+                    font-size: 1.42rem;
+                }
+
+                .subtitle {
+                    font-size: 0.84rem;
+                }
+
+                .icon {
+                    width: 80px;
+                    height: 80px;
+                    border-radius: 18px;
+                }
+
+                .toggle button {
+                    min-width: 70px;
+                    font-size: 0.74rem;
+                    padding: 0.4rem 0.64rem;
+                }
+
+                .toggle-row {
+                    margin-bottom: 1.02rem;
+                }
+
+                .connector-path {
+                    stroke-width: 1.6;
+                }
+
+                .download-btn {
+                    width: 100%;
+                    min-width: 0;
+                }
+            }
+
+            @media (max-width: 420px) {
+                .toggle button {
+                    min-width: 64px;
+                    font-size: 0.7rem;
+                    padding: 0.37rem 0.45rem;
+                }
+
+                .command-body code {
+                    font-size: 0.69rem;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <img
+                id="app-icon"
+                src="assets/butterpaper-icon-stable.png"
+                alt="ButterPaper icon"
+                class="icon"
+            />
+            <h1>ButterPaper</h1>
+            <p class="subtitle">Rust-native PDF desktop app.</p>
+
+            <a
+                href="https://github.com/apotenza92/ButterPaper"
+                class="repo-link"
+                title="Open GitHub repository"
+            >
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path
+                        d="M12 0C5.372 0 0 5.373 0 12c0 5.302 3.438 9.801 8.207 11.387.6.111.793-.261.793-.577v-2.235c-3.338.726-4.034-1.416-4.034-1.416-1.089-.745.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.807 1.305 3.493.998.108-.776.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.932 0-1.312.469-2.381 1.236-3.221-.124-.303-.535-1.523.117-3.176 0 0 1.008-.322 3.301 1.23A11.5 11.5 0 0 1 12 5.8c1.02.005 2.047.138 3.006.404 2.291-1.552 3.298-1.23 3.298-1.23.652 1.653.241 2.873.117 3.176.768.84 1.236 1.909 1.236 3.221 0 4.609-2.803 5.624-5.475 5.921.429.372.823 1.102.823 2.222v3.293c0 .319.192.688.8.576C20.565 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"
+                    />
+                </svg>
+                View source on GitHub
+            </a>
+
+            <div id="version-display" class="version-display">
+                Loading release data…
+            </div>
+            <div id="status-note" class="status-note"></div>
+
+            <div class="selection-flow" id="selection-flow">
+                <svg class="connector-svg" id="connector-svg"></svg>
+
+                <div class="toggle-row">
+                    <div class="toggle" id="channel-toggle">
+                        <button id="channel-stable" class="active">
+                            Stable
+                        </button>
+                        <button id="channel-beta">Beta</button>
+                    </div>
+                </div>
+
+                <div class="toggle-row">
+                    <div class="toggle" id="platform-toggle">
+                        <button id="platform-mac">macOS</button>
+                        <button id="platform-windows">Windows</button>
+                        <button id="platform-linux">Linux</button>
+                    </div>
+                </div>
+
+                <div class="toggle-row" id="mac-arch-row" hidden>
+                    <div class="toggle">
+                        <button id="mac-arch-arm64" class="active">
+                            Apple Silicon
+                        </button>
+                        <button id="mac-arch-x64">Intel</button>
+                    </div>
+                </div>
+
+                <div class="toggle-row" id="windows-arch-row" hidden>
+                    <div class="toggle">
+                        <button id="windows-arch-x64" class="active">
+                            x64
+                        </button>
+                        <button id="windows-arch-arm64">ARM64</button>
+                    </div>
+                </div>
+
+                <div class="toggle-row" id="linux-arch-row" hidden>
+                    <div class="toggle">
+                        <button id="linux-arch-x64" class="active">x64</button>
+                        <button id="linux-arch-arm64">ARM64</button>
+                    </div>
+                </div>
+
+                <div class="toggle-row" id="linux-format-row" hidden>
+                    <div class="toggle">
+                        <button id="linux-format-appimage" class="active">
+                            AppImage
+                        </button>
+                        <button id="linux-format-deb">DEB</button>
+                        <button id="linux-format-rpm">RPM</button>
+                    </div>
+                </div>
+
+                <div class="download-stack">
+                    <a id="download-btn" class="download-btn" href="#">
+                        <svg
+                            class="download-icon"
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                            fill="currentColor"
+                            aria-hidden="true"
+                        >
+                            <path
+                                d="M19 9h-4V3H9v6H5l7 7 7-7zm-14 9v2h14v-2H5z"
+                            />
+                        </svg>
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span id="download-label">Download</span>
+                    </a>
+
+                    <div id="mac-homebrew" class="command-box" hidden>
+                        <p id="mac-homebrew-label" class="command-label">
+                            Or install via Homebrew:
+                        </p>
+                        <div class="command-body">
+                            <code id="mac-homebrew-code"
+                                >brew install --cask
+                                apotenza92/tap/butterpaper</code
+                            >
+                            <button
+                                id="mac-homebrew-copy"
+                                class="copy-btn"
+                                type="button"
+                            >
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path
+                                        d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                                    />
+                                </svg>
+                                <span>Copy</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="linux-command" class="command-box" hidden>
+                        <p id="linux-command-label" class="command-label">
+                            Or install from terminal:
+                        </p>
+                        <div class="command-body">
+                            <code id="linux-command-code">Loading…</code>
+                            <button
+                                id="linux-command-copy"
+                                class="copy-btn"
+                                type="button"
+                            >
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path
+                                        d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                                    />
+                                </svg>
+                                <span>Copy</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="beta-notice">
+                Beta channel is pre-release. You will stay on beta track, and
+                when a stable build is newer, beta will move to that newer code
+                through beta-branded artifacts.
+            </div>
+
+            <div class="donate">
+                <p>Enjoying ButterPaper?</p>
+                <a
+                    href="https://buymeacoffee.com/apotenza"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    <img
+                        src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=000000"
+                        alt="Buy me a coffee"
+                    />
+                </a>
+            </div>
+        </div>
+
+        <script>
+            const REPO_OWNER = "apotenza92";
+            const REPO_NAME = "ButterPaper";
+            const RELEASES_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases`;
+            const RELEASES_BASE = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases`;
+
+            const state = {
+                channel: "stable",
+                platform: "mac",
+                macArch: "arm64",
+                windowsArch: "x64",
+                linuxArch: "x64",
+                linuxFormat: "appimage",
+                stableRelease: null,
+                betaRelease: null,
+                betaTrackTarget: null,
+                apiFallback: false,
+                missingAssetFallback: false,
+            };
+
+            function createCurvedPath(x1, y1, x2, y2, gap = 3) {
+                const adjustedY1 = y1 + gap;
+                const adjustedY2 = y2 - gap;
+                const ctrl1Y = adjustedY1 + (adjustedY2 - adjustedY1) * 0.49;
+                const ctrl2Y = adjustedY1 + (adjustedY2 - adjustedY1) * 0.51;
+                return `M ${x1} ${adjustedY1} C ${x1} ${ctrl1Y} ${x2} ${ctrl2Y} ${x2} ${adjustedY2}`;
+            }
+
+            function elementVisible(el) {
+                return !!el && !el.hidden && el.offsetParent !== null;
+            }
+
+            function centerPoint(el, flowRect) {
+                const rect = el.getBoundingClientRect();
+                return {
+                    x: rect.left + rect.width / 2 - flowRect.left,
+                    top: rect.top - flowRect.top,
+                    bottom: rect.bottom - flowRect.top,
+                };
+            }
+
+            function drawConnector(svg, start, end) {
+                const path = document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "path",
+                );
+                path.setAttribute(
+                    "d",
+                    createCurvedPath(start.x, start.y, end.x, end.y),
+                );
+                path.setAttribute("class", "connector-path");
+                svg.appendChild(path);
+            }
+
+            function updateConnectors() {
+                const flow = document.getElementById("selection-flow");
+                const svg = document.getElementById("connector-svg");
+                if (!flow || !svg) return;
+
+                const flowRect = flow.getBoundingClientRect();
+                if (flowRect.width < 2 || flowRect.height < 2) {
+                    svg.innerHTML = "";
+                    return;
+                }
+
+                svg.setAttribute(
+                    "viewBox",
+                    `0 0 ${flowRect.width} ${flowRect.height}`,
+                );
+                svg.setAttribute("preserveAspectRatio", "none");
+                svg.innerHTML = "";
+
+                const activeChannel = document.querySelector(
+                    "#channel-toggle button.active",
+                );
+                const activePlatform = document.querySelector(
+                    "#platform-toggle button.active",
+                );
+                if (!activeChannel || !activePlatform) return;
+
+                const channelPoint = centerPoint(activeChannel, flowRect);
+                const platformPoint = centerPoint(activePlatform, flowRect);
+                drawConnector(
+                    svg,
+                    { x: channelPoint.x, y: channelPoint.bottom },
+                    { x: platformPoint.x, y: platformPoint.top },
+                );
+
+                const download = document.getElementById("download-btn");
+
+                if (state.platform === "linux") {
+                    const activeArch = document.querySelector(
+                        "#linux-arch-row button.active",
+                    );
+                    const activeFormat = document.querySelector(
+                        "#linux-format-row button.active",
+                    );
+                    const linuxCommand =
+                        document.getElementById("linux-command");
+
+                    if (elementVisible(activeArch)) {
+                        const archPoint = centerPoint(activeArch, flowRect);
+                        drawConnector(
+                            svg,
+                            { x: platformPoint.x, y: platformPoint.bottom },
+                            { x: archPoint.x, y: archPoint.top },
+                        );
+
+                        if (elementVisible(activeFormat)) {
+                            const formatPoint = centerPoint(
+                                activeFormat,
+                                flowRect,
+                            );
+                            drawConnector(
+                                svg,
+                                { x: archPoint.x, y: archPoint.bottom },
+                                { x: formatPoint.x, y: formatPoint.top },
+                            );
+
+                            if (elementVisible(download)) {
+                                const dlPoint = centerPoint(download, flowRect);
+                                drawConnector(
+                                    svg,
+                                    { x: formatPoint.x, y: formatPoint.bottom },
+                                    { x: dlPoint.x, y: dlPoint.top },
+                                );
+
+                                if (elementVisible(linuxCommand)) {
+                                    const commandPoint = centerPoint(
+                                        linuxCommand,
+                                        flowRect,
+                                    );
+                                    drawConnector(
+                                        svg,
+                                        { x: dlPoint.x, y: dlPoint.bottom },
+                                        {
+                                            x: commandPoint.x,
+                                            y: commandPoint.top,
+                                        },
+                                    );
+                                }
+                            } else if (elementVisible(linuxCommand)) {
+                                const commandPoint = centerPoint(
+                                    linuxCommand,
+                                    flowRect,
+                                );
+                                drawConnector(
+                                    svg,
+                                    { x: formatPoint.x, y: formatPoint.bottom },
+                                    { x: commandPoint.x, y: commandPoint.top },
+                                );
+                            }
+                        }
+                    }
+
+                    return;
+                }
+
+                const activeArch =
+                    state.platform === "mac"
+                        ? document.querySelector("#mac-arch-row button.active")
+                        : document.querySelector(
+                              "#windows-arch-row button.active",
+                          );
+
+                if (!elementVisible(activeArch) || !elementVisible(download)) {
+                    return;
+                }
+
+                const archPoint = centerPoint(activeArch, flowRect);
+                const dlPoint = centerPoint(download, flowRect);
+                drawConnector(
+                    svg,
+                    { x: platformPoint.x, y: platformPoint.bottom },
+                    { x: archPoint.x, y: archPoint.top },
+                );
+                drawConnector(
+                    svg,
+                    { x: archPoint.x, y: archPoint.bottom },
+                    { x: dlPoint.x, y: dlPoint.top },
+                );
+
+                if (state.platform === "mac") {
+                    const homebrew = document.getElementById("mac-homebrew");
+                    if (elementVisible(homebrew)) {
+                        const homebrewPoint = centerPoint(homebrew, flowRect);
+                        drawConnector(
+                            svg,
+                            { x: dlPoint.x, y: dlPoint.bottom },
+                            { x: homebrewPoint.x, y: homebrewPoint.top },
+                        );
+                    }
+                }
+            }
+
+            function parseTag(tag) {
+                const stable = /^v(\d+)\.(\d+)\.(\d+)$/;
+                const beta = /^v(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$/;
+
+                let m = tag.match(stable);
+                if (m) {
+                    return {
+                        kind: "stable",
+                        major: Number(m[1]),
+                        minor: Number(m[2]),
+                        patch: Number(m[3]),
+                        beta: null,
+                        tag,
+                        core: `${m[1]}.${m[2]}.${m[3]}`,
+                        normalized: `${m[1]}.${m[2]}.${m[3]}`,
+                    };
+                }
+
+                m = tag.match(beta);
+                if (m) {
+                    return {
+                        kind: "beta",
+                        major: Number(m[1]),
+                        minor: Number(m[2]),
+                        patch: Number(m[3]),
+                        beta: Number(m[4]),
+                        tag,
+                        core: `${m[1]}.${m[2]}.${m[3]}`,
+                        normalized: `${m[1]}.${m[2]}.${m[3]}-beta.${m[4]}`,
+                    };
+                }
+
+                return null;
+            }
+
+            function compareSemver(a, b) {
+                if (!a && !b) return 0;
+                if (!a) return -1;
+                if (!b) return 1;
+
+                if (a.major !== b.major) return a.major - b.major;
+                if (a.minor !== b.minor) return a.minor - b.minor;
+                if (a.patch !== b.patch) return a.patch - b.patch;
+
+                if (a.kind === "stable" && b.kind === "beta") return 1;
+                if (a.kind === "beta" && b.kind === "stable") return -1;
+
+                if (a.kind === "beta" && b.kind === "beta") {
+                    return (a.beta || 0) - (b.beta || 0);
+                }
+
+                return 0;
+            }
+
+            function maxRelease(releases) {
+                if (!releases || releases.length === 0) return null;
+                return releases.reduce((acc, item) => {
+                    if (!acc) return item;
+                    return compareSemver(item.semver, acc.semver) > 0
+                        ? item
+                        : acc;
+                }, null);
+            }
+
+            function inferPlatformFromURL() {
+                const params = new URLSearchParams(window.location.search);
+                const platform = params.get("platform");
+                if (
+                    platform === "mac" ||
+                    platform === "windows" ||
+                    platform === "linux"
+                ) {
+                    return platform;
+                }
+                return null;
+            }
+
+            function inferArchFromURL() {
+                const params = new URLSearchParams(window.location.search);
+                return params.get("arch");
+            }
+
+            function inferChannelFromURL() {
+                const params = new URLSearchParams(window.location.search);
+                return params.get("channel") === "beta" ? "beta" : "stable";
+            }
+
+            function detectPlatform() {
+                const ua = navigator.userAgent.toLowerCase();
+                const platform = navigator.platform?.toLowerCase() || "";
+
+                if (ua.includes("mac")) {
+                    return {
+                        platform: "mac",
+                        arch:
+                            platform.includes("arm") || ua.includes("arm64")
+                                ? "arm64"
+                                : "x64",
+                    };
+                }
+
+                if (ua.includes("win")) {
+                    return {
+                        platform: "windows",
+                        arch:
+                            ua.includes("arm") || ua.includes("aarch64")
+                                ? "arm64"
+                                : "x64",
+                    };
+                }
+
+                if (ua.includes("linux") && !ua.includes("android")) {
+                    return {
+                        platform: "linux",
+                        arch:
+                            ua.includes("arm") || ua.includes("aarch64")
+                                ? "arm64"
+                                : "x64",
+                    };
+                }
+
+                return { platform: "mac", arch: "arm64" };
+            }
+
+            function fallbackAssetName(channel, target) {
+                const prefix =
+                    channel === "beta" ? "ButterPaper-Beta" : "ButterPaper";
+                return `${prefix}-${target}`;
+            }
+
+            function currentSuffix() {
+                if (state.platform === "mac") {
+                    return `macos-${state.macArch}.zip`;
+                }
+                if (state.platform === "windows") {
+                    return `windows-${state.windowsArch}-setup.exe`;
+                }
+
+                const ext =
+                    state.linuxFormat === "appimage"
+                        ? "AppImage"
+                        : state.linuxFormat;
+                return `linux-${state.linuxArch}.${ext}`;
+            }
+
+            function currentPrimaryRelease() {
+                if (state.channel === "stable") {
+                    return state.stableRelease;
+                }
+                return state.betaTrackTarget;
+            }
+
+            function buildAssetCandidates(channel, release) {
+                if (!release || !release.semver) return [];
+
+                const suffix = currentSuffix();
+                const stablePrefix = `ButterPaper-v${release.semver.core}`;
+                const betaPrefix = `ButterPaper-Beta-v${release.semver.core}`;
+
+                if (channel === "stable") {
+                    return [`${stablePrefix}-${suffix}`];
+                }
+
+                return [`${betaPrefix}-${suffix}`, `${stablePrefix}-${suffix}`];
+            }
+
+            function findAssetUrl(channel) {
+                const release = currentPrimaryRelease();
+                state.missingAssetFallback = false;
+
+                if (
+                    release &&
+                    Array.isArray(release.assets) &&
+                    release.assets.length > 0
+                ) {
+                    const candidates = buildAssetCandidates(channel, release);
+                    for (const candidate of candidates) {
+                        const asset = release.assets.find(
+                            (a) => a.name === candidate,
+                        );
+                        if (asset) {
+                            if (
+                                channel === "beta" &&
+                                !asset.name.startsWith("ButterPaper-Beta-")
+                            ) {
+                                state.missingAssetFallback = true;
+                            }
+                            return {
+                                url: asset.browser_download_url,
+                                name: asset.name,
+                            };
+                        }
+                    }
+
+                    state.missingAssetFallback = true;
+                }
+
+                const name = fallbackAssetName(channel, currentSuffix());
+                return {
+                    url: `${RELEASES_BASE}/latest/download/${name}`,
+                    name,
+                };
+            }
+
+            function linuxCommand(asset) {
+                const outputName = asset.name;
+
+                if (state.linuxFormat === "appimage") {
+                    return `wget -qO ${outputName} \"${asset.url}\" && chmod +x ${outputName} && ./${outputName}`;
+                }
+
+                if (state.linuxFormat === "deb") {
+                    return `wget -qO ${outputName} \"${asset.url}\" && sudo apt install ./${outputName}`;
+                }
+
+                return `wget -qO ${outputName} \"${asset.url}\" && sudo dnf install ./${outputName}`;
+            }
+
+            function homebrewCommand() {
+                if (state.channel === "beta") {
+                    return "brew install --cask apotenza92/tap/butterpaper@beta";
+                }
+                return "brew install --cask apotenza92/tap/butterpaper";
+            }
+
+            function activateToggleGroup(ids, activeId) {
+                ids.forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    el.classList.toggle("active", id === activeId);
+                });
+            }
+
+            function setBodyChannelMode() {
+                document.body.classList.toggle(
+                    "beta-mode",
+                    state.channel === "beta",
+                );
+                const icon = document.getElementById("app-icon");
+                icon.src =
+                    state.channel === "beta"
+                        ? "assets/butterpaper-icon-beta-blueprint.png"
+                        : "assets/butterpaper-icon-stable.png";
+            }
+
+            function renderStatus() {
+                const version = document.getElementById("version-display");
+                const note = document.getElementById("status-note");
+                const release = currentPrimaryRelease();
+
+                if (release) {
+                    if (
+                        state.channel === "beta" &&
+                        state.stableRelease &&
+                        release.id === state.stableRelease.id
+                    ) {
+                        version.textContent = `Beta track target: ${release.tag_name} (stable-forward)`;
+                    } else {
+                        version.textContent = `${state.channel === "beta" ? "Beta" : "Stable"} target: ${release.tag_name}`;
+                    }
+                } else {
+                    version.textContent = "No tagged release found yet.";
+                }
+
+                const notes = [];
+                if (state.apiFallback) {
+                    notes.push(
+                        "Live release metadata unavailable. Using deterministic latest download links.",
+                    );
+                }
+                if (state.missingAssetFallback) {
+                    notes.push(
+                        "Expected beta-branded asset was not found for this target; fallback asset mapping applied.",
+                    );
+                }
+
+                if (notes.length > 0) {
+                    note.style.display = "block";
+                    note.textContent = notes.join(" ");
+                } else {
+                    note.style.display = "none";
+                    note.textContent = "";
+                }
+            }
+
+            function renderView() {
+                setBodyChannelMode();
+
+                activateToggleGroup(
+                    ["channel-stable", "channel-beta"],
+                    state.channel === "beta"
+                        ? "channel-beta"
+                        : "channel-stable",
+                );
+                activateToggleGroup(
+                    ["platform-mac", "platform-windows", "platform-linux"],
+                    `platform-${state.platform}`,
+                );
+                activateToggleGroup(
+                    ["mac-arch-arm64", "mac-arch-x64"],
+                    `mac-arch-${state.macArch}`,
+                );
+                activateToggleGroup(
+                    ["windows-arch-x64", "windows-arch-arm64"],
+                    `windows-arch-${state.windowsArch}`,
+                );
+                activateToggleGroup(
+                    ["linux-arch-x64", "linux-arch-arm64"],
+                    `linux-arch-${state.linuxArch}`,
+                );
+                activateToggleGroup(
+                    [
+                        "linux-format-appimage",
+                        "linux-format-deb",
+                        "linux-format-rpm",
+                    ],
+                    `linux-format-${state.linuxFormat}`,
+                );
+
+                document.getElementById("mac-arch-row").hidden =
+                    state.platform !== "mac";
+                document.getElementById("windows-arch-row").hidden =
+                    state.platform !== "windows";
+                document.getElementById("linux-arch-row").hidden =
+                    state.platform !== "linux";
+                document.getElementById("linux-format-row").hidden =
+                    state.platform !== "linux";
+                document.getElementById("mac-homebrew").hidden =
+                    state.platform !== "mac";
+                document.getElementById("linux-command").hidden =
+                    state.platform !== "linux";
+
+                const asset = findAssetUrl(state.channel);
+                const button = document.getElementById("download-btn");
+                const label = document.getElementById("download-label");
+
+                button.href = asset.url;
+
+                if (state.platform === "mac") {
+                    label.textContent = `Download ${state.channel === "beta" ? "Beta " : ""}${state.macArch === "arm64" ? "macOS (Apple Silicon)" : "macOS (Intel)"}`;
+                } else if (state.platform === "windows") {
+                    label.textContent = `Download ${state.channel === "beta" ? "Beta " : ""}Windows ${state.windowsArch.toUpperCase()}`;
+                } else {
+                    const fmt =
+                        state.linuxFormat === "appimage"
+                            ? "AppImage"
+                            : state.linuxFormat.toUpperCase();
+                    label.textContent = `Download ${state.channel === "beta" ? "Beta " : ""}${fmt} (${state.linuxArch.toUpperCase()})`;
+                }
+
+                const brewCode = document.getElementById("mac-homebrew-code");
+                const brewLabel = document.getElementById("mac-homebrew-label");
+                brewCode.textContent = homebrewCommand();
+                brewLabel.textContent =
+                    state.channel === "beta"
+                        ? "Or install via Homebrew (Beta):"
+                        : "Or install via Homebrew:";
+
+                const linuxCommandCode =
+                    document.getElementById("linux-command-code");
+                const linuxCommandLabel = document.getElementById(
+                    "linux-command-label",
+                );
+                linuxCommandCode.textContent = linuxCommand(asset);
+                linuxCommandLabel.textContent = "Or download and run AppImage via terminal:";
+                if (state.linuxFormat === "deb") {
+                    linuxCommandLabel.textContent = "Or download and install .deb via terminal:";
+                } else if (state.linuxFormat === "rpm") {
+                    linuxCommandLabel.textContent = "Or download and install .rpm via terminal:";
+                }
+
+                renderStatus();
+                resetCopyButtons();
+                window.requestAnimationFrame(updateConnectors);
+            }
+
+            function copyButtonHTML(label, copied = false) {
+                if (copied) {
+                    return '<svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M9 16.17 4.83 12 3.41 13.41 9 19l12-12-1.41-1.41z\"/></svg><span>' + label + "</span>";
+                }
+                return '<svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z\"/></svg><span>' + label + "</span>";
+            }
+
+            function resetCopyButtons() {
+                const ids = ["mac-homebrew-copy", "linux-command-copy"];
+                ids.forEach((id) => {
+                    const btn = document.getElementById(id);
+                    if (!btn) return;
+                    btn.classList.remove("copied");
+                    btn.innerHTML = copyButtonHTML("Copy");
+                });
+            }
+
+            function setCopied(buttonId) {
+                const btn = document.getElementById(buttonId);
+                btn.classList.add("copied");
+                btn.innerHTML = copyButtonHTML("Copied!", true);
+                setTimeout(() => {
+                    btn.classList.remove("copied");
+                    btn.innerHTML = copyButtonHTML("Copy");
+                }, 1700);
+            }
+
+            async function copyText(text, buttonId) {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    setCopied(buttonId);
+                } catch (_err) {
+                    const btn = document.getElementById(buttonId);
+                    btn.innerHTML = copyButtonHTML("Copy failed");
+                    setTimeout(() => {
+                        btn.innerHTML = copyButtonHTML("Copy");
+                    }, 1700);
+                }
+            }
+
+            async function loadReleaseMetadata() {
+                state.apiFallback = false;
+
+                try {
+                    const response = await fetch(RELEASES_API, {
+                        headers: { Accept: "application/vnd.github+json" },
+                    });
+                    if (!response.ok) {
+                        throw new Error(`GitHub API error ${response.status}`);
+                    }
+
+                    const releases = await response.json();
+                    const valid = releases
+                        .filter((rel) => !rel.draft)
+                        .map((rel) => {
+                            const sem = parseTag(rel.tag_name || "");
+                            if (!sem) return null;
+                            return {
+                                id: rel.id,
+                                tag_name: rel.tag_name,
+                                prerelease: !!rel.prerelease,
+                                published_at: rel.published_at,
+                                assets: rel.assets || [],
+                                semver: sem,
+                            };
+                        })
+                        .filter(Boolean);
+
+                    const stable = valid.filter(
+                        (rel) => rel.semver.kind === "stable",
+                    );
+                    const beta = valid.filter(
+                        (rel) => rel.semver.kind === "beta",
+                    );
+
+                    state.stableRelease = maxRelease(stable);
+                    state.betaRelease = maxRelease(beta);
+
+                    if (state.stableRelease && state.betaRelease) {
+                        state.betaTrackTarget =
+                            compareSemver(
+                                state.stableRelease.semver,
+                                state.betaRelease.semver,
+                            ) >= 0
+                                ? state.stableRelease
+                                : state.betaRelease;
+                    } else {
+                        state.betaTrackTarget =
+                            state.stableRelease || state.betaRelease || null;
+                    }
+                } catch (_err) {
+                    state.apiFallback = true;
+                    state.stableRelease = null;
+                    state.betaRelease = null;
+                    state.betaTrackTarget = null;
+                }
+            }
+
+            function initializeStateFromEnvironment() {
+                const detected = detectPlatform();
+                const fromUrlPlatform = inferPlatformFromURL();
+                const fromUrlArch = inferArchFromURL();
+
+                state.channel = inferChannelFromURL();
+
+                state.platform = fromUrlPlatform || detected.platform;
+
+                if (state.platform === "mac") {
+                    state.macArch =
+                        fromUrlArch === "x64" || fromUrlArch === "intel"
+                            ? "x64"
+                            : fromUrlArch === "arm64" || fromUrlArch === "arm"
+                              ? "arm64"
+                              : detected.arch;
+                }
+
+                if (state.platform === "windows") {
+                    state.windowsArch =
+                        fromUrlArch === "arm64" ? "arm64" : "x64";
+                }
+
+                if (state.platform === "linux") {
+                    state.linuxArch = fromUrlArch === "arm64" ? "arm64" : "x64";
+                }
+            }
+
+            function bindEvents() {
+                document
+                    .getElementById("channel-stable")
+                    .addEventListener("click", () => {
+                        state.channel = "stable";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("channel-beta")
+                    .addEventListener("click", () => {
+                        state.channel = "beta";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("platform-mac")
+                    .addEventListener("click", () => {
+                        state.platform = "mac";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("platform-windows")
+                    .addEventListener("click", () => {
+                        state.platform = "windows";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("platform-linux")
+                    .addEventListener("click", () => {
+                        state.platform = "linux";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("mac-arch-arm64")
+                    .addEventListener("click", () => {
+                        state.macArch = "arm64";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("mac-arch-x64")
+                    .addEventListener("click", () => {
+                        state.macArch = "x64";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("windows-arch-x64")
+                    .addEventListener("click", () => {
+                        state.windowsArch = "x64";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("windows-arch-arm64")
+                    .addEventListener("click", () => {
+                        state.windowsArch = "arm64";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("linux-arch-x64")
+                    .addEventListener("click", () => {
+                        state.linuxArch = "x64";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("linux-arch-arm64")
+                    .addEventListener("click", () => {
+                        state.linuxArch = "arm64";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("linux-format-appimage")
+                    .addEventListener("click", () => {
+                        state.linuxFormat = "appimage";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("linux-format-deb")
+                    .addEventListener("click", () => {
+                        state.linuxFormat = "deb";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("linux-format-rpm")
+                    .addEventListener("click", () => {
+                        state.linuxFormat = "rpm";
+                        renderView();
+                    });
+
+                document
+                    .getElementById("mac-homebrew-copy")
+                    .addEventListener("click", (event) => {
+                        event.stopPropagation();
+                        copyText(
+                            document.getElementById("mac-homebrew-code")
+                                .textContent,
+                            "mac-homebrew-copy",
+                        );
+                    });
+
+                document
+                    .getElementById("linux-command-copy")
+                    .addEventListener("click", (event) => {
+                        event.stopPropagation();
+                        copyText(
+                            document.getElementById("linux-command-code")
+                                .textContent,
+                            "linux-command-copy",
+                        );
+                    });
+
+                document
+                    .getElementById("mac-homebrew")
+                    .addEventListener("click", () => {
+                        copyText(
+                            document.getElementById("mac-homebrew-code")
+                                .textContent,
+                            "mac-homebrew-copy",
+                        );
+                    });
+
+                document
+                    .getElementById("linux-command")
+                    .addEventListener("click", () => {
+                        copyText(
+                            document.getElementById("linux-command-code")
+                                .textContent,
+                            "linux-command-copy",
+                        );
+                    });
+
+                const downloadButton = document.getElementById("download-btn");
+                downloadButton.addEventListener("click", () => {
+                    downloadButton.classList.add("loading");
+                    setTimeout(() => {
+                        downloadButton.classList.remove("loading");
+                    }, 1200);
+                });
+            }
+
+            async function init() {
+                initializeStateFromEnvironment();
+                bindEvents();
+                await loadReleaseMetadata();
+                renderView();
+            }
+
+            init();
+            window.addEventListener("resize", () => {
+                window.requestAnimationFrame(updateConnectors);
+            });
+        </script>
+    </body>
+</html>

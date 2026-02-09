@@ -1,0 +1,47 @@
+!include "MUI2.nsh"
+
+!ifndef OUTPUT_FILE
+  !error "OUTPUT_FILE define is required"
+!endif
+
+!ifndef SOURCE_EXE
+  !error "SOURCE_EXE define is required"
+!endif
+
+!ifndef APP_NAME
+  !define APP_NAME "ButterPaper"
+!endif
+
+!ifndef INSTALL_SUBDIR
+  !define INSTALL_SUBDIR "ButterPaper"
+!endif
+
+Name "${APP_NAME}"
+OutFile "${OUTPUT_FILE}"
+InstallDir "$LOCALAPPDATA\Programs\${INSTALL_SUBDIR}"
+RequestExecutionLevel user
+Unicode True
+
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "English"
+
+Section "Install"
+  SetOutPath "$INSTDIR"
+  File "/oname=ButterPaper.exe" "${SOURCE_EXE}"
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  CreateDirectory "$SMPROGRAMS\${INSTALL_SUBDIR}"
+  CreateShortCut "$SMPROGRAMS\${INSTALL_SUBDIR}\ButterPaper.lnk" "$INSTDIR\ButterPaper.exe"
+  CreateShortCut "$DESKTOP\ButterPaper.lnk" "$INSTDIR\ButterPaper.exe"
+SectionEnd
+
+Section "Uninstall"
+  Delete "$DESKTOP\ButterPaper.lnk"
+  Delete "$SMPROGRAMS\${INSTALL_SUBDIR}\ButterPaper.lnk"
+  RMDir "$SMPROGRAMS\${INSTALL_SUBDIR}"
+  Delete "$INSTDIR\ButterPaper.exe"
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir "$INSTDIR"
+SectionEnd
