@@ -626,7 +626,7 @@ checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
 name = "butterpaper"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "block2 0.5.1",
  "butterpaper-render",
@@ -652,14 +652,14 @@ dependencies = [
 
 [[package]]
 name = "butterpaper-render"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "pdfium-render",
 ]
 
 [[package]]
 name = "butterpaper-update-core"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "semver",
  "serde",
@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "butterpaper-updater"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "butterpaper-update-core",
  "libc",

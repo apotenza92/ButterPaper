@@ -62,6 +62,12 @@ jobs:
           echo "version_core=$CORE" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
 
+      - name: Verify changelog entry exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release_notes_from_changelog.py --tag "${GITHUB_REF_NAME}" >/dev/null
+
   build-macos:
     needs: prepare
     strategy:

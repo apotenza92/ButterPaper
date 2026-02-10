@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.5] - 2026-02-10
+
+### Added
+- App menu action: “Check for Updates…”
+- App menu setting: “Update Check Frequency” (Never, On Startup, Hourly, 6h, 12h, Daily, Weekly).
+
+### Changed
+- Default update check frequency is now Weekly.
+
 ## [0.0.4] - 2026-02-10
 
 ### Added
