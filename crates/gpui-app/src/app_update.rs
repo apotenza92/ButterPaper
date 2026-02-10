@@ -29,7 +29,7 @@ pub enum UpdateCheckFrequency {
 
 impl Default for UpdateCheckFrequency {
     fn default() -> Self {
-        Self::Daily
+        Self::Weekly
     }
 }
 
