@@ -458,7 +458,7 @@ jobs:
               "exec \\\"$HERE/usr/bin/ButterPaper\\\" \\\"$@\\\"\\n",
               encoding="utf-8",
           )
-PY
+          PY
 
             cp "$appdir/butterpaper.desktop" "$appdir/usr/share/applications/butterpaper.desktop"
             chmod +x "$appdir/AppRun"
