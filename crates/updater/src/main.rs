@@ -70,10 +70,10 @@ fn wait_for_pid(pid: u32) {
 #[cfg(windows)]
 fn wait_for_pid(pid: u32) {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
-    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject, SYNCHRONIZE};
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
 
     unsafe {
-        let h: HANDLE = OpenProcess(SYNCHRONIZE, 0, pid);
+        let h: HANDLE = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
         if h == 0 {
             return;
         }

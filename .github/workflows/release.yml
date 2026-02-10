@@ -193,7 +193,8 @@ jobs:
 
           bundle_app() {
             local cargo_features="$1" # "" | "--features beta"
-            cargo bundle --release --format osx --package butterpaper --target "${{ matrix.target }}" $cargo_features
+            # IMPORTANT: keep stdout clean so command substitution captures only the final echoed path.
+            cargo bundle --release --format osx --package butterpaper --target "${{ matrix.target }}" $cargo_features 1>&2
 
             local app_path="target/${{ matrix.target }}/release/bundle/osx/ButterPaper.app"
             if [[ ! -d "$app_path" ]]; then
