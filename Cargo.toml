@@ -2,7 +2,9 @@
 resolver = "2"
 members = [
   "crates/render",
-  "crates/gpui-app"
+  "crates/gpui-app",
+  "crates/update-core",
+  "crates/updater"
 ]
 default-members = [
   "crates/gpui-app"

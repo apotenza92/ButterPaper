@@ -1,4 +1,5 @@
 mod app;
+mod app_update;
 mod assets;
 mod benchmark;
 mod cache;

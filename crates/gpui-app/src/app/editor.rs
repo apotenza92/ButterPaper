@@ -149,6 +149,8 @@ pub struct PdfEditor {
     linked_toolbar_pending: Option<LinkedToolbarPendingClick>,
     /// Visible click hint for linked toolbar toggles.
     linked_toolbar_hint: Option<LinkedToolbarHint>,
+    /// When present, an update is available and the UI should surface an update banner.
+    pub(crate) update_available: Option<crate::app_update::UpdateAvailable>,
 }
 
 fn next_active_tab_index_after_close(
@@ -308,7 +310,7 @@ impl PdfEditor {
             f32::INFINITY,
         );
 
-        Self {
+        let editor = Self {
             tabs: Vec::new(),
             active_tab_index: 0,
             focus_handle: cx.focus_handle(),
@@ -333,7 +335,11 @@ impl PdfEditor {
             page_input_select_all: false,
             linked_toolbar_pending: None,
             linked_toolbar_hint: None,
-        }
+            update_available: None,
+        };
+
+        crate::app_update::spawn_update_check_once(cx);
+        editor
     }
 
     fn start_sidebar_resize_drag(
@@ -2061,6 +2067,8 @@ impl Focusable for PdfEditor {
 impl Render for PdfEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = current_theme(window, cx);
+        let update_available = self.update_available.clone();
+        let update_entity = cx.entity().downgrade();
         let show_tab_bar = self.show_tab_bar();
         let show_in_window_menu = true;
         let active_is_welcome = self.active_tab().map(|tab| tab.is_welcome()).unwrap_or(false);
@@ -2598,6 +2606,20 @@ impl Render for PdfEditor {
                         )
                     }),
             )
+            .when(update_available.is_some(), {
+                let update_available = update_available.clone();
+                let update_entity = update_entity.clone();
+                move |d| {
+                    let update = update_available
+                        .as_ref()
+                        .expect("update_available is Some when condition true");
+                    d.child(crate::app_update::render_update_banner(
+                        update,
+                        &theme,
+                        update_entity.clone(),
+                    ))
+                }
+            })
             .child(
                 div()
                     .id("content-row")

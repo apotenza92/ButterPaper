@@ -143,19 +143,6 @@ jobs:
 
           test -n "$APPLE_SIGNING_IDENTITY"
 
-          cargo bundle --release --format osx --package butterpaper --target "${{ matrix.target }}"
-
-          APP_PATH="target/${{ matrix.target }}/release/bundle/osx/ButterPaper.app"
-          if [[ ! -d "$APP_PATH" ]]; then
-            echo "::error::Expected app bundle not found at $APP_PATH"
-            exit 1
-          fi
-
-          bash scripts/apply_macos_tahoe_bundle_icons.sh "$APP_PATH"
-
-          codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$APP_PATH"
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-
           NOTARY_MODE="none"
           NOTARY_KEY_PATH=""
           if [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]]; then
@@ -195,34 +182,83 @@ jobs:
 
           mkdir -p dist
 
+          build_updater() {
+            cargo build --release --package butterpaper-updater --target "${{ matrix.target }}"
+            UPDATER_BIN="target/${{ matrix.target }}/release/butterpaper-updater"
+            if [[ ! -x "$UPDATER_BIN" ]]; then
+              echo "::error::Expected updater binary not found at $UPDATER_BIN"
+              exit 1
+            fi
+          }
+
+          bundle_app() {
+            local cargo_features="$1" # "" | "--features beta"
+            cargo bundle --release --format osx --package butterpaper --target "${{ matrix.target }}" $cargo_features
+
+            local app_path="target/${{ matrix.target }}/release/bundle/osx/ButterPaper.app"
+            if [[ ! -d "$app_path" ]]; then
+              echo "::error::Expected app bundle not found at $app_path"
+              exit 1
+            fi
+            echo "$app_path"
+          }
+
+          install_updater_into_bundle() {
+            local app_path="$1"
+            cp "$UPDATER_BIN" "$app_path/Contents/MacOS/butterpaper-updater"
+            chmod +x "$app_path/Contents/MacOS/butterpaper-updater"
+          }
+
+          sign_bundle() {
+            local app_path="$1"
+            codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app_path"
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+          }
+
           package_stable() {
+            local app_path="$1"
+            bash scripts/apply_macos_tahoe_bundle_icons.sh "$app_path"
+            sign_bundle "$app_path"
+            maybe_notarize_and_staple "$app_path"
+
             local output="dist/ButterPaper-v${VERSION_CORE}-macos-${{ matrix.arch }}.zip"
-            maybe_notarize_and_staple "$APP_PATH"
-            ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$output"
+            ditto -c -k --sequesterRsrc --keepParent "$app_path" "$output"
           }
 
           package_beta() {
+            local app_path="$1"
+
             local tmp_dir
             tmp_dir="$(mktemp -d)"
-            cp -R "$APP_PATH" "$tmp_dir/ButterPaper Beta.app"
+            cp -R "$app_path" "$tmp_dir/ButterPaper Beta.app"
             local plist="$tmp_dir/ButterPaper Beta.app/Contents/Info.plist"
             /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ButterPaper Beta" "$plist" || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleName ButterPaper Beta" "$plist" || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.apotenza92.butterpaper.beta" "$plist" || true
+
             bash scripts/apply_macos_tahoe_bundle_icons.sh "$tmp_dir/ButterPaper Beta.app" beta
-            codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$tmp_dir/ButterPaper Beta.app"
-            codesign --verify --deep --strict --verbose=2 "$tmp_dir/ButterPaper Beta.app"
+            sign_bundle "$tmp_dir/ButterPaper Beta.app"
             maybe_notarize_and_staple "$tmp_dir/ButterPaper Beta.app"
+
             local output="dist/ButterPaper-Beta-v${VERSION_CORE}-macos-${{ matrix.arch }}.zip"
             ditto -c -k --sequesterRsrc --keepParent "$tmp_dir/ButterPaper Beta.app" "$output"
             rm -rf "$tmp_dir"
           }
 
+          build_updater
+
           if [[ "$PRERELEASE" == "true" ]]; then
-            package_beta
+            APP_PATH_BETA="$(bundle_app "--features beta")"
+            install_updater_into_bundle "$APP_PATH_BETA"
+            package_beta "$APP_PATH_BETA"
           else
-            package_stable
-            package_beta
+            APP_PATH_STABLE="$(bundle_app "")"
+            install_updater_into_bundle "$APP_PATH_STABLE"
+            package_stable "$APP_PATH_STABLE"
+
+            APP_PATH_BETA="$(bundle_app "--features beta")"
+            install_updater_into_bundle "$APP_PATH_BETA"
+            package_beta "$APP_PATH_BETA"
           fi
 
       - name: Upload macOS artifacts
@@ -291,14 +327,23 @@ jobs:
           $betaBinary = Join-Path $env:RUNNER_TEMP "butterpaper-beta-${{ matrix.arch }}.exe"
           Copy-Item -Force $binary $betaBinary
 
+          cargo build --release --package butterpaper-updater --target "${{ matrix.target }}"
+          $updater = Join-Path $PWD "target\${{ matrix.target }}\release\butterpaper-updater.exe"
+          if (!(Test-Path $updater)) {
+            throw "Expected updater binary not found: $updater"
+          }
+          $updaterBinary = Join-Path $env:RUNNER_TEMP "butterpaper-updater-${{ matrix.arch }}.exe"
+          Copy-Item -Force $updater $updaterBinary
+
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $nsisScript = Join-Path $PWD "scripts\release\windows_installer.nsi"
 
-          function Build-Installer([string]$prefix, [string]$appName, [string]$installSubdir, [string]$sourceExe) {
+          function Build-Installer([string]$prefix, [string]$appName, [string]$installSubdir, [string]$sourceExe, [string]$updaterExe) {
             $output = Join-Path $PWD ("dist\{0}-v{1}-windows-${{ matrix.arch }}-setup.exe" -f $prefix, $env:VERSION_CORE)
             $args = @(
               "/DOUTPUT_FILE=$output",
               "/DSOURCE_EXE=$sourceExe",
+              "/DUPDATER_EXE=$updaterExe",
               "/DAPP_NAME=$appName",
               "/DINSTALL_SUBDIR=$installSubdir",
               $nsisScript
@@ -307,10 +352,10 @@ jobs:
           }
 
           if ($env:PRERELEASE -eq "true") {
-            Build-Installer "ButterPaper-Beta" "ButterPaper Beta" "ButterPaper-Beta" $betaBinary
+            Build-Installer "ButterPaper-Beta" "ButterPaper Beta" "ButterPaper-Beta" $betaBinary $updaterBinary
           } else {
-            Build-Installer "ButterPaper" "ButterPaper" "ButterPaper" $stableBinary
-            Build-Installer "ButterPaper-Beta" "ButterPaper Beta" "ButterPaper-Beta" $betaBinary
+            Build-Installer "ButterPaper" "ButterPaper" "ButterPaper" $stableBinary $updaterBinary
+            Build-Installer "ButterPaper-Beta" "ButterPaper Beta" "ButterPaper-Beta" $betaBinary $updaterBinary
           }
 
       - name: Upload Windows artifacts
@@ -393,11 +438,33 @@ jobs:
         run: |
           set -euo pipefail
 
-          cargo build --release --package butterpaper --target "$TARGET_TRIPLE"
+          STABLE_BIN=""
+          if [[ "$PRERELEASE" != "true" ]]; then
+            cargo build --release --package butterpaper --target "$TARGET_TRIPLE"
+            BIN_PATH="target/$TARGET_TRIPLE/release/butterpaper"
+            if [[ ! -x "$BIN_PATH" ]]; then
+              echo "::error::Expected stable binary not found at $BIN_PATH"
+              exit 1
+            fi
+            STABLE_BIN="$RUNNER_TEMP/butterpaper-stable-$OUT_ARCH"
+            cp "$BIN_PATH" "$STABLE_BIN"
+            chmod +x "$STABLE_BIN"
+          fi
 
-          BIN_PATH="target/$TARGET_TRIPLE/release/butterpaper"
-          if [[ ! -x "$BIN_PATH" ]]; then
-            echo "::error::Expected binary not found at $BIN_PATH"
+          cargo build --release --package butterpaper --target "$TARGET_TRIPLE" --features beta
+          BIN_PATH_BETA="target/$TARGET_TRIPLE/release/butterpaper"
+          if [[ ! -x "$BIN_PATH_BETA" ]]; then
+            echo "::error::Expected beta binary not found at $BIN_PATH_BETA"
+            exit 1
+          fi
+          BETA_BIN="$RUNNER_TEMP/butterpaper-beta-$OUT_ARCH"
+          cp "$BIN_PATH_BETA" "$BETA_BIN"
+          chmod +x "$BETA_BIN"
+
+          cargo build --release --package butterpaper-updater --target "$TARGET_TRIPLE"
+          UPDATER_BIN_PATH="target/$TARGET_TRIPLE/release/butterpaper-updater"
+          if [[ ! -x "$UPDATER_BIN_PATH" ]]; then
+            echo "::error::Expected updater binary not found at $UPDATER_BIN_PATH"
             exit 1
           fi
 
@@ -414,6 +481,21 @@ jobs:
             local prefix="$2"         # ButterPaper|ButterPaper-Beta
             local desktop_name="$3"   # ButterPaper|ButterPaper Beta
 
+            local bin_src=""
+            local pkg_name="butterpaper"
+            local pkg_bin_name="butterpaper"
+            local desktop_id="butterpaper"
+            local icon_id="butterpaper"
+            if [[ "$channel" == "beta" ]]; then
+              bin_src="$BETA_BIN"
+              pkg_name="butterpaper-beta"
+              pkg_bin_name="butterpaper-beta"
+              desktop_id="butterpaper-beta"
+              icon_id="butterpaper-beta"
+            else
+              bin_src="$STABLE_BIN"
+            fi
+
             local icon_src="crates/gpui-app/assets/app-icons/butterpaper-icon-256.png"
             if [[ "$channel" == "beta" ]]; then
               icon_src="crates/gpui-app/assets/app-icons/butterpaper-icon-beta-256.png"
@@ -424,28 +506,32 @@ jobs:
 
             local appdir="$workdir/AppDir"
             mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps"
-            cp "$BIN_PATH" "$appdir/usr/bin/ButterPaper"
+            cp "$bin_src" "$appdir/usr/bin/ButterPaper"
             chmod +x "$appdir/usr/bin/ButterPaper"
+            cp "$UPDATER_BIN_PATH" "$appdir/usr/bin/butterpaper-updater"
+            chmod +x "$appdir/usr/bin/butterpaper-updater"
 
             # appimagetool falls back to scanning *.so.* for architecture; provide one deterministically.
             mkdir -p "$appdir/usr/lib"
             ln -sf ../bin/ButterPaper "$appdir/usr/lib/libbutterpaper.so.0"
 
-            cp "$icon_src" "$appdir/usr/share/icons/hicolor/256x256/apps/butterpaper.png"
+            cp "$icon_src" "$appdir/usr/share/icons/hicolor/256x256/apps/${icon_id}.png"
 
-            DESKTOP_NAME="$desktop_name" APPDIR="$appdir" python3 - <<'PY'
+            DESKTOP_NAME="$desktop_name" APPDIR="$appdir" ICON_ID="$icon_id" DESKTOP_ID="$desktop_id" python3 - <<'PY'
           import os
           from pathlib import Path
 
           appdir = os.environ["APPDIR"]
           name = os.environ["DESKTOP_NAME"]
+          icon_id = os.environ["ICON_ID"]
+          desktop_id = os.environ["DESKTOP_ID"]
 
-          Path(f"{appdir}/butterpaper.desktop").write_text(
+          Path(f"{appdir}/{desktop_id}.desktop").write_text(
               "[Desktop Entry]\n"
               f"Name={name}\n"
               "Comment=Rust-native desktop PDF app\n"
               "Exec=ButterPaper\n"
-              "Icon=butterpaper\n"
+              f"Icon={icon_id}\n"
               "Type=Application\n"
               "Categories=Office;Viewer;\n"
               "Terminal=false\n",
@@ -460,9 +546,9 @@ jobs:
           )
           PY
 
-            cp "$appdir/butterpaper.desktop" "$appdir/usr/share/applications/butterpaper.desktop"
+            cp "$appdir/${desktop_id}.desktop" "$appdir/usr/share/applications/${desktop_id}.desktop"
             chmod +x "$appdir/AppRun"
-            ln -s usr/share/icons/hicolor/256x256/apps/butterpaper.png "$appdir/butterpaper.png"
+            ln -s "usr/share/icons/hicolor/256x256/apps/${icon_id}.png" "$appdir/${icon_id}.png"
 
             local appimage_tmp="$workdir/ButterPaper-${OUT_ARCH}.AppImage"
             ./appimagetool --no-appstream "$appdir" "$appimage_tmp"
@@ -470,14 +556,38 @@ jobs:
 
             local pkgroot="$workdir/PkgRoot"
             mkdir -p "$pkgroot/usr/bin" "$pkgroot/usr/share/applications" "$pkgroot/usr/share/icons/hicolor/256x256/apps"
-            cp "$BIN_PATH" "$pkgroot/usr/bin/butterpaper"
-            chmod +x "$pkgroot/usr/bin/butterpaper"
-            cp "$appdir/butterpaper.desktop" "$pkgroot/usr/share/applications/butterpaper.desktop"
-            cp "$icon_src" "$pkgroot/usr/share/icons/hicolor/256x256/apps/butterpaper.png"
+            cp "$bin_src" "$pkgroot/usr/bin/${pkg_bin_name}"
+            chmod +x "$pkgroot/usr/bin/${pkg_bin_name}"
+            cp "$UPDATER_BIN_PATH" "$pkgroot/usr/bin/butterpaper-updater"
+            chmod +x "$pkgroot/usr/bin/butterpaper-updater"
+            # For distro packages, Exec should reference the installed binary name.
+            DESKTOP_NAME="$desktop_name" PKGROOT="$pkgroot" ICON_ID="$icon_id" DESKTOP_ID="$desktop_id" PKG_BIN="$pkg_bin_name" python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          pkgroot = os.environ["PKGROOT"]
+          name = os.environ["DESKTOP_NAME"]
+          icon_id = os.environ["ICON_ID"]
+          desktop_id = os.environ["DESKTOP_ID"]
+          pkg_bin = os.environ["PKG_BIN"]
+
+          Path(f"{pkgroot}/usr/share/applications/{desktop_id}.desktop").write_text(
+              "[Desktop Entry]\n"
+              f"Name={name}\n"
+              "Comment=Rust-native desktop PDF app\n"
+              f"Exec={pkg_bin}\n"
+              f"Icon={icon_id}\n"
+              "Type=Application\n"
+              "Categories=Office;Viewer;\n"
+              "Terminal=false\n",
+              encoding="utf-8",
+          )
+          PY
+            cp "$icon_src" "$pkgroot/usr/share/icons/hicolor/256x256/apps/${icon_id}.png"
 
             pushd "$workdir" >/dev/null
             fpm -s dir -t deb \
-              -n butterpaper \
+              -n "$pkg_name" \
               -v "$VERSION_CORE" \
               -a "$DEB_ARCH" \
               --maintainer "apotenza92" \
@@ -487,7 +597,7 @@ jobs:
               .
 
             fpm -s dir -t rpm \
-              -n butterpaper \
+              -n "$pkg_name" \
               -v "$VERSION_CORE" \
               -a "$RPM_ARCH" \
               --maintainer "apotenza92" \
@@ -498,9 +608,9 @@ jobs:
             popd >/dev/null
 
             local deb_file
-            deb_file="$(ls -1 "$workdir"/butterpaper_"${VERSION_CORE}"_*.deb | head -n1)"
+            deb_file="$(ls -1 "$workdir"/"${pkg_name}"_"${VERSION_CORE}"_*.deb | head -n1)"
             local rpm_file
-            rpm_file="$(ls -1 "$workdir"/butterpaper-"${VERSION_CORE}"-*.rpm | head -n1)"
+            rpm_file="$(ls -1 "$workdir"/"${pkg_name}"-"${VERSION_CORE}"-*.rpm | head -n1)"
 
             cp "$deb_file" "dist/${prefix}-v${VERSION_CORE}-linux-${OUT_ARCH}.deb"
             cp "$rpm_file" "dist/${prefix}-v${VERSION_CORE}-linux-${OUT_ARCH}.rpm"

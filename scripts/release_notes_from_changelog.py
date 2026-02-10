@@ -5,7 +5,10 @@ Usage:
   python3 scripts/release_notes_from_changelog.py --tag v0.0.2 > /tmp/notes.md
 
 Rules:
-- Looks for a section header like: '## [0.0.2] - YYYY-MM-DD' (leading 'v' stripped from tag).
+- Looks for a section header like: '## [0.0.2] - YYYY-MM-DD'.
+- Tag parsing:
+  - Leading 'v' is stripped.
+  - If the tag includes a beta suffix (e.g. v0.0.2-beta.1), the core version (0.0.2) is used.
 - Emits the body until the next '## ' header.
 - Fails non-zero if the section is missing.
 """
@@ -33,6 +36,8 @@ def main() -> int:
     args = parse_args()
     tag = args.tag.strip()
     version = tag[1:] if tag.startswith("v") else tag
+    if "-beta." in version:
+        version = version.split("-beta.", 1)[0]
 
     changelog_path = Path(args.changelog)
     text = changelog_path.read_text(encoding="utf-8")
