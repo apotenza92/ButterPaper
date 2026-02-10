@@ -11,13 +11,13 @@ use std::{
 };
 
 use super::document::DocumentTab;
+use crate::cache::AdaptiveMemoryBudget;
 use crate::components::tab_bar::TabId as UiTabId;
 use crate::components::{
     chrome_control_shell, chrome_control_size, chrome_icon_button,
     chrome_icon_button_with_tooltip_visibility, context_menu, icon, popover_menu, tab_item,
-    text_button_with_shortcut, ButtonSize, ContextMenuItem, Icon, TabItemData,
+    text_button_with_shortcut, tooltip_builder, ButtonSize, ContextMenuItem, Icon, TabItemData,
 };
-use crate::cache::AdaptiveMemoryBudget;
 use crate::preview_cache::SharedPreviewCache;
 use crate::settings;
 use crate::sidebar::{ThumbnailPerfSnapshot, ThumbnailSidebar};
@@ -576,11 +576,8 @@ impl PdfEditor {
             if viewport.has_document() {
                 let viewport_snapshot = viewport.perf_snapshot();
                 let thumbnail_snapshot = sidebar.perf_snapshot();
-                let preview_snapshot = tab
-                    .preview_cache
-                    .lock()
-                    .map(|cache| cache.snapshot())
-                    .unwrap_or_default();
+                let preview_snapshot =
+                    tab.preview_cache.lock().map(|cache| cache.snapshot()).unwrap_or_default();
                 let total_owned_bytes = viewport_snapshot
                     .current_owned_bytes
                     .saturating_add(thumbnail_snapshot.current_thumbnail_decoded_bytes)
@@ -1004,7 +1001,9 @@ impl PdfEditor {
     ) {
         match command {
             MenuCommand::About => println!("ButterPaper - GPUI Edition"),
-            MenuCommand::CheckForUpdates => self.handle_check_for_updates(&CheckForUpdates, window, cx),
+            MenuCommand::CheckForUpdates => {
+                self.handle_check_for_updates(&CheckForUpdates, window, cx)
+            }
             MenuCommand::OpenSettings => settings::open_settings_window(cx),
             MenuCommand::Quit => cx.quit(),
             MenuCommand::Open => self.handle_open(&Open, window, cx),
@@ -1512,131 +1511,7 @@ impl PdfEditor {
                     .justify_start()
                     .child(
                         div()
-                            .id("toolbar-left-cluster")
-                            .h(ui::sizes::TOOLBAR_CONTROL_SIZE)
-                            .flex()
-                            .items_center()
-                            .gap(ui::sizes::TOOLBAR_CLUSTER_INNER_GAP)
-                            .child(chrome_icon_button(
-                                "toolbar-zoom-out",
-                                Icon::ZoomOut,
-                                "Zoom out",
-                                can_zoom,
-                                false,
-                                theme,
-                                {
-                                    let entity = cx.entity().downgrade();
-                                    move |_, _, cx| {
-                                        if let Some(editor) = entity.upgrade() {
-                                            editor.update(cx, |editor, cx| {
-                                                if let Some(tab) = editor.active_tab() {
-                                                    tab.viewport.update(cx, |viewport, cx| {
-                                                        viewport.zoom_out(cx);
-                                                    });
-                                                    editor.sync_zoom_input_from_active(cx);
-                                                }
-                                            });
-                                        }
-                                    }
-                                },
-                            ))
-                            .child(zoom_combo)
-                            .child(chrome_icon_button(
-                                "toolbar-zoom-in",
-                                Icon::ZoomIn,
-                                "Zoom in",
-                                can_zoom,
-                                false,
-                                theme,
-                                {
-                                    let entity = cx.entity().downgrade();
-                                    move |_, _, cx| {
-                                        if let Some(editor) = entity.upgrade() {
-                                            editor.update(cx, |editor, cx| {
-                                                if let Some(tab) = editor.active_tab() {
-                                                    tab.viewport.update(cx, |viewport, cx| {
-                                                        viewport.zoom_in(cx);
-                                                    });
-                                                    editor.sync_zoom_input_from_active(cx);
-                                                }
-                                            });
-                                        }
-                                    }
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .id("toolbar-separator-zoom-fit")
-                                    .px(ui::sizes::SPACE_1)
-                                    .text_ui_body()
-                                    .text_color(theme.text_muted)
-                                    .child("|"),
-                            )
-                            .child(self.render_linked_toolbar_button(
-                                "toolbar-fit-page",
-                                Icon::FitPage,
-                                "Fit page",
-                                can_zoom,
-                                fit_page_selected,
-                                LinkedToolbarButton::FitPage,
-                                theme,
-                                window,
-                                cx,
-                            ))
-                            .child(self.render_linked_toolbar_button(
-                                "toolbar-fit-width",
-                                Icon::FitWidth,
-                                "Fit width",
-                                can_zoom,
-                                fit_width_selected,
-                                LinkedToolbarButton::FitWidth,
-                                theme,
-                                window,
-                                cx,
-                            ))
-                            .child(
-                                div()
-                                    .id("toolbar-separator-fit-view")
-                                    .px(ui::sizes::SPACE_1)
-                                    .text_ui_body()
-                                    .text_color(theme.text_muted)
-                                    .child("|"),
-                            )
-                            .child(self.render_linked_toolbar_button(
-                                "toolbar-view-single-page",
-                                Icon::ViewSinglePage,
-                                "Single page view",
-                                can_zoom,
-                                page_view_mode == ViewMode::SinglePage,
-                                LinkedToolbarButton::SinglePage,
-                                theme,
-                                window,
-                                cx,
-                            ))
-                            .child(self.render_linked_toolbar_button(
-                                "toolbar-view-continuous",
-                                Icon::ViewContinuous,
-                                "Continuous view",
-                                can_zoom,
-                                page_view_mode == ViewMode::Continuous,
-                                LinkedToolbarButton::Continuous,
-                                theme,
-                                window,
-                                cx,
-                            )),
-                    ),
-            )
-            .child(
-                div()
-                    .id("toolbar-right-zone")
-                    .flex()
-                    .flex_1()
-                    .min_w_0()
-                    .items_center()
-                    .justify_end()
-                    .child(
-                        div()
-                            .id("toolbar-right-cluster")
+                            .id("toolbar-page-cluster")
                             .h(ui::sizes::TOOLBAR_CONTROL_SIZE)
                             .flex()
                             .items_center()
@@ -1732,6 +1607,155 @@ impl PdfEditor {
                             )),
                     ),
             )
+            .child(
+                div()
+                    .id("toolbar-center-zone")
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .id("toolbar-center-cluster")
+                            .h(ui::sizes::TOOLBAR_CONTROL_SIZE)
+                            .flex()
+                            .items_center()
+                            // Space-separated clusters (instead of `|` separators).
+                            .gap(ui::sizes::SPACE_4)
+                            .child(
+                                div()
+                                    .id("toolbar-zoom-cluster")
+                                    .h(ui::sizes::TOOLBAR_CONTROL_SIZE)
+                                    .flex()
+                                    .items_center()
+                                    .gap(ui::sizes::TOOLBAR_CLUSTER_INNER_GAP)
+                                    .child(chrome_icon_button(
+                                        "toolbar-zoom-out",
+                                        Icon::ZoomOut,
+                                        "Zoom out",
+                                        can_zoom,
+                                        false,
+                                        theme,
+                                        {
+                                            let entity = cx.entity().downgrade();
+                                            move |_, _, cx| {
+                                                if let Some(editor) = entity.upgrade() {
+                                                    editor.update(cx, |editor, cx| {
+                                                        if let Some(tab) = editor.active_tab() {
+                                                            tab.viewport.update(
+                                                                cx,
+                                                                |viewport, cx| {
+                                                                    viewport.zoom_out(cx);
+                                                                },
+                                                            );
+                                                            editor.sync_zoom_input_from_active(cx);
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        },
+                                    ))
+                                    .child(zoom_combo)
+                                    .child(chrome_icon_button(
+                                        "toolbar-zoom-in",
+                                        Icon::ZoomIn,
+                                        "Zoom in",
+                                        can_zoom,
+                                        false,
+                                        theme,
+                                        {
+                                            let entity = cx.entity().downgrade();
+                                            move |_, _, cx| {
+                                                if let Some(editor) = entity.upgrade() {
+                                                    editor.update(cx, |editor, cx| {
+                                                        if let Some(tab) = editor.active_tab() {
+                                                            tab.viewport.update(
+                                                                cx,
+                                                                |viewport, cx| {
+                                                                    viewport.zoom_in(cx);
+                                                                },
+                                                            );
+                                                            editor.sync_zoom_input_from_active(cx);
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id("toolbar-fit-cluster")
+                                    .h(ui::sizes::TOOLBAR_CONTROL_SIZE)
+                                    .flex()
+                                    .items_center()
+                                    .gap(ui::sizes::TOOLBAR_CLUSTER_INNER_GAP)
+                                    .child(self.render_linked_toolbar_button(
+                                        "toolbar-fit-page",
+                                        Icon::FitPage,
+                                        "Fit page",
+                                        can_zoom,
+                                        fit_page_selected,
+                                        LinkedToolbarButton::FitPage,
+                                        theme,
+                                        window,
+                                        cx,
+                                    ))
+                                    .child(self.render_linked_toolbar_button(
+                                        "toolbar-fit-width",
+                                        Icon::FitWidth,
+                                        "Fit width",
+                                        can_zoom,
+                                        fit_width_selected,
+                                        LinkedToolbarButton::FitWidth,
+                                        theme,
+                                        window,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id("toolbar-view-cluster")
+                                    .h(ui::sizes::TOOLBAR_CONTROL_SIZE)
+                                    .flex()
+                                    .items_center()
+                                    .gap(ui::sizes::TOOLBAR_CLUSTER_INNER_GAP)
+                                    .child(self.render_linked_toolbar_button(
+                                        "toolbar-view-single-page",
+                                        Icon::ViewSinglePage,
+                                        "Single page view",
+                                        can_zoom,
+                                        page_view_mode == ViewMode::SinglePage,
+                                        LinkedToolbarButton::SinglePage,
+                                        theme,
+                                        window,
+                                        cx,
+                                    ))
+                                    .child(self.render_linked_toolbar_button(
+                                        "toolbar-view-continuous",
+                                        Icon::ViewContinuous,
+                                        "Continuous view",
+                                        can_zoom,
+                                        page_view_mode == ViewMode::Continuous,
+                                        LinkedToolbarButton::Continuous,
+                                        theme,
+                                        window,
+                                        cx,
+                                    )),
+                            ),
+                    ),
+            )
+            .child(
+                // Spacer zone so the centered cluster remains visually centered.
+                div()
+                    .id("toolbar-right-zone")
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .justify_end(),
+            )
     }
 
     fn render_tab_items(
@@ -1774,6 +1798,166 @@ impl PdfEditor {
                 )
             })
             .collect()
+    }
+
+    fn render_update_indicator(
+        &self,
+        update_available: Option<crate::app_update::UpdateAvailable>,
+        update_check_banner: Option<crate::app_update::UpdateCheckBanner>,
+        update_check_in_progress: bool,
+        theme: &Theme,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        // Compact update status + affordance, anchored in the menu row (top right).
+        //
+        // - Default: "check" action (refresh icon).
+        // - Checking: disabled + highlighted.
+        // - Update available: highlighted + "apply" action.
+        let entity = cx.entity().downgrade();
+
+        #[derive(Clone)]
+        enum Action {
+            Check,
+            Apply(crate::app_update::UpdateAvailable),
+            None,
+        }
+
+        let (icon_type, tooltip, enabled, selected, action) = if let Some(update) =
+            update_available.clone()
+        {
+            (
+                Icon::Update,
+                format!(
+                    "Update available: {} (v{}, {})\nClick to update and restart.",
+                    update.tag,
+                    update.version,
+                    match update.channel {
+                        butterpaper_update_core::UpdateChannel::Stable => "stable",
+                        butterpaper_update_core::UpdateChannel::Beta => "beta",
+                    }
+                ),
+                true,
+                true,
+                Action::Apply(update),
+            )
+        } else if let Some(banner) = update_check_banner.clone() {
+            match banner {
+                crate::app_update::UpdateCheckBanner::Checking { channel } => (
+                    Icon::Refresh,
+                    format!(
+                        "Checking for updates ({})…",
+                        match channel {
+                            butterpaper_update_core::UpdateChannel::Stable => "stable",
+                            butterpaper_update_core::UpdateChannel::Beta => "beta",
+                        }
+                    ),
+                    false,
+                    true,
+                    Action::None,
+                ),
+                crate::app_update::UpdateCheckBanner::UpToDate {
+                    channel,
+                    current_version,
+                } => (
+                    Icon::Check,
+                    format!(
+                        "Up to date (v{}, {}).\nClick to check again.",
+                        current_version,
+                        match channel {
+                            butterpaper_update_core::UpdateChannel::Stable => "stable",
+                            butterpaper_update_core::UpdateChannel::Beta => "beta",
+                        }
+                    ),
+                    !update_check_in_progress,
+                    false,
+                    Action::Check,
+                ),
+                crate::app_update::UpdateCheckBanner::Error { message } => (
+                    Icon::Close,
+                    format!("Update check failed: {message}\nClick to try again."),
+                    !update_check_in_progress,
+                    false,
+                    Action::Check,
+                ),
+            }
+        } else {
+            (
+                Icon::Refresh,
+                "Check for Updates...".to_string(),
+                !update_check_in_progress,
+                false,
+                Action::Check,
+            )
+        };
+
+        let base_bg = if selected { theme.element_selected } else { theme.surface };
+        let border = ui::color::subtle_border(theme.border);
+        let icon_color = if enabled { theme.text_muted } else { theme.text_muted };
+
+        div()
+            .id("update-indicator")
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .tooltip(tooltip_builder(
+                tooltip,
+                theme.surface,
+                theme.border,
+                theme.text,
+            ))
+            .child(
+                div()
+                    .id("update-indicator-button")
+                    .w(px(22.0))
+                    .h(px(22.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(base_bg)
+                    .border_1()
+                    .border_color(border)
+                    .rounded(ui::sizes::RADIUS_SM)
+                    .when(enabled, {
+                        let hover = theme.element_hover;
+                        let active = theme.element_selected;
+                        move |d| {
+                            d.cursor_pointer()
+                                .hover(move |s| s.bg(hover))
+                                .active(move |s| s.bg(active))
+                                .on_click(move |_, window, app| match action.clone() {
+                                    Action::Check => {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(app, |editor, cx| {
+                                                editor.handle_check_for_updates(
+                                                    &CheckForUpdates,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    }
+                                    Action::Apply(update) => {
+                                        if let Some(editor) = entity.upgrade() {
+                                            editor.update(app, |editor, cx| {
+                                                editor.update_available = None;
+                                                editor.update_check_banner = None;
+                                                cx.notify();
+                                            });
+                                        }
+
+                                        if let Err(err) = crate::app_update::spawn_apply_update(&update) {
+                                            eprintln!("update apply failed: {err}");
+                                            return;
+                                        }
+                                        app.quit();
+                                    }
+                                    Action::None => {}
+                                })
+                        }
+                    })
+                    .child(icon(icon_type, 14.0, icon_color)),
+            )
     }
 
     fn render_menu_entry(
@@ -1952,10 +2136,7 @@ mod tests {
     #[test]
     fn menu_command_mapping_is_stable() {
         assert_eq!(map_menu_command("app.about"), Some(MenuCommand::About));
-        assert_eq!(
-            map_menu_command("app.check_updates"),
-            Some(MenuCommand::CheckForUpdates)
-        );
+        assert_eq!(map_menu_command("app.check_updates"), Some(MenuCommand::CheckForUpdates));
         assert_eq!(map_menu_command("app.settings"), Some(MenuCommand::OpenSettings));
         assert_eq!(map_menu_command("app.quit"), Some(MenuCommand::Quit));
         assert_eq!(map_menu_command("file.open"), Some(MenuCommand::Open));
@@ -2180,7 +2361,13 @@ impl Render for PdfEditor {
         let theme = current_theme(window, cx);
         let update_available = self.update_available.clone();
         let update_check_banner = self.update_check_banner.clone();
-        let update_entity = cx.entity().downgrade();
+        let update_indicator = self.render_update_indicator(
+            update_available.clone(),
+            update_check_banner.clone(),
+            self.update_check_in_progress,
+            &theme,
+            cx,
+        );
         let show_tab_bar = self.show_tab_bar();
         let show_in_window_menu = true;
         let active_is_welcome = self.active_tab().map(|tab| tab.is_welcome()).unwrap_or(false);
@@ -2556,28 +2743,46 @@ impl Render for PdfEditor {
                         .flex()
                         .flex_row()
                         .items_center()
+                        .justify_between()
                         .gap(ui::sizes::SPACE_0)
                         .pl(ui::sizes::SPACE_1)
                         .pr(ui::sizes::SPACE_1)
                         .bg(theme.surface)
                         .border_b_1()
                         .border_color(theme.border)
-                        .child(self.render_menu_entry(
-                            "menu-app",
-                            "ButterPaper",
-                            MenuKind::ButterPaper,
-                            app_items,
-                            &theme,
-                            cx,
-                        ))
-                        .child(self.render_menu_entry(
-                            "menu-file",
-                            "File",
-                            MenuKind::File,
-                            file_items,
-                            &theme,
-                            cx,
-                        )),
+                        .child(
+                            div()
+                                .id("app-menu-row-left")
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(ui::sizes::SPACE_0)
+                                .child(self.render_menu_entry(
+                                    "menu-app",
+                                    "ButterPaper",
+                                    MenuKind::ButterPaper,
+                                    app_items,
+                                    &theme,
+                                    cx,
+                                ))
+                                .child(self.render_menu_entry(
+                                    "menu-file",
+                                    "File",
+                                    MenuKind::File,
+                                    file_items,
+                                    &theme,
+                                    cx,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .id("app-menu-row-right")
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_end()
+                                .child(update_indicator),
+                        ),
                 )
             })
             .child(
@@ -2718,36 +2923,8 @@ impl Render for PdfEditor {
                                         )),
                                 ),
                         )
-	                    }),
-	            )
-	            .when(update_check_banner.is_some() && update_available.is_none(), {
-	                let update_check_banner = update_check_banner.clone();
-	                let update_entity = update_entity.clone();
-	                move |d| {
-	                    let banner = update_check_banner
-	                        .as_ref()
-	                        .expect("update_check_banner is Some when condition true");
-	                    d.child(crate::app_update::render_update_check_banner(
-	                        banner,
-	                        &theme,
-	                        update_entity.clone(),
-	                    ))
-	                }
-	            })
-	            .when(update_available.is_some(), {
-	                let update_available = update_available.clone();
-	                let update_entity = update_entity.clone();
-	                move |d| {
-	                    let update = update_available
-                        .as_ref()
-                        .expect("update_available is Some when condition true");
-                    d.child(crate::app_update::render_update_banner(
-                        update,
-                        &theme,
-                        update_entity.clone(),
-                    ))
-                }
-            })
+                    }),
+            )
             .child(
                 div()
                     .id("content-row")

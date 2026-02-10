@@ -105,10 +105,9 @@ pub fn should_check(frequency: UpdateCheckFrequency) -> bool {
     };
     match std::fs::metadata(&path) {
         Ok(meta) => match meta.modified() {
-            Ok(modified) => SystemTime::now()
-                .duration_since(modified)
-                .map(|d| d > interval)
-                .unwrap_or(true),
+            Ok(modified) => {
+                SystemTime::now().duration_since(modified).map(|d| d > interval).unwrap_or(true)
+            }
             Err(_) => true,
         },
         Err(_) => true,
@@ -139,16 +138,20 @@ pub fn current_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("valid CARGO_PKG_VERSION")
 }
 
-pub fn check_for_update_blocking(channel: UpdateChannel) -> Result<Option<UpdateAvailable>, String> {
+pub fn check_for_update_blocking(
+    channel: UpdateChannel,
+) -> Result<Option<UpdateAvailable>, String> {
     let repo = Repo::new("apotenza92", "ButterPaper");
 
     let platform = butterpaper_update_core::detect_platform()
         .ok_or_else(|| "unsupported platform".to_string())?;
-    let arch = butterpaper_update_core::detect_arch().ok_or_else(|| "unsupported arch".to_string())?;
+    let arch =
+        butterpaper_update_core::detect_arch().ok_or_else(|| "unsupported arch".to_string())?;
 
     let current = current_version();
-    let selected = butterpaper_update_core::check_for_update(repo, channel, platform, arch, &current)
-        .map_err(|e| e.to_string())?;
+    let selected =
+        butterpaper_update_core::check_for_update(repo, channel, platform, arch, &current)
+            .map_err(|e| e.to_string())?;
     Ok(selected.map(|s| UpdateAvailable::from_selected(s, channel)))
 }
 
@@ -167,11 +170,7 @@ impl UpdateAvailable {
 pub fn updater_exe_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let name = if cfg!(windows) {
-        "butterpaper-updater.exe"
-    } else {
-        "butterpaper-updater"
-    };
+    let name = if cfg!(windows) { "butterpaper-updater.exe" } else { "butterpaper-updater" };
     Some(dir.join(name))
 }
 
@@ -205,10 +204,7 @@ pub fn spawn_apply_update(update: &UpdateAvailable) -> Result<(), String> {
 }
 
 pub fn spawn_update_check_once(cx: &mut Context<crate::app::PdfEditor>) {
-    let frequency = cx
-        .try_global::<UpdateCheckFrequency>()
-        .copied()
-        .unwrap_or_default();
+    let frequency = cx.try_global::<UpdateCheckFrequency>().copied().unwrap_or_default();
     if !should_check(frequency) {
         return;
     }
@@ -241,6 +237,7 @@ pub fn spawn_update_check_once(cx: &mut Context<crate::app::PdfEditor>) {
     });
 }
 
+#[allow(dead_code)]
 pub fn render_update_banner(
     update: &UpdateAvailable,
     theme: &Theme,
@@ -260,17 +257,12 @@ pub fn render_update_banner(
         .bg(theme.element_selected)
         .border_b_1()
         .border_color(theme.border)
-        .child(
-            gpui::div()
-                .text_ui_body()
-                .text_color(theme.text)
-                .child(format!(
-                    "Update available: {} ({}, {})",
-                    update.tag,
-                    update.version,
-                    update.channel_name()
-                )),
-        )
+        .child(gpui::div().text_ui_body().text_color(theme.text).child(format!(
+            "Update available: {} ({}, {})",
+            update.tag,
+            update.version,
+            update.channel_name()
+        )))
         .child(text_button(
             "update-banner-apply",
             "Update and restart",
@@ -293,6 +285,7 @@ pub fn render_update_banner(
         ))
 }
 
+#[allow(dead_code)]
 pub fn render_update_check_banner(
     banner: &UpdateCheckBanner,
     theme: &Theme,
@@ -304,17 +297,12 @@ pub fn render_update_check_banner(
     };
 
     let (message, show_dismiss) = match banner {
-        UpdateCheckBanner::Checking { channel } => (
-            format!("Checking for updates ({})…", channel_name(*channel)),
-            false,
-        ),
-        UpdateCheckBanner::UpToDate {
-            channel,
-            current_version,
-        } => (
-            format!("You are up to date (v{}, {})", current_version, channel_name(*channel)),
-            true,
-        ),
+        UpdateCheckBanner::Checking { channel } => {
+            (format!("Checking for updates ({})…", channel_name(*channel)), false)
+        }
+        UpdateCheckBanner::UpToDate { channel, current_version } => {
+            (format!("You are up to date (v{}, {})", current_version, channel_name(*channel)), true)
+        }
         UpdateCheckBanner::Error { message } => (format!("Update check failed: {message}"), true),
     };
 
@@ -330,12 +318,7 @@ pub fn render_update_check_banner(
         .bg(bg)
         .border_b_1()
         .border_color(border)
-        .child(
-            gpui::div()
-                .text_ui_body()
-                .text_color(theme.text)
-                .child(message),
-        )
+        .child(gpui::div().text_ui_body().text_color(theme.text).child(message))
         .when(show_dismiss, move |d| {
             d.child(text_button(
                 "update-check-dismiss",
@@ -354,6 +337,7 @@ pub fn render_update_check_banner(
         })
 }
 
+#[allow(dead_code)]
 impl UpdateAvailable {
     fn channel_name(&self) -> &'static str {
         match self.channel {
@@ -363,6 +347,7 @@ impl UpdateAvailable {
     }
 }
 
+#[allow(dead_code)]
 fn channel_name(channel: UpdateChannel) -> &'static str {
     match channel {
         UpdateChannel::Stable => "stable",
