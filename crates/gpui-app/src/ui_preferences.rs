@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use gpui::App;
 
 use crate::theme::{AppearanceMode, ThemeSettings};
+use crate::app_update::UpdateCheckFrequency;
 use crate::ThumbnailClusterWidthPx;
 
 pub const THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX: f32 =
@@ -29,6 +30,8 @@ pub struct UiPreferences {
     pub theme_settings: ThemeSettings,
     #[serde(default = "default_thumbnail_cluster_width_px")]
     pub thumbnail_cluster_width_px: f32,
+    #[serde(default)]
+    pub update_check_frequency: UpdateCheckFrequency,
 }
 
 impl Default for UiPreferences {
@@ -37,6 +40,7 @@ impl Default for UiPreferences {
             appearance_mode: AppearanceMode::default(),
             theme_settings: ThemeSettings::default(),
             thumbnail_cluster_width_px: THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX,
+            update_check_frequency: UpdateCheckFrequency::default(),
         }
     }
 }
@@ -90,6 +94,10 @@ pub fn collect_ui_preferences(cx: &App) -> UiPreferences {
             .copied()
             .unwrap_or_default()
             .0,
+        update_check_frequency: cx
+            .try_global::<UpdateCheckFrequency>()
+            .copied()
+            .unwrap_or_default(),
     }
 }
 
@@ -102,6 +110,7 @@ pub fn save_ui_preferences_from_app(cx: &App) -> std::io::Result<()> {
 mod tests {
     use super::UiPreferences;
     use super::THUMBNAIL_CLUSTER_WIDTH_DEFAULT_PX;
+    use crate::app_update::UpdateCheckFrequency;
     use crate::theme::AppearanceMode;
 
     #[test]
@@ -109,6 +118,7 @@ mod tests {
         let prefs = UiPreferences {
             appearance_mode: AppearanceMode::Dark,
             thumbnail_cluster_width_px: 320.0,
+            update_check_frequency: UpdateCheckFrequency::Every6Hours,
             ..UiPreferences::default()
         };
 
@@ -116,6 +126,7 @@ mod tests {
         let decoded: UiPreferences = serde_json::from_str(&json).expect("deserialize prefs");
         assert_eq!(decoded.appearance_mode, AppearanceMode::Dark);
         assert_eq!(decoded.thumbnail_cluster_width_px, 320.0);
+        assert_eq!(decoded.update_check_frequency, UpdateCheckFrequency::Every6Hours);
     }
 
     #[test]

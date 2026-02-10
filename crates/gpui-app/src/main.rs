@@ -36,6 +36,7 @@ use app::{set_menus, PdfEditor};
 use assets::Assets;
 use benchmark::BenchmarkConfig;
 use cli::parse_args;
+use ui_preferences::save_ui_preferences_from_app;
 use ui_preferences::load_ui_preferences;
 use window::{focus_window, list_windows, schedule_screenshot};
 
@@ -55,6 +56,13 @@ actions!(
     [
         Quit,
         CheckForUpdates,
+        SetUpdateCheckFrequencyNever,
+        SetUpdateCheckFrequencyOnStartup,
+        SetUpdateCheckFrequencyEveryHour,
+        SetUpdateCheckFrequencyEvery6Hours,
+        SetUpdateCheckFrequencyEvery12Hours,
+        SetUpdateCheckFrequencyDaily,
+        SetUpdateCheckFrequencyWeekly,
         Open,
         About,
         ZoomIn,
@@ -72,6 +80,12 @@ actions!(
         CloseTab
     ]
 );
+
+fn set_update_check_frequency(frequency: app_update::UpdateCheckFrequency, cx: &mut App) {
+    cx.set_global(frequency);
+    let _ = save_ui_preferences_from_app(cx);
+    set_menus(cx);
+}
 
 fn open_editor_window(cx: &mut App, initial_files: Vec<PathBuf>) -> gpui::WindowHandle<PdfEditor> {
     let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
@@ -238,6 +252,7 @@ fn main() {
         cx.set_global(ui_preferences.appearance_mode);
         cx.set_global(ui_preferences.theme_settings);
         cx.set_global(ThumbnailClusterWidthPx(ui_preferences.thumbnail_cluster_width_px));
+        cx.set_global(ui_preferences.update_check_frequency);
         #[cfg(target_os = "macos")]
         macos::set_app_appearance(ui_preferences.appearance_mode);
 
@@ -248,6 +263,28 @@ fn main() {
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.on_action(|_: &About, _cx| {
             println!("ButterPaper - GPUI Edition");
+        });
+
+        cx.on_action(|_: &SetUpdateCheckFrequencyNever, cx| {
+            set_update_check_frequency(app_update::UpdateCheckFrequency::Never, cx);
+        });
+        cx.on_action(|_: &SetUpdateCheckFrequencyOnStartup, cx| {
+            set_update_check_frequency(app_update::UpdateCheckFrequency::OnStartup, cx);
+        });
+        cx.on_action(|_: &SetUpdateCheckFrequencyEveryHour, cx| {
+            set_update_check_frequency(app_update::UpdateCheckFrequency::EveryHour, cx);
+        });
+        cx.on_action(|_: &SetUpdateCheckFrequencyEvery6Hours, cx| {
+            set_update_check_frequency(app_update::UpdateCheckFrequency::Every6Hours, cx);
+        });
+        cx.on_action(|_: &SetUpdateCheckFrequencyEvery12Hours, cx| {
+            set_update_check_frequency(app_update::UpdateCheckFrequency::Every12Hours, cx);
+        });
+        cx.on_action(|_: &SetUpdateCheckFrequencyDaily, cx| {
+            set_update_check_frequency(app_update::UpdateCheckFrequency::Daily, cx);
+        });
+        cx.on_action(|_: &SetUpdateCheckFrequencyWeekly, cx| {
+            set_update_check_frequency(app_update::UpdateCheckFrequency::Weekly, cx);
         });
 
         // Settings action

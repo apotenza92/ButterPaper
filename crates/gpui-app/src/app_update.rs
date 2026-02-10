@@ -16,8 +16,50 @@ use crate::components::{text_button, ButtonSize};
 use crate::ui::TypographyExt;
 use crate::Theme;
 
-/// How often to check for app updates (24 hours).
-const UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum UpdateCheckFrequency {
+    Never,
+    OnStartup,
+    EveryHour,
+    Every6Hours,
+    Every12Hours,
+    Daily,
+    Weekly,
+}
+
+impl Default for UpdateCheckFrequency {
+    fn default() -> Self {
+        Self::Daily
+    }
+}
+
+impl gpui::Global for UpdateCheckFrequency {}
+
+impl UpdateCheckFrequency {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Never => "Never",
+            Self::OnStartup => "On Startup",
+            Self::EveryHour => "Every Hour",
+            Self::Every6Hours => "Every 6 Hours",
+            Self::Every12Hours => "Every 12 Hours",
+            Self::Daily => "Daily",
+            Self::Weekly => "Weekly",
+        }
+    }
+
+    fn interval(self) -> Option<Duration> {
+        match self {
+            Self::Never => None,
+            Self::OnStartup => Some(Duration::ZERO),
+            Self::EveryHour => Some(Duration::from_secs(60 * 60)),
+            Self::Every6Hours => Some(Duration::from_secs(6 * 60 * 60)),
+            Self::Every12Hours => Some(Duration::from_secs(12 * 60 * 60)),
+            Self::Daily => Some(Duration::from_secs(24 * 60 * 60)),
+            Self::Weekly => Some(Duration::from_secs(7 * 24 * 60 * 60)),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -46,7 +88,18 @@ fn last_update_file() -> Option<PathBuf> {
     config_dir().map(|p| p.join(".last_app_update_check"))
 }
 
-pub fn should_check() -> bool {
+pub fn should_check(frequency: UpdateCheckFrequency) -> bool {
+    if frequency == UpdateCheckFrequency::Never {
+        return false;
+    }
+    if frequency == UpdateCheckFrequency::OnStartup {
+        return true;
+    }
+
+    let Some(interval) = frequency.interval() else {
+        return false;
+    };
+
     let Some(path) = last_update_file() else {
         return true;
     };
@@ -54,7 +107,7 @@ pub fn should_check() -> bool {
         Ok(meta) => match meta.modified() {
             Ok(modified) => SystemTime::now()
                 .duration_since(modified)
-                .map(|d| d > UPDATE_INTERVAL)
+                .map(|d| d > interval)
                 .unwrap_or(true),
             Err(_) => true,
         },
@@ -152,7 +205,11 @@ pub fn spawn_apply_update(update: &UpdateAvailable) -> Result<(), String> {
 }
 
 pub fn spawn_update_check_once(cx: &mut Context<crate::app::PdfEditor>) {
-    if !should_check() {
+    let frequency = cx
+        .try_global::<UpdateCheckFrequency>()
+        .copied()
+        .unwrap_or_default();
+    if !should_check(frequency) {
         return;
     }
 
