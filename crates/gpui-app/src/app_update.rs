@@ -29,6 +29,13 @@ pub struct UpdateAvailable {
     pub channel: UpdateChannel,
 }
 
+#[derive(Debug, Clone)]
+pub enum UpdateCheckBanner {
+    Checking { channel: UpdateChannel },
+    UpToDate { channel: UpdateChannel, current_version: String },
+    Error { message: String },
+}
+
 static UPDATE_CHECK_ONCE: Once = Once::new();
 
 fn config_dir() -> Option<PathBuf> {
@@ -57,6 +64,9 @@ pub fn should_check() -> bool {
 
 pub fn mark_checked() {
     if let Some(path) = last_update_file() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let _ = std::fs::write(path, "");
     }
 }
@@ -226,11 +236,79 @@ pub fn render_update_banner(
         ))
 }
 
+pub fn render_update_check_banner(
+    banner: &UpdateCheckBanner,
+    theme: &Theme,
+    editor: gpui::WeakEntity<crate::app::PdfEditor>,
+) -> impl gpui::IntoElement {
+    let (bg, border) = match banner {
+        UpdateCheckBanner::Error { .. } => (theme.danger_bg, theme.danger_border),
+        _ => (theme.element_selected, theme.border),
+    };
+
+    let (message, show_dismiss) = match banner {
+        UpdateCheckBanner::Checking { channel } => (
+            format!("Checking for updates ({})…", channel_name(*channel)),
+            false,
+        ),
+        UpdateCheckBanner::UpToDate {
+            channel,
+            current_version,
+        } => (
+            format!("You are up to date (v{}, {})", current_version, channel_name(*channel)),
+            true,
+        ),
+        UpdateCheckBanner::Error { message } => (format!("Update check failed: {message}"), true),
+    };
+
+    gpui::div()
+        .id("update-check-banner")
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .px(crate::ui::sizes::SPACE_4)
+        .py(crate::ui::sizes::SPACE_2)
+        .bg(bg)
+        .border_b_1()
+        .border_color(border)
+        .child(
+            gpui::div()
+                .text_ui_body()
+                .text_color(theme.text)
+                .child(message),
+        )
+        .when(show_dismiss, move |d| {
+            d.child(text_button(
+                "update-check-dismiss",
+                "OK",
+                ButtonSize::Medium,
+                theme,
+                move |_, _window, app| {
+                    if let Some(editor) = editor.upgrade() {
+                        editor.update(app, |editor, cx| {
+                            editor.update_check_banner = None;
+                            cx.notify();
+                        });
+                    }
+                },
+            ))
+        })
+}
+
 impl UpdateAvailable {
     fn channel_name(&self) -> &'static str {
         match self.channel {
             UpdateChannel::Stable => "stable",
             UpdateChannel::Beta => "beta",
         }
+    }
+}
+
+fn channel_name(channel: UpdateChannel) -> &'static str {
+    match channel {
+        UpdateChannel::Stable => "stable",
+        UpdateChannel::Beta => "beta",
     }
 }

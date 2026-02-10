@@ -27,8 +27,8 @@ use crate::viewport::{PdfViewport, PerfSnapshot, ViewMode, ZoomMode};
 use crate::workspace::{load_preferences, TabPreferences};
 use crate::{current_theme, ui, Theme, ThumbnailClusterWidthPx};
 use crate::{
-    CloseTab, CloseWindow, FirstPage, FitPage, FitWidth, LastPage, NextPage, NextTab, Open,
-    PrevPage, PrevTab, ResetZoom, ZoomIn, ZoomOut,
+    CheckForUpdates, CloseTab, CloseWindow, FirstPage, FitPage, FitWidth, LastPage, NextPage,
+    NextTab, Open, PrevPage, PrevTab, ResetZoom, ZoomIn, ZoomOut,
 };
 
 const MIN_ZOOM_PERCENT: u32 = 25;
@@ -45,6 +45,7 @@ enum MenuKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuCommand {
     About,
+    CheckForUpdates,
     OpenSettings,
     Quit,
     Open,
@@ -151,6 +152,12 @@ pub struct PdfEditor {
     linked_toolbar_hint: Option<LinkedToolbarHint>,
     /// When present, an update is available and the UI should surface an update banner.
     pub(crate) update_available: Option<crate::app_update::UpdateAvailable>,
+    /// Status banner for manual "Check for Updates..." actions.
+    pub(crate) update_check_banner: Option<crate::app_update::UpdateCheckBanner>,
+    /// Guard to avoid stacking multiple simultaneous update checks.
+    update_check_in_progress: bool,
+    /// Monotonic counter used to ignore stale async update check results.
+    update_check_nonce: u64,
 }
 
 fn next_active_tab_index_after_close(
@@ -244,6 +251,7 @@ fn clamp_thumbnail_cluster_width(width_px: f32, window_width_px: f32) -> f32 {
 fn map_menu_command(value: &str) -> Option<MenuCommand> {
     match value {
         "app.about" => Some(MenuCommand::About),
+        "app.check_updates" => Some(MenuCommand::CheckForUpdates),
         "app.settings" => Some(MenuCommand::OpenSettings),
         "app.quit" => Some(MenuCommand::Quit),
         "file.open" => Some(MenuCommand::Open),
@@ -336,6 +344,9 @@ impl PdfEditor {
             linked_toolbar_pending: None,
             linked_toolbar_hint: None,
             update_available: None,
+            update_check_banner: None,
+            update_check_in_progress: false,
+            update_check_nonce: 0,
         };
 
         crate::app_update::spawn_update_check_once(cx);
@@ -993,6 +1004,7 @@ impl PdfEditor {
     ) {
         match command {
             MenuCommand::About => println!("ButterPaper - GPUI Edition"),
+            MenuCommand::CheckForUpdates => self.handle_check_for_updates(&CheckForUpdates, window, cx),
             MenuCommand::OpenSettings => settings::open_settings_window(cx),
             MenuCommand::Quit => cx.quit(),
             MenuCommand::Open => self.handle_open(&Open, window, cx),
@@ -1007,6 +1019,101 @@ impl PdfEditor {
             });
             self.sync_zoom_input_from_active(cx);
         }
+    }
+
+    fn handle_check_for_updates(
+        &mut self,
+        _: &CheckForUpdates,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.update_check_in_progress {
+            return;
+        }
+
+        let channel = crate::app_update::default_channel();
+        self.update_check_in_progress = true;
+        self.update_check_nonce = self.update_check_nonce.saturating_add(1);
+        let nonce = self.update_check_nonce;
+        self.update_check_banner = Some(crate::app_update::UpdateCheckBanner::Checking { channel });
+        cx.notify();
+
+        cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let mut async_cx = cx.clone();
+            async move {
+                let result = async_cx
+                    .background_executor()
+                    .spawn(async move { crate::app_update::check_for_update_blocking(channel) })
+                    .await;
+
+                crate::app_update::mark_checked();
+
+                let mut clear_after: Option<Duration> = None;
+                match result {
+                    Ok(Some(update)) => {
+                        let _ = this.update(&mut async_cx, move |editor, cx| {
+                            if editor.update_check_nonce != nonce {
+                                return;
+                            }
+                            editor.update_check_in_progress = false;
+                            editor.update_check_banner = None;
+                            editor.update_available = Some(update);
+                            cx.notify();
+                        });
+                    }
+                    Ok(None) => {
+                        clear_after = Some(Duration::from_secs(5));
+                        let current_version = env!("CARGO_PKG_VERSION").to_string();
+                        let _ = this.update(&mut async_cx, move |editor, cx| {
+                            if editor.update_check_nonce != nonce {
+                                return;
+                            }
+                            editor.update_check_in_progress = false;
+                            editor.update_available = None;
+                            editor.update_check_banner =
+                                Some(crate::app_update::UpdateCheckBanner::UpToDate {
+                                    channel,
+                                    current_version,
+                                });
+                            cx.notify();
+                        });
+                    }
+                    Err(err) => {
+                        clear_after = Some(Duration::from_secs(10));
+                        let _ = this.update(&mut async_cx, move |editor, cx| {
+                            if editor.update_check_nonce != nonce {
+                                return;
+                            }
+                            editor.update_check_in_progress = false;
+                            editor.update_check_banner =
+                                Some(crate::app_update::UpdateCheckBanner::Error { message: err });
+                            cx.notify();
+                        });
+                    }
+                }
+
+                if let Some(delay) = clear_after {
+                    async_cx
+                        .background_executor()
+                        .spawn(async move { std::thread::sleep(delay) })
+                        .await;
+                    let _ = this.update(&mut async_cx, move |editor, cx| {
+                        if editor.update_check_nonce != nonce {
+                            return;
+                        }
+                        if matches!(
+                            editor.update_check_banner,
+                            Some(crate::app_update::UpdateCheckBanner::UpToDate { .. })
+                                | Some(crate::app_update::UpdateCheckBanner::Error { .. })
+                        ) {
+                            editor.update_check_banner = None;
+                            cx.notify();
+                        }
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     fn handle_zoom_out(&mut self, _: &ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1845,6 +1952,10 @@ mod tests {
     #[test]
     fn menu_command_mapping_is_stable() {
         assert_eq!(map_menu_command("app.about"), Some(MenuCommand::About));
+        assert_eq!(
+            map_menu_command("app.check_updates"),
+            Some(MenuCommand::CheckForUpdates)
+        );
         assert_eq!(map_menu_command("app.settings"), Some(MenuCommand::OpenSettings));
         assert_eq!(map_menu_command("app.quit"), Some(MenuCommand::Quit));
         assert_eq!(map_menu_command("file.open"), Some(MenuCommand::Open));
@@ -2068,6 +2179,7 @@ impl Render for PdfEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = current_theme(window, cx);
         let update_available = self.update_available.clone();
+        let update_check_banner = self.update_check_banner.clone();
         let update_entity = cx.entity().downgrade();
         let show_tab_bar = self.show_tab_bar();
         let show_in_window_menu = true;
@@ -2145,6 +2257,7 @@ impl Render for PdfEditor {
 
         let app_items = vec![
             ContextMenuItem::new("app.about", "About ButterPaper"),
+            ContextMenuItem::new("app.check_updates", "Check for Updates..."),
             ContextMenuItem::new("app.settings", "Settings...").shortcut("⌘,"),
             ContextMenuItem::new("app.quit", "Quit ButterPaper").shortcut("⌘Q"),
         ];
@@ -2380,6 +2493,7 @@ impl Render for PdfEditor {
             .on_action(cx.listener(Self::handle_first_page))
             .on_action(cx.listener(Self::handle_last_page))
             .on_action(cx.listener(Self::handle_open))
+            .on_action(cx.listener(Self::handle_check_for_updates))
             .on_action(cx.listener(Self::handle_close_window))
             .on_action(cx.listener(Self::handle_next_tab))
             .on_action(cx.listener(Self::handle_prev_tab))
@@ -2604,13 +2718,27 @@ impl Render for PdfEditor {
                                         )),
                                 ),
                         )
-                    }),
-            )
-            .when(update_available.is_some(), {
-                let update_available = update_available.clone();
-                let update_entity = update_entity.clone();
-                move |d| {
-                    let update = update_available
+	                    }),
+	            )
+	            .when(update_check_banner.is_some() && update_available.is_none(), {
+	                let update_check_banner = update_check_banner.clone();
+	                let update_entity = update_entity.clone();
+	                move |d| {
+	                    let banner = update_check_banner
+	                        .as_ref()
+	                        .expect("update_check_banner is Some when condition true");
+	                    d.child(crate::app_update::render_update_check_banner(
+	                        banner,
+	                        &theme,
+	                        update_entity.clone(),
+	                    ))
+	                }
+	            })
+	            .when(update_available.is_some(), {
+	                let update_available = update_available.clone();
+	                let update_entity = update_entity.clone();
+	                move |d| {
+	                    let update = update_available
                         .as_ref()
                         .expect("update_available is Some when condition true");
                     d.child(crate::app_update::render_update_banner(

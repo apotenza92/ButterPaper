@@ -3,7 +3,7 @@
 use gpui::{App, Menu, MenuItem};
 
 use crate::settings;
-use crate::{About, Open, Quit};
+use crate::{About, CheckForUpdates, Open, Quit};
 
 /// Set up the application menu bar.
 pub fn set_menus(cx: &mut App) {
@@ -12,6 +12,7 @@ pub fn set_menus(cx: &mut App) {
             name: "ButterPaper".into(),
             items: vec![
                 MenuItem::action("About ButterPaper", About),
+                MenuItem::action("Check for Updates...", CheckForUpdates),
                 MenuItem::separator(),
                 MenuItem::action("Settings...", settings::OpenSettings),
                 MenuItem::separator(),

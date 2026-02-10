@@ -54,6 +54,7 @@ actions!(
     butterpaper,
     [
         Quit,
+        CheckForUpdates,
         Open,
         About,
         ZoomIn,
