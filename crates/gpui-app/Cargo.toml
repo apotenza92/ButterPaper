@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 build = "build.rs"
 
+[features]
+# Build/packaging channel. Used for channel-specific branding (e.g., app icons).
+beta = []
+
 [package.metadata.bundle]
 name = "ButterPaper"
 identifier = "com.apotenza92.butterpaper"

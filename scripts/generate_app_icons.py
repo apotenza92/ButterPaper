@@ -85,7 +85,7 @@ def build_ico(png_paths: list[Path], ico_path: Path) -> None:
     ico_path.write_bytes(header + entries + payload_blob)
 
 
-def generate_icns(out_dir: Path, size_to_png: dict[int, Path]) -> bool:
+def generate_icns(output_path: Path, size_to_png: dict[int, Path]) -> bool:
     if shutil.which("iconutil") is None:
         return False
 
@@ -116,7 +116,7 @@ def generate_icns(out_dir: Path, size_to_png: dict[int, Path]) -> bool:
                 "icns",
                 str(iconset),
                 "-o",
-                str(out_dir / "butterpaper-icon.icns"),
+                str(output_path),
             ]
         )
 
@@ -125,6 +125,12 @@ def generate_icns(out_dir: Path, size_to_png: dict[int, Path]) -> bool:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--variant",
+        choices=["stable", "beta"],
+        default="stable",
+        help="Which icon variant to generate (controls output filenames).",
+    )
     parser.add_argument(
         "--svg",
         type=Path,
@@ -142,8 +148,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    variant = args.variant
     svg_path = args.svg
     out_dir = args.out_dir
+    basename = "butterpaper-icon" if variant == "stable" else "butterpaper-icon-beta"
 
     if shutil.which("rsvg-convert") is None:
         print("error: rsvg-convert is required but was not found on PATH", file=sys.stderr)
@@ -156,19 +164,20 @@ def main() -> int:
 
     size_to_png: dict[int, Path] = {}
     for size in PNG_SIZES:
-        png_path = out_dir / f"butterpaper-icon-{size}.png"
+        png_path = out_dir / f"{basename}-{size}.png"
         render_png(svg_path, size, png_path)
         size_to_png[size] = png_path
 
     ico_sources = [size_to_png[size] for size in ICO_SIZES]
-    build_ico(ico_sources, out_dir / "butterpaper-icon.ico")
+    build_ico(ico_sources, out_dir / f"{basename}.ico")
 
-    icns_generated = generate_icns(out_dir, size_to_png)
+    icns_path = out_dir / f"{basename}.icns"
+    icns_generated = generate_icns(icns_path, size_to_png)
 
     print(f"Generated PNG sizes: {', '.join(str(s) for s in PNG_SIZES)}")
-    print(f"Generated Windows ICO: {out_dir / 'butterpaper-icon.ico'}")
+    print(f"Generated Windows ICO: {out_dir / f'{basename}.ico'}")
     if icns_generated:
-        print(f"Generated macOS ICNS: {out_dir / 'butterpaper-icon.icns'}")
+        print(f"Generated macOS ICNS: {icns_path}")
     else:
         print("Skipped ICNS generation (iconutil not found).")
 

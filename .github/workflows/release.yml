@@ -209,6 +209,7 @@ jobs:
             /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ButterPaper Beta" "$plist" || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleName ButterPaper Beta" "$plist" || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.apotenza92.butterpaper.beta" "$plist" || true
+            bash scripts/apply_macos_tahoe_bundle_icons.sh "$tmp_dir/ButterPaper Beta.app" beta
             codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$tmp_dir/ButterPaper Beta.app"
             codesign --verify --deep --strict --verbose=2 "$tmp_dir/ButterPaper Beta.app"
             maybe_notarize_and_staple "$tmp_dir/ButterPaper Beta.app"
@@ -269,21 +270,35 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          cargo build --release --package butterpaper --target "${{ matrix.target }}"
+          $stableBinary = $null
+          $betaBinary = $null
 
+          if ($env:PRERELEASE -ne "true") {
+            cargo build --release --package butterpaper --target "${{ matrix.target }}"
+            $binary = Join-Path $PWD "target\${{ matrix.target }}\release\butterpaper.exe"
+            if (!(Test-Path $binary)) {
+              throw "Expected stable binary not found: $binary"
+            }
+            $stableBinary = Join-Path $env:RUNNER_TEMP "butterpaper-stable-${{ matrix.arch }}.exe"
+            Copy-Item -Force $binary $stableBinary
+          }
+
+          cargo build --release --package butterpaper --target "${{ matrix.target }}" --features beta
           $binary = Join-Path $PWD "target\${{ matrix.target }}\release\butterpaper.exe"
           if (!(Test-Path $binary)) {
-            throw "Expected binary not found: $binary"
+            throw "Expected beta binary not found: $binary"
           }
+          $betaBinary = Join-Path $env:RUNNER_TEMP "butterpaper-beta-${{ matrix.arch }}.exe"
+          Copy-Item -Force $binary $betaBinary
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $nsisScript = Join-Path $PWD "scripts\release\windows_installer.nsi"
 
-          function Build-Installer([string]$prefix, [string]$appName, [string]$installSubdir) {
+          function Build-Installer([string]$prefix, [string]$appName, [string]$installSubdir, [string]$sourceExe) {
             $output = Join-Path $PWD ("dist\{0}-v{1}-windows-${{ matrix.arch }}-setup.exe" -f $prefix, $env:VERSION_CORE)
             $args = @(
               "/DOUTPUT_FILE=$output",
-              "/DSOURCE_EXE=$binary",
+              "/DSOURCE_EXE=$sourceExe",
               "/DAPP_NAME=$appName",
               "/DINSTALL_SUBDIR=$installSubdir",
               $nsisScript
@@ -292,10 +307,10 @@ jobs:
           }
 
           if ($env:PRERELEASE -eq "true") {
-            Build-Installer "ButterPaper-Beta" "ButterPaper Beta" "ButterPaper-Beta"
+            Build-Installer "ButterPaper-Beta" "ButterPaper Beta" "ButterPaper-Beta" $betaBinary
           } else {
-            Build-Installer "ButterPaper" "ButterPaper" "ButterPaper"
-            Build-Installer "ButterPaper-Beta" "ButterPaper Beta" "ButterPaper-Beta"
+            Build-Installer "ButterPaper" "ButterPaper" "ButterPaper" $stableBinary
+            Build-Installer "ButterPaper-Beta" "ButterPaper Beta" "ButterPaper-Beta" $betaBinary
           }
 
       - name: Upload Windows artifacts
@@ -388,25 +403,46 @@ jobs:
 
           mkdir -p dist
 
-          APPDIR="$(mktemp -d)"
-          export APPDIR
-          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-          cp "$BIN_PATH" "$APPDIR/usr/bin/ButterPaper"
-          chmod +x "$APPDIR/usr/bin/ButterPaper"
-          # appimagetool falls back to scanning *.so.* for architecture; provide one deterministically.
-          mkdir -p "$APPDIR/usr/lib"
-          ln -sf ../bin/ButterPaper "$APPDIR/usr/lib/libbutterpaper.so.0"
-          cp "crates/gpui-app/assets/app-icons/butterpaper-icon-256.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/butterpaper.png"
+          curl -fsSL -o appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${APPIMAGE_ARCH}.AppImage"
+          chmod +x appimagetool
+          export ARCH="$APPIMAGE_ARCH"
+          export APPIMAGE_EXTRACT_AND_RUN=1
 
-          python3 - <<'PY'
+          build_variant() {
+            local channel="$1"        # stable|beta
+            local prefix="$2"         # ButterPaper|ButterPaper-Beta
+            local desktop_name="$3"   # ButterPaper|ButterPaper Beta
+
+            local icon_src="crates/gpui-app/assets/app-icons/butterpaper-icon-256.png"
+            if [[ "$channel" == "beta" ]]; then
+              icon_src="crates/gpui-app/assets/app-icons/butterpaper-icon-beta-256.png"
+            fi
+
+            local workdir
+            workdir="$(mktemp -d)"
+
+            local appdir="$workdir/AppDir"
+            mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps"
+            cp "$BIN_PATH" "$appdir/usr/bin/ButterPaper"
+            chmod +x "$appdir/usr/bin/ButterPaper"
+
+            # appimagetool falls back to scanning *.so.* for architecture; provide one deterministically.
+            mkdir -p "$appdir/usr/lib"
+            ln -sf ../bin/ButterPaper "$appdir/usr/lib/libbutterpaper.so.0"
+
+            cp "$icon_src" "$appdir/usr/share/icons/hicolor/256x256/apps/butterpaper.png"
+
+            DESKTOP_NAME="$desktop_name" APPDIR="$appdir" python3 - <<'PY'
           import os
           from pathlib import Path
 
           appdir = os.environ["APPDIR"]
+          name = os.environ["DESKTOP_NAME"]
 
           Path(f"{appdir}/butterpaper.desktop").write_text(
               "[Desktop Entry]\n"
-              "Name=ButterPaper\n"
+              f"Name={name}\n"
               "Comment=Rust-native desktop PDF app\n"
               "Exec=ButterPaper\n"
               "Icon=butterpaper\n"
@@ -422,61 +458,61 @@ jobs:
               "exec \\\"$HERE/usr/bin/ButterPaper\\\" \\\"$@\\\"\\n",
               encoding="utf-8",
           )
-          PY
-          cp "$APPDIR/butterpaper.desktop" "$APPDIR/usr/share/applications/butterpaper.desktop"
-          chmod +x "$APPDIR/AppRun"
-          ln -s usr/share/icons/hicolor/256x256/apps/butterpaper.png "$APPDIR/butterpaper.png"
+PY
 
-          curl -fsSL -o appimagetool \
-            "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${APPIMAGE_ARCH}.AppImage"
-          chmod +x appimagetool
-          APPIMAGE_TMP="ButterPaper-${OUT_ARCH}.AppImage"
-          export ARCH="$APPIMAGE_ARCH"
-          export APPIMAGE_EXTRACT_AND_RUN=1
-          ./appimagetool --no-appstream "$APPDIR" "$APPIMAGE_TMP"
+            cp "$appdir/butterpaper.desktop" "$appdir/usr/share/applications/butterpaper.desktop"
+            chmod +x "$appdir/AppRun"
+            ln -s usr/share/icons/hicolor/256x256/apps/butterpaper.png "$appdir/butterpaper.png"
 
-          PKGROOT="$(mktemp -d)"
-          mkdir -p "$PKGROOT/usr/bin" "$PKGROOT/usr/share/applications" "$PKGROOT/usr/share/icons/hicolor/256x256/apps"
-          cp "$BIN_PATH" "$PKGROOT/usr/bin/butterpaper"
-          chmod +x "$PKGROOT/usr/bin/butterpaper"
-          cp "$APPDIR/butterpaper.desktop" "$PKGROOT/usr/share/applications/butterpaper.desktop"
-          cp "crates/gpui-app/assets/app-icons/butterpaper-icon-256.png" "$PKGROOT/usr/share/icons/hicolor/256x256/apps/butterpaper.png"
+            local appimage_tmp="$workdir/ButterPaper-${OUT_ARCH}.AppImage"
+            ./appimagetool --no-appstream "$appdir" "$appimage_tmp"
+            cp "$appimage_tmp" "dist/${prefix}-v${VERSION_CORE}-linux-${OUT_ARCH}.AppImage"
 
-          fpm -s dir -t deb \
-            -n butterpaper \
-            -v "$VERSION_CORE" \
-            -a "$DEB_ARCH" \
-            --maintainer "apotenza92" \
-            --description "Rust-native desktop PDF app" \
-            --url "https://github.com/apotenza92/ButterPaper" \
-            -C "$PKGROOT" \
-            .
+            local pkgroot="$workdir/PkgRoot"
+            mkdir -p "$pkgroot/usr/bin" "$pkgroot/usr/share/applications" "$pkgroot/usr/share/icons/hicolor/256x256/apps"
+            cp "$BIN_PATH" "$pkgroot/usr/bin/butterpaper"
+            chmod +x "$pkgroot/usr/bin/butterpaper"
+            cp "$appdir/butterpaper.desktop" "$pkgroot/usr/share/applications/butterpaper.desktop"
+            cp "$icon_src" "$pkgroot/usr/share/icons/hicolor/256x256/apps/butterpaper.png"
 
-          fpm -s dir -t rpm \
-            -n butterpaper \
-            -v "$VERSION_CORE" \
-            -a "$RPM_ARCH" \
-            --maintainer "apotenza92" \
-            --description "Rust-native desktop PDF app" \
-            --url "https://github.com/apotenza92/ButterPaper" \
-            -C "$PKGROOT" \
-            .
+            pushd "$workdir" >/dev/null
+            fpm -s dir -t deb \
+              -n butterpaper \
+              -v "$VERSION_CORE" \
+              -a "$DEB_ARCH" \
+              --maintainer "apotenza92" \
+              --description "Rust-native desktop PDF app" \
+              --url "https://github.com/apotenza92/ButterPaper" \
+              -C "$pkgroot" \
+              .
 
-          DEB_FILE="$(ls -1 butterpaper_"${VERSION_CORE}"_*.deb | head -n1)"
-          RPM_FILE="$(ls -1 butterpaper-"${VERSION_CORE}"-*.rpm | head -n1)"
+            fpm -s dir -t rpm \
+              -n butterpaper \
+              -v "$VERSION_CORE" \
+              -a "$RPM_ARCH" \
+              --maintainer "apotenza92" \
+              --description "Rust-native desktop PDF app" \
+              --url "https://github.com/apotenza92/ButterPaper" \
+              -C "$pkgroot" \
+              .
+            popd >/dev/null
 
-          publish_prefix() {
-            local prefix="$1"
-            cp "$APPIMAGE_TMP" "dist/${prefix}-v${VERSION_CORE}-linux-${OUT_ARCH}.AppImage"
-            cp "$DEB_FILE" "dist/${prefix}-v${VERSION_CORE}-linux-${OUT_ARCH}.deb"
-            cp "$RPM_FILE" "dist/${prefix}-v${VERSION_CORE}-linux-${OUT_ARCH}.rpm"
+            local deb_file
+            deb_file="$(ls -1 "$workdir"/butterpaper_"${VERSION_CORE}"_*.deb | head -n1)"
+            local rpm_file
+            rpm_file="$(ls -1 "$workdir"/butterpaper-"${VERSION_CORE}"-*.rpm | head -n1)"
+
+            cp "$deb_file" "dist/${prefix}-v${VERSION_CORE}-linux-${OUT_ARCH}.deb"
+            cp "$rpm_file" "dist/${prefix}-v${VERSION_CORE}-linux-${OUT_ARCH}.rpm"
+
+            rm -rf "$workdir"
           }
 
           if [[ "$PRERELEASE" == "true" ]]; then
-            publish_prefix "ButterPaper-Beta"
+            build_variant beta "ButterPaper-Beta" "ButterPaper Beta"
           else
-            publish_prefix "ButterPaper"
-            publish_prefix "ButterPaper-Beta"
+            build_variant stable "ButterPaper" "ButterPaper"
+            build_variant beta "ButterPaper-Beta" "ButterPaper Beta"
           fi
 
       - name: Upload Linux artifacts
@@ -513,15 +549,21 @@ jobs:
 
           ls -lah dist
 
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          python3 scripts/release_notes_from_changelog.py --tag "$TAG" > "$NOTES_FILE"
+          echo "Release notes preview:"
+          sed -n '1,120p' "$NOTES_FILE"
+
           if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file "$NOTES_FILE" --repo "$GH_REPO"
             gh release upload "$TAG" dist/* --clobber --repo "$GH_REPO"
             exit 0
           fi
 
           if [[ "$PRERELEASE" == "true" ]]; then
-            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --prerelease --repo "$GH_REPO"
+            gh release create "$TAG" dist/* --title "$TAG" --notes-file "$NOTES_FILE" --prerelease --repo "$GH_REPO"
           else
-            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --repo "$GH_REPO"
+            gh release create "$TAG" dist/* --title "$TAG" --notes-file "$NOTES_FILE" --repo "$GH_REPO"
           fi
 
   update-homebrew-tap:

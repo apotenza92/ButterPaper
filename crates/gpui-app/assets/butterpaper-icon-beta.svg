@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ButterPaper Beta icon">
+  <defs>
+    <clipPath id="rounded">
+      <rect x="0" y="0" width="512" height="512" rx="112" ry="112"/>
+    </clipPath>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#8BD0FF" stroke-width="1.5" opacity="0.35"/>
+    </pattern>
+    <linearGradient id="blueBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#113B66"/>
+      <stop offset="45%" stop-color="#0D5A95"/>
+      <stop offset="100%" stop-color="#0B7ACC"/>
+    </linearGradient>
+    <linearGradient id="edgeGlow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#A9E5FF" stop-opacity="0.35"/>
+      <stop offset="50%" stop-color="#A9E5FF" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#A9E5FF" stop-opacity="0.28"/>
+    </linearGradient>
+  </defs>
+
+  <g clip-path="url(#rounded)">
+    <rect x="0" y="0" width="512" height="512" fill="url(#blueBg)"/>
+    <rect x="0" y="0" width="512" height="512" fill="url(#grid)"/>
+    <rect x="0" y="0" width="512" height="512" fill="url(#edgeGlow)"/>
+
+    <g transform="rotate(45 256 256)">
+      <path
+        d="M256 120 V392"
+        fill="none"
+        stroke="#FFFFFF"
+        stroke-width="48"
+        stroke-linecap="round"
+      />
+      <path
+        d="M168 236 L256 120 L344 236"
+        fill="none"
+        stroke="#FFFFFF"
+        stroke-width="48"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </g>
+  </g>
+</svg>

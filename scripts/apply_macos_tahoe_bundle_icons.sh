@@ -4,15 +4,24 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 /path/to/ButterPaper.app" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "usage: $0 /path/to/ButterPaper.app [stable|beta]" >&2
   exit 1
 fi
 
 APP_BUNDLE="$1"
+CHANNEL="${2:-stable}"
+if [[ "$CHANNEL" != "stable" && "$CHANNEL" != "beta" ]]; then
+  echo "error: invalid channel: $CHANNEL (expected stable|beta)" >&2
+  exit 1
+fi
+
 PLIST_PATH="$APP_BUNDLE/Contents/Info.plist"
 RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
 ASSETS_CAR="crates/gpui-app/assets/macos/Assets.car"
+if [[ "$CHANNEL" == "beta" ]]; then
+  ASSETS_CAR="crates/gpui-app/assets/macos/Assets-beta.car"
+fi
 
 if [[ ! -d "$APP_BUNDLE" ]]; then
   echo "error: app bundle not found: $APP_BUNDLE" >&2
@@ -24,8 +33,8 @@ if [[ ! -f "$PLIST_PATH" ]]; then
 fi
 
 if [[ ! -f "$ASSETS_CAR" ]]; then
-  echo "Assets.car missing; generating it now..."
-  bash scripts/prepare_macos_tahoe_icons.sh
+  echo "Assets catalog missing for channel '$CHANNEL'; generating it now..."
+  bash scripts/prepare_macos_tahoe_icons.sh "$CHANNEL"
 fi
 
 mkdir -p "$RESOURCES_DIR"

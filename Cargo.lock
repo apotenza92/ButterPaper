@@ -626,7 +626,7 @@ checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
 name = "butterpaper"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "block2 0.5.1",
  "butterpaper-render",
@@ -650,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "butterpaper-render"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "pdfium-render",
 ]
